@@ -1,0 +1,7 @@
+# Python dependencies for Political Profile Analysis Script
+python-dotenv>=1.0.0
+tavily-python>=0.3.0
+mistralai>=0.0.10
+supabase>=2.0.0
+html2text>=2020.1.16
+requests>=2.31.0
