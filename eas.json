@@ -6,13 +6,43 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_CACHE_DIR": "/tmp/expo-cache"
+      },
+      "hooks": {
+        "prebuild": {
+          "commands": [
+            "bash scripts/prebuild-setup.sh"
+          ]
+        }
+      }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_CACHE_DIR": "/tmp/expo-cache"
+      },
+      "hooks": {
+        "prebuild": {
+          "commands": [
+            "bash scripts/prebuild-setup.sh"
+          ]
+        }
+      }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_CACHE_DIR": "/tmp/expo-cache"
+      },
+      "hooks": {
+        "prebuild": {
+          "commands": [
+            "bash scripts/prebuild-setup.sh"
+          ]
+        }
+      }
     }
   },
   "submit": {
