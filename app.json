@@ -26,6 +26,7 @@
       "backgroundColor": "#000000",
       "bundleIdentifier": "com.execudex.app",
       "buildNumber": "1",
+      "newArchEnabled": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -35,7 +36,8 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "com.execudex.app"
+      "package": "com.execudex.app",
+      "newArchEnabled": false
     },
     "web": {
       "favicon": "./assets/icon.png"
