@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useRef, useState } from 'react';
 import { Image, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useAuth } from '../components/AuthProvider';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 export default function Feedback() {
   const router = useRouter();

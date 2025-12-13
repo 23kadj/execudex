@@ -1,7 +1,7 @@
 import { useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { supabase } from '../../utils/supabase';
+import { getSupabaseClient } from '../../utils/supabase';
 
 interface OverviewProps {
   scrollY?: any;

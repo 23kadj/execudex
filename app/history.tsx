@@ -6,7 +6,7 @@ import { useAuth } from '../components/AuthProvider';
 import { TypeFilterButton } from '../components/TypeFilterButton';
 import { NavigationService } from '../services/navigationService';
 import { getHistory, ProfileHistoryItem } from '../utils/historyUtils';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(View);
 

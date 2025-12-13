@@ -13,7 +13,7 @@ import {
 import { useAuth } from '../components/AuthProvider';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { NavigationService } from '../services/navigationService';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 import Legi1 from './legislation/legi1';
 import Legi2 from './legislation/legi2';

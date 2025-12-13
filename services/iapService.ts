@@ -6,7 +6,7 @@ import {
     type SubscriptionUpdateData
 } from '../types/iapTypes';
 import { isIAPAvailable } from '../utils/iapAvailability';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 // Lazy-load IAP module to avoid top-level require() that can crash release builds
 // Only load when actually needed, not at module import time
@@ -267,7 +267,7 @@ class IAPService {
       console.log('Updating user subscription:', { userId, subscriptionData });
       
       // Call the new update_subscription_status function
-      const { data, error } = await supabase.functions.invoke('update_subscription_status', {
+      const { data, error } = await getSupabaseClient().functions.invoke('update_subscription_status', {
         body: {
           userId: userId,
           plan: subscriptionData.plan,

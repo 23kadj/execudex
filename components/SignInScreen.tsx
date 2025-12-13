@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ProfileLoadingIndicator } from './ProfileLoadingIndicator';
 import { initIap, restorePurchases } from '../iap.apple';
 import { isIAPAvailable } from '../utils/iapAvailability';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 import { useAuth } from './AuthProvider';
 
 export default function SignInScreen() {
@@ -167,10 +167,10 @@ export default function SignInScreen() {
         const cycle = matchingPurchase.productId.includes('quarterly') ? 'quarterly' : 'monthly';
 
         // Update user subscription using the Edge Function
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user } } = await getSupabaseClient().auth.getUser();
         if (user) {
           // Use the update_subscription_status function instead of direct DB update
-          await supabase.functions.invoke('update_subscription_status', {
+          await getSupabaseClient().functions.invoke('update_subscription_status', {
             body: {
               userId: user.id,
               plan: 'plus',

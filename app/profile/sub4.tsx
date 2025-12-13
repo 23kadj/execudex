@@ -23,7 +23,7 @@ import { CardService } from '../../services/cardService';
 import { CardData, getCategoryFromTitle } from '../../utils/cardData';
 import { incrementOpens } from '../../utils/incrementOpens7d';
 import { filterCardsByWords, getMostCommonWords, shouldShowSearchAssistance } from '../../utils/searchAssistanceUtils';
-import { supabase } from '../../utils/supabase';
+import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const STAR_COUNT = 5;

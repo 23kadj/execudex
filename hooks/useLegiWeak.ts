@@ -1,6 +1,6 @@
 // hooks/useLegiWeak.ts
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../utils/supabase";
+import { getSupabaseClient } from "../utils/supabase";
 
 type Result = { isWeak: boolean; isLoading: boolean; refetch: () => Promise<void> };
 

@@ -1,5 +1,5 @@
 import { CardIndex } from '../types/pplDataTypes';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 export interface HousekeepingResult {
   ownerId: number;

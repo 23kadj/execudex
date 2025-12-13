@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { getSupabaseClient } from './supabase';
 
 export type BookmarkType = 'ppl' | 'legi' | 'card';
 

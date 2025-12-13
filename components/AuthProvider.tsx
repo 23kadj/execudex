@@ -1,7 +1,7 @@
 import { Session, User } from '@supabase/supabase-js';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '../utils/supabase';
 import { logStartup } from '../utils/startupLogger';
+import { getSupabaseClient } from '../utils/supabase';
 
 type AuthContextType = {
   session: Session | null;
@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Listen for auth changes (including token refresh and INITIAL_SESSION)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = getSupabaseClient().auth.onAuthStateChange((event, session) => {
       console.log(`[AuthProvider] Auth state change: ${event}`, {
         hasSession: !!session,
         userId: session?.user?.id,
@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Get initial session - this will restore the persisted session from AsyncStorage
     // This may return the same session that INITIAL_SESSION already provided
     logStartup('AuthProvider: Calling getSession()');
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
+    getSupabaseClient().auth.getSession().then(({ data: { session }, error }) => {
       console.log('[AuthProvider] getSession() completed', {
         hasSession: !!session,
         hasError: !!error,
@@ -138,7 +138,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = async () => {
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { error } = await getSupabaseClient().auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: 'execudex://auth/callback',
@@ -153,7 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithEmail = async (email: string, password: string) => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await getSupabaseClient().auth.signInWithPassword({
         email,
         password,
       });
@@ -167,7 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUpWithEmail = async (email: string, password: string) => {
     try {
-      const { data, error } = await supabase.auth.signUp({
+      const { data, error } = await getSupabaseClient().auth.signUp({
         email,
         password,
       });
@@ -181,7 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const resetPassword = async (email: string) => {
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      const { error } = await getSupabaseClient().auth.resetPasswordForEmail(email, {
         redirectTo: 'execudex://auth/reset-password',
       });
       if (error) throw error;
@@ -193,7 +193,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
-      const { error } = await supabase.auth.signOut();
+      const { error } = await getSupabaseClient().auth.signOut();
       if (error) throw error;
     } catch (error) {
       console.error('Error signing out:', error);

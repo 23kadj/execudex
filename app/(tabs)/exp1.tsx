@@ -5,7 +5,7 @@ import { Animated, Dimensions, Image, Keyboard, Platform, Pressable, SafeAreaVie
 import { useAuth } from '../../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../../components/ProfileLoadingIndicator';
 import { NavigationService } from '../../services/navigationService';
-import { supabase } from '../../utils/supabase';
+import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 

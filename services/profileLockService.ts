@@ -1,5 +1,5 @@
 import { logDiag, logDiagError } from '../lib/diag/logger';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 export interface ProfileLockStatus {
   isLocked: boolean;

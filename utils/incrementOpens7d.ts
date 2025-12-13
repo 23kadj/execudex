@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { getSupabaseClient } from './supabase';
 
 /**
  * Increments the opens_7d column for a card in the card_index table

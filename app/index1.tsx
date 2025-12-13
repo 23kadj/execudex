@@ -16,7 +16,6 @@ import { useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../components/AuthProvider';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { checkBookmarkStatus, toggleBookmark } from '../utils/bookmarkUtils';
-import { supabase } from '../utils/supabase';
 import Sub1 from './profile/sub1';
 import Sub2 from './profile/sub2';
 import Sub3 from './profile/sub3';

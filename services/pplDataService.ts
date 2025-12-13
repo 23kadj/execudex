@@ -10,7 +10,7 @@ import {
     isValidScreen,
     isValidTier
 } from '../types/pplDataTypes';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 import { ValidationService } from './validationService';
 
 // RPC function calls
@@ -19,7 +19,7 @@ export class PPLDataService {
    * Create a new card with paired content in a single transaction
    */
   static async createCardWithContent(cardData: Partial<CardIndex>, contentData: Partial<CardContent>): Promise<number> {
-    const { data, error } = await supabase.functions.invoke('ppl-data-rpc', {
+    const { data, error } = await getSupabaseClient().functions.invoke('ppl-data-rpc', {
       body: {
         function_name: 'create_card_with_content',
         params: {
@@ -42,7 +42,7 @@ export class PPLDataService {
     cardData: Partial<CardIndex>, 
     contentData: Partial<CardContent>
   ): Promise<number> {
-    const { data, error } = await supabase.functions.invoke('ppl-data-rpc', {
+    const { data, error } = await getSupabaseClient().functions.invoke('ppl-data-rpc', {
       body: {
         function_name: 'revive_or_insert_card',
         params: {

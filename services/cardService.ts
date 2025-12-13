@@ -1,4 +1,4 @@
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 type LoadingCallback = (loading: boolean) => void;
 
@@ -70,7 +70,7 @@ export class CardService {
       // Show loading indicator
       onLoading?.(true);
       
-      const { data, error } = await supabase.functions.invoke('full_card_gen', {
+      const { data, error } = await getSupabaseClient().functions.invoke('full_card_gen', {
         body: {
           id: cardId,
           is_ppl: isPpl

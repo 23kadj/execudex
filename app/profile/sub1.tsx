@@ -7,7 +7,6 @@ import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
 import { CardData, fetchCardsByScreen } from '../../utils/cardData';
 import { incrementOpens } from '../../utils/incrementOpens7d';
-import { supabase } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 

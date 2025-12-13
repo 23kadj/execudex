@@ -1,4 +1,4 @@
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 import { ProfileLockService } from './profileLockService';
 
 interface LegiIndex {
@@ -164,7 +164,7 @@ export class LegislationProfileService {
    */
   private static async checkStorageFiles(legislationId: number): Promise<boolean> {
     try {
-      const { data, error } = await supabase.storage
+      const { data, error } = await getSupabaseClient().storage
         .from('web')
         .list(`legi/${legislationId}`, { limit: 100 });
 
@@ -361,7 +361,7 @@ export class LegislationProfileService {
       console.log(`Executing Step 1: profile_index for legislation ID ${legislationId}`);
       onProgress?.({ script: 'Indexing legislation profile...' });
       
-      const { data, error } = await supabase.functions.invoke('profile_index', {
+      const { data, error } = await getSupabaseClient().functions.invoke('profile_index', {
         body: {
           id: legislationId,
           is_ppl: false
@@ -389,7 +389,7 @@ export class LegislationProfileService {
       console.log(`Executing Step 2: bill_overview for legislation ID ${legislationId}`);
       onProgress?.({ script: 'Creating bill overview...' });
       
-      const { data, error } = await supabase.functions.invoke('bill_overview', {
+      const { data, error } = await getSupabaseClient().functions.invoke('bill_overview', {
         body: {
           id: legislationId
         }

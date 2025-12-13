@@ -13,7 +13,7 @@ import {
   View
 } from 'react-native';
 import { CardGenerationService } from '../services/cardGenerationService';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 // Overview component with profile header
 const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }: { name: string; position: string; billStatus?: string; isLowMateriality?: boolean; congressLink?: string }) => {

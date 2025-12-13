@@ -1,5 +1,5 @@
 import { QuotaDeficit, QuotaStatus, SCREEN_MAPPING, TIER_CONFIG } from '../types/pplDataTypes';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 export class QuotaService {
   /**

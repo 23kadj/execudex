@@ -6,7 +6,7 @@ import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, Toucha
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { PoliticianProfileService } from '../../services/politicianProfileService';
 import { CardData } from '../../utils/cardData';
-import { supabase } from '../../utils/supabase';
+import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const STAR_COUNT = 5;

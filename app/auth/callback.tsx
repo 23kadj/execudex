@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { supabase } from '../../utils/supabase';
+import { getSupabaseClient } from '../../utils/supabase';
 
 export default function AuthCallback() {
   const router = useRouter();
@@ -16,7 +16,7 @@ export default function AuthCallback() {
         
         if (access_token && refresh_token) {
           // Set the session with the tokens from the callback
-          const { data, error } = await supabase.auth.setSession({
+          const { data, error } = await getSupabaseClient().auth.setSession({
             access_token: access_token as string,
             refresh_token: refresh_token as string,
           });
@@ -30,7 +30,7 @@ export default function AuthCallback() {
           userId = data.user?.id;
         } else {
           // Fallback: try to get existing session
-          const { data, error } = await supabase.auth.getSession();
+          const { data, error } = await getSupabaseClient().auth.getSession();
           if (error) {
             console.error('Auth callback error:', error);
             router.replace('/signin');
@@ -42,7 +42,7 @@ export default function AuthCallback() {
 
         // Check if user has completed onboarding (has a plan)
         if (userId) {
-          const { data: userData, error: userError } = await supabase
+          const { data: userData, error: userError } = await getSupabaseClient()
             .from('users')
             .select('plan, onboard')
             .eq('uuid', userId)

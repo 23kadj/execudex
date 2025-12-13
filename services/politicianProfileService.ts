@@ -1,5 +1,5 @@
 import { logDiag, logDiagError } from '../lib/diag/logger';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 import { ProfileLockService } from './profileLockService';
 
 interface PPLIndex {
@@ -283,7 +283,7 @@ export class PoliticianProfileService {
    */
   private static async checkStorageFiles(politicianId: number): Promise<boolean> {
     try {
-      const { data, error } = await supabase.storage
+      const { data, error } = await getSupabaseClient().storage
         .from('web')
         .list(`ppl/${politicianId}`, { limit: 100 });
 
@@ -534,7 +534,7 @@ export class PoliticianProfileService {
       console.log(`Executing Step 1: profile_index for ID ${politicianId}`);
       onProgress?.({ script: 'Indexing profile...' });
       
-      const { data, error } = await supabase.functions.invoke('profile_index', {
+      const { data, error } = await getSupabaseClient().functions.invoke('profile_index', {
         body: {
           id: politicianId,
           is_ppl: true
@@ -562,7 +562,7 @@ export class PoliticianProfileService {
       console.log(`Executing Step 2: ppl_synopsis for ID ${politicianId}`);
       onProgress?.({ script: 'Gathering sources...' });
       
-      const { data, error } = await supabase.functions.invoke('ppl_synopsis', {
+      const { data, error } = await getSupabaseClient().functions.invoke('ppl_synopsis', {
         body: {
           id: politicianId
         }
@@ -589,7 +589,7 @@ export class PoliticianProfileService {
       console.log(`Executing Step 3: ppl_metrics for ID ${politicianId}`);
       onProgress?.({ script: 'Searching for polling information...' });
       
-      const { data, error } = await supabase.functions.invoke('ppl_metrics', {
+      const { data, error } = await getSupabaseClient().functions.invoke('ppl_metrics', {
         body: {
           id: politicianId
         }
@@ -622,7 +622,7 @@ export class PoliticianProfileService {
       logDiag('svc:profile-index:start', { politicianId }, trace);
       onProgress?.({ script: 'Indexing profile...' });
       
-      const { data, error } = await supabase.functions.invoke('profile_index', {
+      const { data, error } = await getSupabaseClient().functions.invoke('profile_index', {
         body: {
           id: politicianId,
           is_ppl: true
@@ -665,7 +665,7 @@ export class PoliticianProfileService {
       logDiag('svc:synopsis:start', { politicianId }, trace);
       onProgress?.({ script: 'Gathering sources...' });
       
-      const { data, error } = await supabase.functions.invoke('ppl_synopsis', {
+      const { data, error } = await getSupabaseClient().functions.invoke('ppl_synopsis', {
         body: {
           id: politicianId
         }
@@ -710,7 +710,7 @@ export class PoliticianProfileService {
       logDiag('svc:metrics:start', { politicianId }, trace);
       onProgress?.({ script: 'Searching for polling information...' });
       
-      const { data, error } = await supabase.functions.invoke('ppl_metrics', {
+      const { data, error } = await getSupabaseClient().functions.invoke('ppl_metrics', {
         body: {
           id: politicianId
         }
@@ -791,7 +791,7 @@ export class PoliticianProfileService {
       console.log(`Generating metrics manually for politician ${politicianId}`);
       onProgress?.({ script: 'Searching for polling information...' });
       
-      const { data, error } = await supabase.functions.invoke('ppl_metrics', {
+      const { data, error } = await getSupabaseClient().functions.invoke('ppl_metrics', {
         body: { id: politicianId }
       });
 

@@ -1,4 +1,4 @@
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 export interface ProfileAccessResponse {
   allowed: boolean;
@@ -25,7 +25,7 @@ export async function checkProfileAccess(
 
     console.log('Checking profile access:', { userId, profileId, currentDate });
 
-    const { data, error } = await supabase.functions.invoke('check_profile_access', {
+    const { data, error } = await getSupabaseClient().functions.invoke('check_profile_access', {
       body: {
         user_uuid: userId,
         profile_id: profileId,

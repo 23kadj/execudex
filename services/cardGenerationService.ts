@@ -1,4 +1,4 @@
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 interface CardGenerationResult {
   success: boolean;
@@ -110,7 +110,7 @@ export class CardGenerationService {
     try {
       console.log(`Executing ppl_round2 for politician ${politicianId} with categories:`, categories);
       
-      const { data, error } = await supabase.functions.invoke('ppl_round2', {
+      const { data, error } = await getSupabaseClient().functions.invoke('ppl_round2', {
         body: {
           id: politicianId,
           categories: categories
@@ -142,7 +142,7 @@ export class CardGenerationService {
         requestBody.web_ids = webIds;
       }
 
-      const { data, error } = await supabase.functions.invoke('ppl_card_gen', {
+      const { data, error } = await getSupabaseClient().functions.invoke('ppl_card_gen', {
         body: requestBody
       });
 
@@ -166,7 +166,7 @@ export class CardGenerationService {
     try {
       console.log(`Executing bill_cards for legislation ${legislationId}`);
       
-      const { data, error } = await supabase.functions.invoke('bill_cards', {
+      const { data, error } = await getSupabaseClient().functions.invoke('bill_cards', {
         body: {
           id: legislationId
         }
@@ -204,7 +204,7 @@ export class CardGenerationService {
     try {
       console.log(`Executing bill_coverage for legislation ${legislationId}`);
       
-      const { data, error } = await supabase.functions.invoke('bill_coverage', {
+      const { data, error } = await getSupabaseClient().functions.invoke('bill_coverage', {
         body: {
           id: legislationId
         }
@@ -712,7 +712,7 @@ export class CardGenerationService {
    */
   static async markPoliticianAsWeak(politicianId: number): Promise<void> {
     try {
-      const { data, error } = await supabase.functions.invoke('profile_labeling', {
+      const { data, error } = await getSupabaseClient().functions.invoke('profile_labeling', {
         body: {
           profileId: politicianId,
           profileType: 'politician',
@@ -735,7 +735,7 @@ export class CardGenerationService {
    */
   static async markLegislationAsWeak(legislationId: number): Promise<void> {
     try {
-      const { data, error } = await supabase.functions.invoke('profile_labeling', {
+      const { data, error } = await getSupabaseClient().functions.invoke('profile_labeling', {
         body: {
           profileId: legislationId,
           profileType: 'legislation',
@@ -758,7 +758,7 @@ export class CardGenerationService {
    */
   static async unlockPoliticianProfile(politicianId: number): Promise<void> {
     try {
-      const { data, error } = await supabase.functions.invoke('profile_labeling', {
+      const { data, error } = await getSupabaseClient().functions.invoke('profile_labeling', {
         body: {
           profileId: politicianId,
           profileType: 'politician',
@@ -781,7 +781,7 @@ export class CardGenerationService {
    */
   static async unlockLegislationProfile(legislationId: number): Promise<void> {
     try {
-      const { data, error } = await supabase.functions.invoke('profile_labeling', {
+      const { data, error } = await getSupabaseClient().functions.invoke('profile_labeling', {
         body: {
           profileId: legislationId,
           profileType: 'legislation',

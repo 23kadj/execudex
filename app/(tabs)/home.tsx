@@ -24,7 +24,6 @@ import { NavigationService } from '../../services/navigationService';
 // If using React Navigation, use: import { useNavigation } from '@react-navigation/native';
 
 // Import Supabase client
-import { supabase } from '../../utils/supabase';
 
 // ── Tweakable constants ───────────────────────────
 const SLIDER_TOP_MARGIN = -14;
@@ -1909,7 +1908,7 @@ export default function Home() {
     try {
       const officeType = mapPositionToEnum(selectedPoliticianPosition);
       
-      const response = await fetch('https://tvvmkzoiicjrfjbmqzwc.supabase.co/functions/v1/ppl_search', {
+      const response = await fetch('https://tvvmkzoiicjrfjbmqzwc.getSupabaseClient().co/functions/v1/ppl_search', {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2dm1rem9paWNqcmZqYm1xendjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQxMDY0OTUsImV4cCI6MjA2OTY4MjQ5NX0.ZlVa4YsMZVrnvSmkJ7wKBiilQ84jh_qcN1wLl7E-Kso',
@@ -2129,7 +2128,7 @@ export default function Home() {
     setNewLegislationData(null);
 
     try {
-      const response = await fetch('https://tvvmkzoiicjrfjbmqzwc.supabase.co/functions/v1/bill_search', {
+      const response = await fetch('https://tvvmkzoiicjrfjbmqzwc.getSupabaseClient().co/functions/v1/bill_search', {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2dm1rem9paWNqcmZqYm1xendjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQxMDY0OTUsImV4cCI6MjA2OTY4MjQ5NX0.ZlVa4YsMZVrnvSmkJ7wKBiilQ84jh_qcN1wLl7E-Kso',

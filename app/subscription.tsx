@@ -7,7 +7,7 @@ import { iapService } from '../services/iapService';
 import { getWeeklyProfileUsage } from '../services/profileAccessService';
 import { SUBSCRIPTION_PRODUCTS } from '../types/iapTypes';
 import { isIAPAvailable } from '../utils/iapAvailability';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 // Subscription box content - EDIT THESE TO CHANGE TEXT
 const BOX_1_CONTENT = {
@@ -89,7 +89,7 @@ export default function Subscription() {
           
           // Validate receipt with Apple for security
           if (user?.id && (purchase as any).transactionReceipt) {
-            const { data, error } = await supabase.functions.invoke('verify_receipt', {
+            const { data, error } = await getSupabaseClient().functions.invoke('verify_receipt', {
               body: {
                 receiptData: (purchase as any).transactionReceipt,
                 userId: user.id

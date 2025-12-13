@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
 import { addToHistory } from '../../utils/historyUtils';
-import { supabase } from '../../utils/supabase';
+import { getSupabaseClient } from '../../utils/supabase';
 
 function getDisplayText(url: string) {
   try {
