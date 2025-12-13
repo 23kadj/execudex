@@ -69,7 +69,7 @@ const styles = StyleSheet.create({
     alignSelf:      'center',
     width:          '110%',
     height:         '9%',
-    backgroundColor:'#000',
+    backgroundColor:'rgba(0, 0, 0, 1)',
     flexDirection:  'row',
     justifyContent: 'space-between',
     alignItems:     'center',

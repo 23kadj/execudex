@@ -29,8 +29,8 @@ export default function Profile() {
           onPress: async () => {
             try {
               await signOut();
-              // Navigate back to signin screen after successful sign out
-              router.replace('/signin');
+              // Navigate to onboarding screen after successful sign out
+              router.replace('/');
             } catch (error) {
               console.error('Sign out error:', error);
               Alert.alert('Error', 'Failed to sign out. Please try again.');

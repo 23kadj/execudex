@@ -30,14 +30,8 @@ export default function SignInScreen() {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const router = useRouter();
 
-  useEffect(() => { 
-    // Only initialize IAP if available (not in Expo Go)
-    if (isIAPAvailable()) {
-      initIap().catch(err => {
-        console.warn('IAP initialization failed (may be Expo Go):', err);
-      });
-    }
-  }, []);
+  // Removed early IAP initialization - IAP will only initialize when user clicks "Restore Purchase"
+  // This prevents crashes in release builds from initializing IAP too early
 
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -161,6 +155,9 @@ export default function SignInScreen() {
     try {
       setBusy(true);
       setRestoreError(null);
+      // Initialize IAP only when user clicks restore (user-driven action)
+      // This ensures IAP is only initialized after UI is fully mounted
+      await initIap();
       const purchases = await restorePurchases();
       const matchingPurchase = purchases?.find(p =>
         ['execudex.plus.monthly', 'execudex.plus.quarterly'].includes(p.productId)

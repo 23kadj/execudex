@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
     flexDirection:     'row',
     justifyContent:    'space-between',
     alignItems:        'center',
-    paddingTop:        Platform.OS === 'ios' ? 35 : (StatusBar.currentHeight || 0) + 10,
+    paddingTop:        Platform.OS === 'ios' ? 30 : (StatusBar.currentHeight || 0) + 0,
     paddingHorizontal: 30,
   },
   logo:        { width: 160, height: 80, resizeMode: 'contain' },

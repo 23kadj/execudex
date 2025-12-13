@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "execudex",
+    "name": "Execudex",
     "slug": "execudex",
     "scheme": "execudex",
     "version": "1.0.0",
@@ -8,10 +8,15 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "splash": {
+      "image": "./assets/wordlogo1.png",
+      "resizeMode": "contain",
       "backgroundColor": "#000000"
     },
     "updates": {
-      "fallbackToCacheTimeout": 0
+      "enabled": false,
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/4e28ab10-6645-47e9-ba49-fedf1a4a752d",
+      "checkAutomatically": "ON_ERROR_RECOVERY"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -32,6 +37,9 @@
       },
       "package": "com.execudex.app"
     },
+    "web": {
+      "favicon": "./assets/icon.png"
+    },
     "plugins": [
       "expo-router"
     ],
@@ -40,6 +48,9 @@
       "eas": {
         "projectId": "4e28ab10-6645-47e9-ba49-fedf1a4a752d"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
     }
   }
 }

@@ -46,8 +46,13 @@ export default function Subscription() {
   const [isRestoring, setIsRestoring] = useState(false);
 
   // Initialize IAP service and fetch usage data
+  // Delay IAP initialization slightly to ensure UI is fully mounted (prevents release crashes)
   useEffect(() => {
     const initializeIAP = async () => {
+      // Small delay to ensure UI is fully mounted before initializing IAP
+      // This prevents crashes in release builds from initializing too early
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       try {
         await iapService.initialize();
         await initIap(); // Initialize the MVP IAP module
@@ -320,22 +325,6 @@ export default function Subscription() {
                 {BOX_2_CONTENT.feature2}
               </Text>
             </View>
-
-            {/* Purchase Button for Plus Monthly */}
-            {profileUsage?.plan !== 'plus' && isIAPAvailable() && (
-              <TouchableOpacity
-                style={[styles.purchaseButton, isPurchasing && styles.purchaseButtonDisabled]}
-                onPress={() => handlePurchase(SUBSCRIPTION_PRODUCTS.PLUS_MONTHLY)}
-                disabled={isPurchasing || isRestoring}
-                activeOpacity={0.7}
-              >
-                {isPurchasing ? (
-                  <ActivityIndicator size="small" color="#000" />
-                ) : (
-                  <Text style={styles.purchaseButtonText}>Subscribe</Text>
-                )}
-              </TouchableOpacity>
-            )}
           </View>
         </View>
 
@@ -363,22 +352,6 @@ export default function Subscription() {
                 {BOX_4_CONTENT.feature2}
               </Text>
             </View>
-
-            {/* Purchase Button for Plus Quarterly */}
-            {profileUsage?.plan !== 'plus' && isIAPAvailable() && (
-              <TouchableOpacity
-                style={[styles.purchaseButton, isPurchasing && styles.purchaseButtonDisabled]}
-                onPress={() => handlePurchase(SUBSCRIPTION_PRODUCTS.PLUS_QUARTERLY)}
-                disabled={isPurchasing || isRestoring}
-                activeOpacity={0.7}
-              >
-                {isPurchasing ? (
-                  <ActivityIndicator size="small" color="#000" />
-                ) : (
-                  <Text style={styles.purchaseButtonText}>Subscribe</Text>
-                )}
-              </TouchableOpacity>
-            )}
           </View>
         </View>
 

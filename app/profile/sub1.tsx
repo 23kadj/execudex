@@ -445,7 +445,7 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
       // 4-button grid like legi1 (4 preview cards + 2x2 grid)
       return (
         <View style={styles.softGridContainer}>
-          <View style={styles.gridRow}>
+          <View style={styles.softGridRow}>
             <AnimatedPressable
               onPressIn={() => {
                 Haptics.selectionAsync();
@@ -495,7 +495,7 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
               <Text style={styles.gridButtonText2}>Social Programs</Text>
             </AnimatedPressable>
           </View>
-          <View style={styles.gridRow}>
+          <View style={styles.softGridRow}>
             <AnimatedPressable
               onPressIn={() => {
                 Haptics.selectionAsync();
@@ -1528,18 +1528,26 @@ const styles = StyleSheet.create({
     width: '95%',
     alignSelf: 'center',
     borderRadius: 32,
-    height: 165,
+    height: 158,
     marginTop: 0,
     marginBottom: 15,
     paddingTop: 18,
     paddingBottom: 18,
-    justifyContent: 'space-between',
+    justifyContent: 'center',
   },
 
   gridRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginBottom: 10,
+    marginTop: 0,
+    paddingHorizontal: 0,
+  },
+  softGridRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginBottom: 5,
+    marginTop: 5,
     paddingHorizontal: 0,
   },
   gridButton1: {
@@ -1653,6 +1661,8 @@ const styles = StyleSheet.create({
   gridButtonFull: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    marginTop: 0,
+    marginBottom: 5,
     height: 54,
     width: '90%',
     alignItems: 'center',

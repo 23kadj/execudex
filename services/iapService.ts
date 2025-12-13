@@ -8,20 +8,42 @@ import {
 import { isIAPAvailable } from '../utils/iapAvailability';
 import { supabase } from '../utils/supabase';
 
-// Conditionally import IAP only if available (not in Expo Go)
-let RNIap: any = null;
-let endConnection: any = null;
-let finishTransaction: any = null;
-let getAvailablePurchases: any = null;
-let getSubscriptions: any = null;
-let initConnection: any = null;
-let purchaseErrorListener: any = null;
-let purchaseUpdatedListener: any = null;
+// Lazy-load IAP module to avoid top-level require() that can crash release builds
+// Only load when actually needed, not at module import time
+let RNIap: any = undefined;
+let endConnection: any = undefined;
+let finishTransaction: any = undefined;
+let getAvailablePurchases: any = undefined;
+let getSubscriptions: any = undefined;
+let initConnection: any = undefined;
+let purchaseErrorListener: any = undefined;
+let purchaseUpdatedListener: any = undefined;
 type Product = any;
 type Purchase = any;
 type SubscriptionPurchase = any;
 
-if (isIAPAvailable()) {
+/**
+ * Lazy-load IAP module only when needed
+ * This prevents crashes in release builds from top-level require()
+ */
+function lazyLoadIAPModule() {
+  if (initConnection !== undefined) {
+    // Already attempted to load (null means failed, function means success)
+    return;
+  }
+
+  if (!isIAPAvailable()) {
+    RNIap = null;
+    endConnection = null;
+    finishTransaction = null;
+    getAvailablePurchases = null;
+    getSubscriptions = null;
+    initConnection = null;
+    purchaseErrorListener = null;
+    purchaseUpdatedListener = null;
+    return;
+  }
+
   try {
     const iapModule = require('react-native-iap');
     RNIap = iapModule.default;
@@ -34,6 +56,14 @@ if (isIAPAvailable()) {
     purchaseUpdatedListener = iapModule.purchaseUpdatedListener;
   } catch (error) {
     console.warn('⚠️ IAP module not available (likely Expo Go):', error);
+    RNIap = null;
+    endConnection = null;
+    finishTransaction = null;
+    getAvailablePurchases = null;
+    getSubscriptions = null;
+    initConnection = null;
+    purchaseErrorListener = null;
+    purchaseUpdatedListener = null;
   }
 }
 
@@ -45,8 +75,12 @@ class IAPService {
   /**
    * Initialize the IAP service
    * Safe to call in Expo Go - will silently fail
+   * Only loads IAP module when this function is called (lazy loading)
    */
   async initialize(): Promise<void> {
+    // Lazy-load IAP module only when this function is called
+    lazyLoadIAPModule();
+    
     if (!isIAPAvailable() || !initConnection) {
       console.log('ℹ️ IAP not available (Expo Go mode)');
       return;
@@ -69,8 +103,12 @@ class IAPService {
   /**
    * Get available subscription products
    * Safe to call in Expo Go - returns empty array
+   * Only loads IAP module when this function is called (lazy loading)
    */
   async getAvailableSubscriptions(): Promise<Product[]> {
+    // Lazy-load IAP module only when this function is called
+    lazyLoadIAPModule();
+    
     if (!isIAPAvailable() || !getSubscriptions) {
       console.log('ℹ️ IAP not available (Expo Go mode) - returning empty subscriptions');
       return [];
@@ -93,8 +131,12 @@ class IAPService {
   /**
    * Purchase a subscription
    * In Expo Go, shows alert that IAP is not available
+   * Only loads IAP module when this function is called (lazy loading)
    */
   async purchaseSubscription(productId: SubscriptionProductId): Promise<void> {
+    // Lazy-load IAP module only when this function is called
+    lazyLoadIAPModule();
+    
     if (!isIAPAvailable() || !RNIap) {
       return;
     }
@@ -119,8 +161,12 @@ class IAPService {
   /**
    * Restore previous purchases
    * Safe to call in Expo Go - returns empty array
+   * Only loads IAP module when this function is called (lazy loading)
    */
   async restorePurchases(): Promise<SubscriptionPurchase[]> {
+    // Lazy-load IAP module only when this function is called
+    lazyLoadIAPModule();
+    
     if (!isIAPAvailable() || !getAvailablePurchases) {
       console.log('ℹ️ IAP not available (Expo Go mode) - returning empty purchases');
       return [];
@@ -142,11 +188,15 @@ class IAPService {
   /**
    * Set up purchase listeners
    * In Expo Go, returns a no-op cleanup function
+   * Only loads IAP module when this function is called (lazy loading)
    */
   setupPurchaseListeners(
     onPurchaseSuccess: (purchase: Purchase) => Promise<void>,
     onPurchaseError: (error: PurchaseError) => void
   ): () => void {
+    // Lazy-load IAP module only when this function is called
+    lazyLoadIAPModule();
+    
     if (!isIAPAvailable() || !purchaseUpdatedListener || !purchaseErrorListener) {
       console.log('ℹ️ IAP not available (Expo Go mode) - listeners not set up');
       // Return a no-op cleanup function
@@ -289,8 +339,12 @@ class IAPService {
 
   /**
    * Clean up and disconnect
+   * Only loads IAP module when this function is called (lazy loading)
    */
   async cleanup(): Promise<void> {
+    // Lazy-load IAP module only when this function is called
+    lazyLoadIAPModule();
+    
     try {
       if (this.purchaseUpdateSubscription) {
         this.purchaseUpdateSubscription.remove();
@@ -301,7 +355,9 @@ class IAPService {
         this.purchaseErrorSubscription = null;
       }
       
-      await endConnection();
+      if (endConnection) {
+        await endConnection();
+      }
       this.isInitialized = false;
       console.log('✅ IAP service cleaned up');
     } catch (error) {

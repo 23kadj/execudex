@@ -55,6 +55,17 @@ const BOX_4_CONTENT = {
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedSafeAreaView = Animated.createAnimatedComponent(SafeAreaView);
 export default function Onboarding() {
+  const { session, loading: authLoading } = useAuth();
+  const router = useRouter();
+
+  // Immediately redirect to home if user is already authenticated
+  useEffect(() => {
+    if (!authLoading && session) {
+      console.log('[Onboarding] User already authenticated, redirecting to home');
+      router.replace('/(tabs)/home');
+    }
+  }, [session, authLoading, router]);
+
 const steps = ['getStarted','ageGender','nextScreenKey','hearAbout','stayInformed','unsatisfiedReason','valueProp','profileHighlight', 'paymentPlan'];
 type StepKey = typeof steps[number];
 const [stepIndex, setStepIndex] = useState(0);
@@ -75,7 +86,6 @@ const step: StepKey = steps[stepIndex];
   const [age, setAge]       = useState<string>('');
   const [gender, setGender] = useState<string>('');
   const [involvement, setInvolvement] = useState<string>('');
-  const router              = useRouter();
   const { signUpWithEmail } = useAuth();
   
   // Sign-up form state
@@ -548,6 +558,12 @@ useLayoutEffect(() => {
     profileDescAnim.setValue(1);
   }
 }, [step]);
+
+  // Show nothing while checking auth or if already authenticated
+  // This check must come AFTER all hooks are declared to avoid React hooks violations
+  if (authLoading || session) {
+    return null;
+  }
 
   if (step === 'getStarted') {
     return (
@@ -1999,6 +2015,10 @@ if (step === 'paymentPlan') {
         title={purchaseError ? 'Purchase Error' : 'Processing purchase...'}
         subtitle={purchaseError || 'Confirm with Apple Pay to finish your Plus signup.'}
         error={purchaseError}
+        onCancel={() => {
+          setIsPurchasing(false);
+          setPurchaseError(null);
+        }}
       />
 
     </AnimatedSafeAreaView>

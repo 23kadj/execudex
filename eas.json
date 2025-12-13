@@ -5,44 +5,18 @@
   },
   "build": {
     "development": {
-      "developmentClient": true,
       "distribution": "internal",
-      "env": {
-        "EXPO_CACHE_DIR": "/tmp/expo-cache"
-      },
-      "hooks": {
-        "prebuild": {
-          "commands": [
-            "bash scripts/prebuild-setup.sh"
-          ]
-        }
-      }
+      "developmentClient": true,
+      "channel": "development"
     },
     "preview": {
       "distribution": "internal",
-      "env": {
-        "EXPO_CACHE_DIR": "/tmp/expo-cache"
-      },
-      "hooks": {
-        "prebuild": {
-          "commands": [
-            "bash scripts/prebuild-setup.sh"
-          ]
-        }
-      }
+      "channel": "preview"
     },
     "production": {
-      "autoIncrement": true,
-      "env": {
-        "EXPO_CACHE_DIR": "/tmp/expo-cache"
-      },
-      "hooks": {
-        "prebuild": {
-          "commands": [
-            "bash scripts/prebuild-setup.sh"
-          ]
-        }
-      }
+      "distribution": "store",
+      "channel": "production",
+      "autoIncrement": true
     }
   },
   "submit": {
