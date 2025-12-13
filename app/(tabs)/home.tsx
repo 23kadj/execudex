@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// AsyncStorage is lazy-loaded to prevent crashes in preview/release builds
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router'; // <-- Add this if using expo-router
 import React, { useEffect, useRef, useState } from 'react';
@@ -21,6 +21,7 @@ import {
 import { useAuth } from '../../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../../components/ProfileLoadingIndicator';
 import { NavigationService } from '../../services/navigationService';
+import { getSupabaseClient } from '../../utils/supabase';
 // If using React Navigation, use: import { useNavigation } from '@react-navigation/native';
 
 // Import Supabase client
@@ -1819,7 +1820,7 @@ export default function Home() {
 
       try {
         // Require onboarding data to exist
-        const { data: userData } = await supabase
+        const { data: userData } = await getSupabaseClient()
           .from('users')
           .select('onboard')
           .eq('uuid', user.id)
@@ -1828,6 +1829,8 @@ export default function Home() {
         if (!userData?.onboard) return;
 
         const seenKey = `hasSeenFoundersNote:${user.id}`;
+        // Lazy-load AsyncStorage
+        const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
         const hasSeenNote = await AsyncStorage.getItem(seenKey);
         if (hasSeenNote) return;
 
@@ -1963,7 +1966,7 @@ export default function Home() {
         console.log('Fetching politician data for home page...');
         
         // Fetch all data from ppl_index
-        const { data: allData, error } = await supabase
+        const { data: allData, error } = await getSupabaseClient()
           .from('ppl_index')
           .select('id, name, sub_name')
           .order('id', { ascending: true });
@@ -1977,7 +1980,7 @@ export default function Home() {
           console.log('Successfully fetched data from ppl_index:', allData);
           
           // Fetch approval/disapproval data from ppl_profiles
-          const { data: profileData, error: profileError } = await supabase
+          const { data: profileData, error: profileError } = await getSupabaseClient()
             .from('ppl_profiles')
             .select('index_id, approval, disapproval')
             .order('index_id', { ascending: true });
@@ -2065,7 +2068,7 @@ export default function Home() {
         console.log('Fetching legislation data for home page...');
         
         // Fetch all data from legi_index
-        const { data: allData, error } = await supabase
+        const { data: allData, error } = await getSupabaseClient()
           .from('legi_index')
           .select('id, name, sub_name')
           .order('id', { ascending: true });

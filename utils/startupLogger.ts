@@ -1,13 +1,23 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Lazy-load AsyncStorage to prevent crashes in preview/release builds
+// AsyncStorage is only loaded when functions are called, not at module scope
 
 const STARTUP_LOG_KEY = '@execudex:startup_log';
 const MAX_LOG_ENTRIES = 100; // Prevent unbounded growth
+
+/**
+ * Lazy-load AsyncStorage module
+ */
+async function getAsyncStorage() {
+  const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
+  return AsyncStorage;
+}
 
 /**
  * Logs a startup milestone with timestamp
  */
 export async function logStartup(message: string): Promise<void> {
   try {
+    const AsyncStorage = await getAsyncStorage();
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] ${message}`;
     
@@ -38,6 +48,7 @@ export async function logStartup(message: string): Promise<void> {
  */
 export async function getStartupLog(): Promise<string> {
   try {
+    const AsyncStorage = await getAsyncStorage();
     const log = await AsyncStorage.getItem(STARTUP_LOG_KEY);
     return log || 'No startup log entries found.';
   } catch (error) {
@@ -51,6 +62,7 @@ export async function getStartupLog(): Promise<string> {
  */
 export async function clearStartupLog(): Promise<void> {
   try {
+    const AsyncStorage = await getAsyncStorage();
     await AsyncStorage.removeItem(STARTUP_LOG_KEY);
     console.log('[StartupLogger] Startup log cleared');
   } catch (error) {
@@ -58,4 +70,3 @@ export async function clearStartupLog(): Promise<void> {
     throw error;
   }
 }
-
