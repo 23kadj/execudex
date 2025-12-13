@@ -87,8 +87,7 @@ export default function SignInScreen() {
       
       // Check if user has completed onboarding (has a plan)
       if (user) {
-        const { supabase } = await import('../utils/supabase');
-        const { data: userData, error: userError } = await supabase
+        const { data: userData, error: userError } = await getSupabaseClient()
           .from('users')
           .select('plan, onboard')
           .eq('uuid', user.id)
