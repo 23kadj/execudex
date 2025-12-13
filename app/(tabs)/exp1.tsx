@@ -59,6 +59,7 @@ const exp1 = React.memo(() => {
         console.log('Fetching legislation data for exp1 page...');
         
         // Fetch legislation data for IDs 13-20 from legi_index
+        const supabase = getSupabaseClient();
         const { data: allData, error } = await supabase
           .from('legi_index')
           .select('id, name, sub_name')
@@ -189,8 +190,8 @@ const exp1 = React.memo(() => {
     isSearchingRef.current = true;
     
     try {
-      // Dynamically import Supabase to avoid Fast Refresh issues
-      const { supabase } = await import('../../utils/supabase');
+      // Use lazy-loaded Supabase client
+      const supabase = getSupabaseClient();
       
       // Search in ppl_index by name and sub_name (politicians)
       const { data: pplData, error: pplError } = await supabase

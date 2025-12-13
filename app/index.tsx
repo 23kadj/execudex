@@ -23,7 +23,7 @@ export default function Onboarding() {
         
         <TouchableOpacity
           style={styles.button}
-          onPress={() => router.push('/(tabs)')}
+          onPress={() => router.push('/(tabs)/home')}
         >
           <Text style={styles.buttonText}>Go to Tabs</Text>
         </TouchableOpacity>

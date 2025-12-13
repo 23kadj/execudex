@@ -206,6 +206,7 @@ export default function Sub4() {
     const fetchProfileTier = async () => {
       if (profileIndex) {
         try {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('ppl_index')
             .select('tier')
@@ -273,6 +274,7 @@ export default function Sub4() {
         let allRows: any[] = [];
 
         while (true) {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('card_index')
             .select('id, title, subtext, screen, category, opens_7d, score')

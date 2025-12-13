@@ -33,6 +33,8 @@ export async function fetchCardData({
   screen
 }: CardIndexParams): Promise<CardData[]> {
   try {
+    // Get Supabase client
+    const supabase = getSupabaseClient();
     // Build the query with is_active filter
     let query = supabase
       .from('card_index')
@@ -98,6 +100,8 @@ export async function fetchPreviewCardsByTier({
   tier: string;
 }): Promise<CardData[]> {
   try {
+    // Get Supabase client
+    const supabase = getSupabaseClient();
     // Get all active cards for this owner/type
     const { data: allCards, error: allCardsError } = await supabase
       .from('card_index')
@@ -182,6 +186,8 @@ export async function fetchCategoryCardData({
   category
 }: CategoryCardParams): Promise<CardData[]> {
   try {
+    // Get Supabase client
+    const supabase = getSupabaseClient();
     // Build the query for category pages with category filter
     let query = supabase
       .from('card_index')
@@ -249,6 +255,8 @@ export async function fetchCategoryCardDataExcludingPreview({
       ? ['agenda', 'identity', 'affiliates']  // Sub1, Sub2, Sub3
       : ['agenda', 'impact', 'discourse'];   // Legi1, Legi2, Legi3
     
+    // Get Supabase client
+    const supabase = getSupabaseClient();
     // Get all cards from preview screens to exclude them
     const previewCardsPromises = previewScreens.map(screen => 
       supabase
@@ -338,6 +346,8 @@ export async function fetchCategoryCardsByTier({
   tier: string;
 }): Promise<CardData[]> {
   try {
+    // Get Supabase client
+    const supabase = getSupabaseClient();
     // Get all active cards for this owner/type
     const { data: allCards, error: allCardsError } = await supabase
       .from('card_index')
@@ -467,6 +477,8 @@ export async function fetchCardsByScreen({
   category?: string;
 }): Promise<CardData[]> {
   try {
+    // Get Supabase client
+    const supabase = getSupabaseClient();
     // Get all active cards for this owner/type
     const { data: allCards, error: allCardsError } = await supabase
       .from('card_index')
@@ -737,6 +749,8 @@ export async function fetchLegislationCategoryCards({
   category: string;
 }): Promise<CardData[]> {
   try {
+    // Get Supabase client
+    const supabase = getSupabaseClient();
     // Build the query for legislation category pages
     let query = supabase
       .from('card_index')

@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// AsyncStorage is lazy-loaded to prevent crashes in preview/release builds
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -39,6 +39,8 @@ export default function Rankings() {
     useCallback(() => {
       const loadStoredData = async () => {
         try {
+          // Lazy-load AsyncStorage
+          const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
           const storedRanking = await AsyncStorage.getItem(STORAGE_KEYS.SUBMITTED_RANKING);
           const storedStars = await AsyncStorage.getItem(STORAGE_KEYS.SUBMITTED_STARS);
           
@@ -55,6 +57,7 @@ export default function Rankings() {
           // Load user's submitted stars from database if authenticated
           if (user?.id && politicianIndex) {
             try {
+              const supabase = getSupabaseClient();
               const { data: userScore, error } = await supabase
                 .from('ppl_scores')
                 .select('score')
@@ -106,6 +109,7 @@ export default function Rankings() {
     const refreshUserRanking = async () => {
       if (user?.id && politicianIndex) {
         try {
+          const supabase = getSupabaseClient();
           const { data: userScore, error } = await supabase
             .from('ppl_scores')
             .select('score')
@@ -144,6 +148,7 @@ export default function Rankings() {
     
     try {
       // Query all scores for the current politician
+      const supabase = getSupabaseClient();
       const { data: scores, error } = await supabase
         .from('ppl_scores')
         .select('score')
@@ -175,6 +180,7 @@ export default function Rankings() {
   // Function to update profile score in ppl_profiles
   const updateProfileScore = async (indexId: number, score: number) => {
     try {
+      const supabase = getSupabaseClient();
       const { error } = await supabase
         .from('ppl_profiles')
         .update({ score: score })
@@ -191,6 +197,7 @@ export default function Rankings() {
   // Function to get the next available ID for ppl_scores
   const getNextAvailableId = async (): Promise<number> => {
     try {
+      const supabase = getSupabaseClient();
       const { data: scores, error } = await supabase
         .from('ppl_scores')
         .select('id')
@@ -251,6 +258,8 @@ export default function Rankings() {
         setIsSubmitted(true);
         
         // Persist the data to AsyncStorage
+        // Lazy-load AsyncStorage
+        const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
         await AsyncStorage.setItem(STORAGE_KEYS.SUBMITTED_RANKING, newSubmittedRanking);
         await AsyncStorage.setItem(STORAGE_KEYS.SUBMITTED_STARS, filledStars.toString());
         
@@ -274,6 +283,7 @@ export default function Rankings() {
 
     try {
       // Check if a score already exists for this user and politician
+      const supabase = getSupabaseClient();
       const { data: existingScore, error: checkError } = await supabase
         .from('ppl_scores')
         .select('id')
@@ -288,6 +298,7 @@ export default function Rankings() {
       
       if (existingScore) {
         // Update existing score
+        const supabase = getSupabaseClient();
         const { error: updateError } = await supabase
           .from('ppl_scores')
           .update({ 
@@ -302,6 +313,7 @@ export default function Rankings() {
       } else {
         // Insert new score
         const nextId = await getNextAvailableId();
+        const supabase = getSupabaseClient();
         const { error: insertError } = await supabase
           .from('ppl_scores')
           .insert({

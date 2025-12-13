@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// AsyncStorage is lazy-loaded to prevent crashes in preview/release builds
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -100,6 +100,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         try {
           console.log('Fetching profile data for index:', index);
           
+          const supabase = getSupabaseClient();
           const { data: profileData, error } = await supabase
             .from('ppl_profiles')
             .select('approval, disapproval, votes, poll_summary, poll_link')
@@ -150,6 +151,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         try {
           console.log('Fetching scores from ppl_scores for index:', index);
           
+          const supabase = getSupabaseClient();
           const { data: scores, error } = await supabase
             .from('ppl_scores')
             .select('score')
@@ -203,6 +205,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       if (index) {
         try {
           // Fetch current metrics data
+          const supabase = getSupabaseClient();
           const { data: profileData } = await supabase
             .from('ppl_profiles')
             .select('approval, disapproval, votes')
@@ -245,6 +248,8 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       // Load stored stars from AsyncStorage
       const loadStoredStars = async () => {
         try {
+          // Lazy-load AsyncStorage
+          const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
           const storedStars = await AsyncStorage.getItem('submittedStars');
           if (storedStars) {
             setFilledStars(parseInt(storedStars));
@@ -258,6 +263,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       const refetchAverageScore = async () => {
         if (index) {
           try {
+            const supabase = getSupabaseClient();
             const { data: scores, error } = await supabase
               .from('ppl_scores')
               .select('score')
@@ -432,6 +438,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
           
           // Fetch the generated cards to display them
           try {
+            const supabase = getSupabaseClient();
             const { data: cards, error } = await supabase
               .from('card_index')
               .select('id, title, subtext, category, screen, opens_7d, score')
@@ -515,6 +522,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       if (result.success) {
         // Success - refetch profile data to update UI
         // Re-run the fetchProfileData logic - NOW INCLUDING poll_summary and poll_link
+        const supabase = getSupabaseClient();
         const { data: profileData, error } = await supabase
           .from('ppl_profiles')
           .select('approval, disapproval, votes, poll_summary, poll_link')

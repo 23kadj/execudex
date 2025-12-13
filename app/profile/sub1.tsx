@@ -7,6 +7,7 @@ import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
 import { CardData, fetchCardsByScreen } from '../../utils/cardData';
 import { incrementOpens } from '../../utils/incrementOpens7d';
+import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -36,6 +37,7 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
     const fetchProfileData = async () => {
       if (index) {
         try {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('ppl_index')
             .select('tier, office_type')
@@ -47,8 +49,8 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
             setTier('base');
             setOfficeType('');
           } else if (data) {
-            setTier(data.tier || '');
-            setOfficeType(data.office_type || '');
+            setTier((data as any).tier || '');
+            setOfficeType((data as any).office_type || '');
           }
         } catch (err) {
           console.error('Error in fetchProfileData:', err);

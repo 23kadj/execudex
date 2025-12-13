@@ -37,6 +37,7 @@ export default function Sub2({ scrollY, name, position, goToTab, index, scrollRe
     const fetchProfileData = async () => {
       if (index) {
         try {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('ppl_index')
             .select('tier, office_type')
