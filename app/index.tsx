@@ -27,6 +27,20 @@ export default function Onboarding() {
         >
           <Text style={styles.buttonText}>Go to Tabs</Text>
         </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => router.push('/debug-supabase-health')}
+        >
+          <Text style={styles.buttonText}>Debug: Supabase Health</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => router.push('/debug-crash-log')}
+        >
+          <Text style={styles.buttonText}>Debug: Crash Log</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );

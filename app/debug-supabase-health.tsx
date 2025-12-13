@@ -14,49 +14,84 @@ interface TestResult {
   };
 }
 
+interface TableTestResult {
+  tableName: string;
+  result: TestResult;
+}
+
 export default function DebugSupabaseHealth() {
-  const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [testResults, setTestResults] = useState<TableTestResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [testTimestamp, setTestTimestamp] = useState<string>('');
 
   const runTest = async () => {
     setIsRunning(true);
     setTestTimestamp(new Date().toISOString());
+    setTestResults([]);
     
     try {
       const supabase = getSupabaseClient();
       
-      // Query card_index table (same table used by fetchCardsByScreen)
-      // Simple query to test connectivity - select one row
-      const { data, error, count } = await supabase
-        .from('card_index')
-        .select('id', { count: 'exact' })
-        .limit(1);
+      // Test multiple tables
+      const tablesToTest = [
+        { name: 'ppl_index', query: supabase.from('ppl_index').select('id', { count: 'exact' }).limit(1) },
+        { name: 'ppl_profiles', query: supabase.from('ppl_profiles').select('id', { count: 'exact' }).limit(1) },
+        { name: 'card_index', query: supabase.from('card_index').select('id', { count: 'exact' }).limit(1) },
+        { name: 'card_content', query: supabase.from('card_content').select('id', { count: 'exact' }).limit(1) },
+      ];
       
-      if (error) {
-        setTestResult({
+      const results: TableTestResult[] = [];
+      
+      for (const { name, query } of tablesToTest) {
+        try {
+          const { data, error, count } = await query;
+          
+          if (error) {
+            results.push({
+              tableName: name,
+              result: {
+                success: false,
+                error: {
+                  message: error.message || 'Unknown error',
+                  code: error.code || undefined,
+                  details: error.details || undefined,
+                  hint: error.hint || undefined,
+                },
+              },
+            });
+          } else {
+            results.push({
+              tableName: name,
+              result: {
+                success: true,
+                rowCount: count !== null && count !== undefined ? count : (data?.length ?? 0),
+              },
+            });
+          }
+        } catch (err) {
+          results.push({
+            tableName: name,
+            result: {
+              success: false,
+              error: {
+                message: err instanceof Error ? err.message : String(err),
+              },
+            },
+          });
+        }
+      }
+      
+      setTestResults(results);
+    } catch (err) {
+      setTestResults([{
+        tableName: 'Connection',
+        result: {
           success: false,
           error: {
-            message: error.message || 'Unknown error',
-            code: error.code || undefined,
-            details: error.details || undefined,
-            hint: error.hint || undefined,
+            message: err instanceof Error ? err.message : String(err),
           },
-        });
-      } else {
-        // Success - show count if available, otherwise show rows returned
-        setTestResult({
-          success: true,
-          rowCount: count !== null && count !== undefined ? count : (data?.length ?? 0),
-        });
-      }
-    } catch (err) {
-      setTestResult({
-        success: false,
-        error: {
-          message: err instanceof Error ? err.message : String(err),
         },
-      });
+      }]);
     } finally {
       setIsRunning(false);
     }
@@ -142,60 +177,65 @@ export default function DebugSupabaseHealth() {
           <Text style={styles.timestamp}>Last test: {testTimestamp}</Text>
         )}
 
-        {testResult && (
-          <View style={styles.resultContainer}>
-            {testResult.success ? (
-              <View style={styles.successContainer}>
-                <Text style={styles.successTitle}>✅ Success</Text>
-                <Text style={styles.successText}>
-                  Query executed successfully
-                </Text>
-                {testResult.rowCount !== undefined && (
-                  <Text style={styles.successText}>
-                    Rows returned: {testResult.rowCount}
-                  </Text>
-                )}
-              </View>
-            ) : (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorTitle}>❌ Error</Text>
-                {testResult.error && (
-                  <>
-                    <Text style={styles.errorLabel}>Message:</Text>
-                    <Text style={styles.errorText}>
-                      {testResult.error.message}
+        {testResults.length > 0 && (
+          <View style={styles.resultsContainer}>
+            {testResults.map((tableTest, index) => (
+              <View key={index} style={styles.resultContainer}>
+                <Text style={styles.tableName}>{tableTest.tableName}</Text>
+                {tableTest.result.success ? (
+                  <View style={styles.successContainer}>
+                    <Text style={styles.successTitle}>✅ Success</Text>
+                    <Text style={styles.successText}>
+                      Query executed successfully
                     </Text>
-                    
-                    {testResult.error.code && (
+                    {tableTest.result.rowCount !== undefined && (
+                      <Text style={styles.successText}>
+                        Rows: {tableTest.result.rowCount}
+                      </Text>
+                    )}
+                  </View>
+                ) : (
+                  <View style={styles.errorContainer}>
+                    <Text style={styles.errorTitle}>❌ Error</Text>
+                    {tableTest.result.error && (
                       <>
-                        <Text style={styles.errorLabel}>Code:</Text>
+                        <Text style={styles.errorLabel}>Message:</Text>
                         <Text style={styles.errorText}>
-                          {testResult.error.code}
+                          {tableTest.result.error.message}
                         </Text>
+                        
+                        {tableTest.result.error.code && (
+                          <>
+                            <Text style={styles.errorLabel}>Code:</Text>
+                            <Text style={styles.errorText}>
+                              {tableTest.result.error.code}
+                            </Text>
+                          </>
+                        )}
+                        
+                        {tableTest.result.error.details && (
+                          <>
+                            <Text style={styles.errorLabel}>Details:</Text>
+                            <Text style={styles.errorText}>
+                              {tableTest.result.error.details}
+                            </Text>
+                          </>
+                        )}
+                        
+                        {tableTest.result.error.hint && (
+                          <>
+                            <Text style={styles.errorLabel}>Hint:</Text>
+                            <Text style={styles.errorText}>
+                              {tableTest.result.error.hint}
+                            </Text>
+                          </>
+                        )}
                       </>
                     )}
-                    
-                    {testResult.error.details && (
-                      <>
-                        <Text style={styles.errorLabel}>Details:</Text>
-                        <Text style={styles.errorText}>
-                          {testResult.error.details}
-                        </Text>
-                      </>
-                    )}
-                    
-                    {testResult.error.hint && (
-                      <>
-                        <Text style={styles.errorLabel}>Hint:</Text>
-                        <Text style={styles.errorText}>
-                          {testResult.error.hint}
-                        </Text>
-                      </>
-                    )}
-                  </>
+                  </View>
                 )}
               </View>
-            )}
+            ))}
           </View>
         )}
       </View>
@@ -204,10 +244,11 @@ export default function DebugSupabaseHealth() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Instructions</Text>
         <Text style={styles.instructionText}>
-          • This screen tests Supabase connectivity by querying the card_index table{'\n'}
+          • This screen tests Supabase connectivity by querying multiple tables{'\n'}
+          • Tests: ppl_index, ppl_profiles, card_index, card_content{'\n'}
           • Tap "Re-run Test" to execute a new test{'\n'}
           • Check environment variables are set in your build configuration{'\n'}
-          • Review error details if the test fails
+          • Review error details if any test fails
         </Text>
       </View>
     </ScrollView>
@@ -282,8 +323,17 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     fontStyle: 'italic',
   },
-  resultContainer: {
+  resultsContainer: {
     marginTop: 10,
+  },
+  resultContainer: {
+    marginBottom: 15,
+  },
+  tableName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
   },
   successContainer: {
     backgroundColor: '#e8f5e9',

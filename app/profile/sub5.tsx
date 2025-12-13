@@ -443,6 +443,13 @@ export default function Sub5() {
                </View>
              </View>
            </View>
+         ) : !cardContent && !cardIndexData ? (
+           <View style={styles.contentSection}>
+             <View style={styles.gridContainer}>
+               <Text style={styles.title1}>No Data Available</Text>
+               <Text style={styles.info1}>Unable to load card content. Please try again later.</Text>
+             </View>
+           </View>
          ) : (
            <InfoSection {...infoSectionStyle} cardContent={cardContent} cardIndexData={cardIndexData} visible={true} handleLinkPress={handleLinkPress} />
          )}

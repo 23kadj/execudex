@@ -151,6 +151,7 @@ export default function Legi5() {
     const checkBookmarkStatus = async () => {
       if (cardId) {
         try {
+          const supabase = getSupabaseClient();
           // For now, check if any bookmark exists (without user restriction)
           const { data: bookmarkData, error: bookmarkError } = await supabase
             .from('bookmarks')
@@ -199,6 +200,7 @@ export default function Legi5() {
       
       setIsLoadingContent(true);
       try {
+        const supabase = getSupabaseClient();
         const { data, error } = await supabase
           .from('card_content')
           .select('title, body_text, tldr, link1, excerpt')
@@ -229,6 +231,7 @@ export default function Legi5() {
       
       setIsLoadingIndex(true);
       try {
+        const supabase = getSupabaseClient();
         const { data, error } = await supabase
           .from('card_index')
           .select('subtext, is_active, screen, category, created_at')
@@ -402,6 +405,13 @@ export default function Legi5() {
               </View>
             </View>
           </View>
+        ) : !cardContent && !cardIndexData ? (
+          <View style={styles.contentSection}>
+            <View style={styles.gridContainer}>
+              <Text style={styles.title1}>No Data Available</Text>
+              <Text style={styles.info1}>Unable to load card content. Please try again later.</Text>
+            </View>
+          </View>
         ) : (
           <InfoSection {...infoSectionStyle} cardContent={cardContent} cardIndexData={cardIndexData} visible={true} handleLinkPress={handleLinkPress} />
         )}
@@ -437,6 +447,7 @@ const BookmarkButton = ({ isBookmarked, setIsBookmarked, cardId }: {
           bookmarkData.user_id = user.id;
         }
         
+        const supabase = getSupabaseClient();
         const { error: insertError } = await supabase
           .from('bookmarks')
           .insert(bookmarkData);
@@ -448,6 +459,7 @@ const BookmarkButton = ({ isBookmarked, setIsBookmarked, cardId }: {
         }
       } else {
         // Unbookmarking - delete from database
+        const supabase = getSupabaseClient();
         const { error: deleteError } = await supabase
           .from('bookmarks')
           .delete()
