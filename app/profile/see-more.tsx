@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { persistentLogger } from '../../utils/persistentLogger';
-import { getSupabaseClient } from '../../utils/supabase';
 
 interface SeeMoreProps {
   name?: string;
@@ -38,99 +37,16 @@ export default function SeeMore({
   const router = useRouter();
   const params = useGlobalSearchParams();
   
-  // Extract id from params and validate
-  const idParam = params.id;
-  const politicianId = idParam && typeof idParam === 'string' ? parseInt(idParam, 10) : null;
+  // Use passed params directly (reverted to previous system - no fetching)
+  const politicianName = params.name as string || name || 'No Data Available';
+  const politicianPosition = params.position as string || position || 'No Data Available';
+  const approval = params.approval ? Number(params.approval) : (approvalPercentage || 50);
+  const disapproval = params.disapproval ? Number(params.disapproval) : (disapprovalPercentage || 50);
+  const pollSummaryText = (params.pollSummary as string) || pollSummary || '';
+  const pollLinkText = (params.pollLink as string) || pollLink || '';
   
-  // State for fetched data
-  const [politicianName, setPoliticianName] = useState<string>('No Data Available');
-  const [politicianPosition, setPoliticianPosition] = useState<string>('No Data Available');
-  const [approval, setApproval] = useState<number>(50);
-  const [disapproval, setDisapproval] = useState<number>(50);
-  const [pollSummaryText, setPollSummaryText] = useState<string>('');
-  const [pollLinkText, setPollLinkText] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [hasError, setHasError] = useState<boolean>(false);
-  
-  // Fetch profile data using id
-  useEffect(() => {
-    const fetchProfileData = async () => {
-      if (!politicianId || isNaN(politicianId)) {
-        console.error('Invalid politician ID:', idParam);
-        setHasError(true);
-        setIsLoading(false);
-        return;
-      }
-      
-      try {
-        setIsLoading(true);
-        setHasError(false);
-        
-        const supabase = getSupabaseClient();
-        
-        // Fetch basic info from ppl_index
-        const { data: indexData, error: indexError } = await supabase
-          .from('ppl_index')
-          .select('name, sub_name')
-          .eq('id', politicianId)
-          .maybeSingle();
-        
-        if (indexError) {
-          console.error('Error fetching politician data:', indexError);
-          setHasError(true);
-          setIsLoading(false);
-          return;
-        }
-        
-        if (indexData) {
-          const index = indexData as { name?: string; sub_name?: string };
-          setPoliticianName(index.name || 'No Data Available');
-          setPoliticianPosition(index.sub_name || 'No Data Available');
-        }
-        
-        // Fetch profile data from ppl_profiles
-        const { data: profileData, error: profileError } = await supabase
-          .from('ppl_profiles')
-          .select('approval, disapproval, poll_summary, poll_link')
-          .eq('index_id', politicianId)
-          .maybeSingle();
-        
-        if (profileError) {
-          console.error('Error fetching profile data:', profileError);
-          setHasError(true);
-          setIsLoading(false);
-          return;
-        }
-        
-        if (profileData) {
-          const profile = profileData as { approval?: number | null; disapproval?: number | null; poll_summary?: string | null; poll_link?: string | null };
-          // Update approval/disapproval
-          if (profile.approval !== null && profile.approval !== undefined) {
-            setApproval(Number(profile.approval));
-          }
-          if (profile.disapproval !== null && profile.disapproval !== undefined) {
-            setDisapproval(Number(profile.disapproval));
-          }
-          
-          // Update poll summary and link
-          if (profile.poll_summary) {
-            setPollSummaryText(profile.poll_summary);
-          }
-          if (profile.poll_link) {
-            setPollLinkText(profile.poll_link);
-          }
-        }
-        
-        setIsLoading(false);
-      } catch (err) {
-        console.error('Error in fetchProfileData:', err);
-        setHasError(true);
-        setIsLoading(false);
-      }
-    };
-    
-    fetchProfileData();
-  }, [politicianId, idParam]);
+  const [isLoading] = useState<boolean>(false);
+  const [hasError] = useState<boolean>(false);
 
   // Check if both approval and disapproval values are valid (not null/undefined and not default fallback values)
   const hasValidPollData = () => {
@@ -289,7 +205,7 @@ export default function SeeMore({
   }
   
   // Show error state
-  if (hasError || !politicianId) {
+  if (hasError) {
     return (
       <View style={styles.container}>
         <Header />

@@ -16,6 +16,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../components/AuthProvider';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { checkBookmarkStatus, toggleBookmark } from '../utils/bookmarkUtils';
+import { getSupabaseClient } from '../utils/supabase';
 import Sub1 from './profile/sub1';
 import Sub2 from './profile/sub2';
 import Sub3 from './profile/sub3';
@@ -79,6 +80,7 @@ export default function Index1({ navigation }: { navigation?: any }) {
       if (index) {
         try {
           // For now, check if any bookmark exists (without user restriction)
+          const supabase = getSupabaseClient();
           const { data: bookmarkData, error: bookmarkError } = await supabase
             .from('bookmarks')
             .select('*')
@@ -109,11 +111,12 @@ export default function Index1({ navigation }: { navigation?: any }) {
           const politicianId = parseInt(index);
           
           // Fetch basic info from ppl_index
+          const supabase = getSupabaseClient();
           const { data: indexData, error: indexError } = await supabase
             .from('ppl_index')
             .select('name, sub_name')
             .eq('id', politicianId)
-            .single();
+            .maybeSingle();
           
           if (indexError) {
             console.error('Error fetching politician data for index', politicianId, ':', indexError);
@@ -122,8 +125,9 @@ export default function Index1({ navigation }: { navigation?: any }) {
           
           if (indexData) {
             console.log('Successfully fetched index data:', indexData);
-            setName(indexData.name || 'No Data Available');
-            setPosition(indexData.sub_name || 'No Data Available');
+            const index = indexData as { name?: string; sub_name?: string };
+            setName(index.name || 'No Data Available');
+            setPosition(index.sub_name || 'No Data Available');
           }
           
           // Fetch profile data from ppl_profiles
@@ -138,12 +142,13 @@ export default function Index1({ navigation }: { navigation?: any }) {
             console.error('Error fetching profile data for index', politicianId, ':', profileError);
           } else if (profileData) {
             console.log('Successfully fetched profile data:', profileData);
-            console.log('Score from database:', profileData.score);
+            const profile = profileData as { approval?: number | null; disapproval?: number | null; score?: number | null; [key: string]: any };
+            console.log('Score from database:', profile.score);
             
             // Update approval/disapproval percentages
-            if (profileData.approval !== null && profileData.disapproval !== null) {
-              approvalPercentage = profileData.approval;
-              disapprovalPercentage = profileData.disapproval;
+            if (profile.approval !== null && profile.approval !== undefined && profile.disapproval !== null && profile.disapproval !== undefined) {
+              approvalPercentage = Number(profile.approval);
+              disapprovalPercentage = Number(profile.disapproval);
             }
             
             // Store profile data for use in child components

@@ -338,6 +338,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
     router.push({
       pathname: '/profile/see-more',
       params: { 
+        id: index || '', // Add politician ID
         name: name,
         position: position,
         approval: Number(localApproval ?? 0).toString(),

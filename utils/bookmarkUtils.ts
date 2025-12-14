@@ -19,13 +19,14 @@ export async function checkBookmarkStatus(
   bookmarkType: BookmarkType
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('bookmarks')
       .select('*')
       .eq('user_id', userId)
       .eq('owner_id', ownerId)
       .eq('bookmark_type', bookmarkType)
-      .single();
+      .maybeSingle();
 
     if (error) {
       return false;
@@ -58,6 +59,7 @@ export async function addBookmark(
       bookmarkData.user_id = userId;
     }
 
+    const supabase = getSupabaseClient();
     const { error } = await supabase
       .from('bookmarks')
       .insert(bookmarkData);
@@ -83,6 +85,7 @@ export async function removeBookmark(
   bookmarkType: BookmarkType
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
     let query = supabase
       .from('bookmarks')
       .delete()
@@ -136,6 +139,7 @@ export async function toggleBookmark(
  */
 export async function getUserBookmarks(userId: string): Promise<BookmarkData[]> {
   try {
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('bookmarks')
       .select('*')
