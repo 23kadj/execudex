@@ -10,11 +10,26 @@ const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
 if (SENTRY_DSN) {
   Sentry.init({
     dsn: SENTRY_DSN,
-    debug: false,
+    // Adds more context data to events (IP address, cookies, user, etc.)
+    // For more information, visit: https://docs.sentry.io/platforms/react-native/data-management/data-collected/
+    sendDefaultPii: true,
     // Enable native crash reporting for Preview/Release builds
     enableNativeCrashHandling: true,
     // Disable Sentry in development mode (replaces enableInExpoDevelopment)
     enabled: !__DEV__,
+    debug: false,
+    // Set tracesSampleRate to 1.0 to capture 100% of transactions for tracing.
+    // We recommend adjusting this value in production.
+    // Learn more at
+    // https://docs.sentry.io/platforms/react-native/configuration/options/#traces-sample-rate
+    tracesSampleRate: 1.0,
+    // profilesSampleRate is relative to tracesSampleRate.
+    // Here, we'll capture profiles for 100% of transactions.
+    profilesSampleRate: 1.0,
+    // Record session replays for 100% of errors and 10% of sessions
+    replaysOnErrorSampleRate: 1.0,
+    replaysSessionSampleRate: 0.1,
+    integrations: [Sentry.mobileReplayIntegration()],
   });
 }
 

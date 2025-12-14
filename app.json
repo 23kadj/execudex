@@ -43,10 +43,12 @@
     "plugins": [
       "expo-router",
       [
-        "sentry-expo",
+        "@sentry/react-native/expo",
         {
-          "organization": "execudex",
-          "project": "execudex"
+          "url": "https://sentry.io/",
+          "note": "Use SENTRY_AUTH_TOKEN env to authenticate with Sentry.",
+          "project": "execudex",
+          "organization": "execudex"
         }
       ]
     ],
