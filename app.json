@@ -7,6 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/wordlogo1.png",
       "resizeMode": "contain",
@@ -26,7 +27,6 @@
       "backgroundColor": "#000000",
       "bundleIdentifier": "com.execudex.app",
       "buildNumber": "1",
-      "newArchEnabled": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -36,8 +36,7 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "com.execudex.app",
-      "newArchEnabled": false
+      "package": "com.execudex.app"
     },
     "web": {
       "favicon": "./assets/icon.png"
