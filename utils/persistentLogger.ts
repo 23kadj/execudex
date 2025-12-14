@@ -1,13 +1,16 @@
 /**
  * Persistent Logger
  * Stores logs in AsyncStorage with rolling buffer (last ~200 entries)
+ * Also writes to file system for crash-proof persistence
  * Works in Preview builds without Xcode
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 
 const LOG_STORAGE_KEY = '@execudex:debug_logs';
 const MAX_LOG_ENTRIES = 200;
+const LOG_FILE_PATH = FileSystem.documentDirectory + 'debug.log';
 
 export interface LogEntry {
   timestamp: number;
@@ -72,9 +75,14 @@ class PersistentLogger {
     const prefix = `[${level.toUpperCase()}]`;
     console.log(`${prefix} [${eventName}]`, data || '');
 
-    // Save to storage (async, don't wait)
+    // Save to AsyncStorage (async, don't wait)
     this.save().catch((error) => {
       console.error('[PersistentLogger] Save error:', error);
+    });
+
+    // Write to file immediately (async, fail silently if it fails)
+    this.appendToFile(entry).catch(() => {
+      // Fail silently - file logging is best-effort
     });
   }
 
@@ -105,7 +113,46 @@ class PersistentLogger {
   async clear(): Promise<void> {
     this.logs = [];
     await AsyncStorage.removeItem(LOG_STORAGE_KEY);
+    await this.clearFileLogs();
     await this.log('logger', { action: 'cleared' });
+  }
+
+  /**
+   * Get file logs (returns content of log file or last N lines)
+   */
+  async getFileLogs(maxLines?: number): Promise<string> {
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(LOG_FILE_PATH);
+      if (!fileInfo.exists) {
+        return '';
+      }
+
+      const content = await FileSystem.readAsStringAsync(LOG_FILE_PATH);
+      if (!maxLines) {
+        return content;
+      }
+
+      // Return last N lines
+      const lines = content.split('\n').filter(line => line.trim() !== '');
+      return lines.slice(-maxLines).join('\n');
+    } catch (error) {
+      console.error('[PersistentLogger] Error reading file logs:', error);
+      return '';
+    }
+  }
+
+  /**
+   * Clear file logs (delete or truncate the log file)
+   */
+  async clearFileLogs(): Promise<void> {
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(LOG_FILE_PATH);
+      if (fileInfo.exists) {
+        await FileSystem.deleteAsync(LOG_FILE_PATH, { idempotent: true });
+      }
+    } catch (error) {
+      console.error('[PersistentLogger] Error clearing file logs:', error);
+    }
   }
 
   /**
@@ -137,6 +184,32 @@ class PersistentLogger {
       await AsyncStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(this.logs));
     } catch (error) {
       console.error('[PersistentLogger] Save error:', error);
+    }
+  }
+
+  /**
+   * Append log entry to file (single-line JSON, newline-delimited)
+   */
+  private async appendToFile(entry: LogEntry): Promise<void> {
+    try {
+      const line = JSON.stringify(entry) + '\n';
+      const fileInfo = await FileSystem.getInfoAsync(LOG_FILE_PATH);
+      
+      if (fileInfo.exists) {
+        // Read existing content and append
+        const existingContent = await FileSystem.readAsStringAsync(LOG_FILE_PATH);
+        await FileSystem.writeAsStringAsync(LOG_FILE_PATH, existingContent + line, {
+          encoding: FileSystem.EncodingType.UTF8,
+        });
+      } else {
+        // Create new file
+        await FileSystem.writeAsStringAsync(LOG_FILE_PATH, line, {
+          encoding: FileSystem.EncodingType.UTF8,
+        });
+      }
+    } catch (error) {
+      // Fail silently - file append is best-effort
+      // Don't log to avoid infinite loops
     }
   }
 

@@ -80,7 +80,7 @@ class NativeCallDebugger {
   /**
    * Sanitize params for logging (remove sensitive data, limit size)
    */
-  private sanitizeParams(params: any): any {
+  sanitizeParams(params: any): any {
     if (!params) return params;
     
     try {
@@ -97,7 +97,7 @@ class NativeCallDebugger {
   /**
    * Sanitize error for logging
    */
-  private sanitizeError(error: any): any {
+  sanitizeError(error: any): any {
     if (!error) return error;
     
     try {
@@ -201,15 +201,26 @@ export async function safeNativeCall<T>(
   // Check if this call type is disabled
   if (nativeCallDebugger.isDisabled(type)) {
     console.log(`[NATIVE_DEBUG] ${type}.${method} DISABLED by flag`);
+    persistentLogger.log(`native:${type}:${method}:disabled`, { params: nativeCallDebugger.sanitizeParams(params) });
     return null;
   }
+
+  // Log before native call
+  persistentLogger.log(`native:${type}:${method}:before`, { params: nativeCallDebugger.sanitizeParams(params) }, 'checkpoint');
 
   try {
     const result = await Promise.resolve(callFn());
     nativeCallDebugger.logCall(type, method, params, true);
+    // Log after success
+    persistentLogger.log(`native:${type}:${method}:success`, { params: nativeCallDebugger.sanitizeParams(params) }, 'info');
     return result;
   } catch (error) {
     nativeCallDebugger.logCall(type, method, params, false, error);
+    // Log failure
+    persistentLogger.log(`native:${type}:${method}:failure`, { 
+      params: nativeCallDebugger.sanitizeParams(params),
+      error: nativeCallDebugger.sanitizeError(error)
+    }, 'error');
     throw error;
   }
 }

@@ -5,6 +5,11 @@ import { Animated, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacit
 import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { persistentLogger } from '../../utils/persistentLogger';
 
+// Module-load breadcrumb - logs when this module is loaded
+persistentLogger.log('see-more:module_loaded').catch(() => {
+  // Fail silently if logger not ready yet
+});
+
 interface SeeMoreProps {
   name?: string;
   position?: string;
@@ -37,6 +42,22 @@ export default function SeeMore({
   // ============================================
   // VERY EARLY CHECKPOINT - FIRST THING IN COMPONENT
   // ============================================
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  
+  // Log component entry with params snapshot immediately
+  persistentLogger.log('see-more:component_enter', {
+    paramsSnapshot: {
+      name: typeof params.name === 'string' ? params.name : name,
+      position: typeof params.position === 'string' ? params.position : position,
+      approval: params.approval,
+      disapproval: params.disapproval,
+      pollSummary: params.pollSummary,
+      pollLink: params.pollLink,
+    },
+    timestamp: Date.now(),
+  }, 'checkpoint');
+  
   persistentLogger.checkpoint('see-more:entry', {
     timestamp: Date.now(),
     name,
@@ -44,9 +65,6 @@ export default function SeeMore({
     approvalPercentage,
     disapprovalPercentage,
   });
-
-  const router = useRouter();
-  const params = useLocalSearchParams();
   
   // Get data from params if not provided as props
   const politicianName = typeof params.name === 'string' ? params.name : name;

@@ -19,21 +19,40 @@ import { persistentLogger } from '../utils/persistentLogger';
 export default function DebugLogs() {
   const router = useRouter();
   const [logs, setLogs] = useState(persistentLogger.getLogs());
+  const [fileLogs, setFileLogs] = useState('');
+  const [showFileLogs, setShowFileLogs] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     // Refresh logs periodically
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       setLogs(persistentLogger.getLogs());
+      if (showFileLogs) {
+        const fileContent = await persistentLogger.getFileLogs();
+        setFileLogs(fileContent);
+      }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [showFileLogs]);
+
+  // Load file logs when toggle is switched on
+  useEffect(() => {
+    if (showFileLogs) {
+      persistentLogger.getFileLogs().then(setFileLogs).catch(() => setFileLogs(''));
+    }
+  }, [showFileLogs]);
 
   const handleCopy = async () => {
     try {
-      const text = persistentLogger.exportAsText();
-      Clipboard.setString(text);
+      if (showFileLogs) {
+        // Copy file logs
+        Clipboard.setString(fileLogs);
+      } else {
+        // Copy AsyncStorage logs
+        const text = persistentLogger.exportAsText();
+        Clipboard.setString(text);
+      }
       Alert.alert('Success', 'Logs copied to clipboard');
     } catch (error) {
       Alert.alert('Error', 'Failed to copy logs');
@@ -44,15 +63,16 @@ export default function DebugLogs() {
   const handleClear = () => {
     Alert.alert(
       'Clear Logs',
-      'Are you sure you want to clear all logs?',
+      'Are you sure you want to clear all logs (AsyncStorage and file)?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Clear',
           style: 'destructive',
           onPress: async () => {
-            await persistentLogger.clear();
+            await persistentLogger.clear(); // This clears both AsyncStorage and file logs
             setLogs([]);
+            setFileLogs('');
           },
         },
       ]
@@ -97,40 +117,77 @@ export default function DebugLogs() {
         </TouchableOpacity>
       </View>
 
+      {/* Toggle between AsyncStorage and File Logs */}
+      <View style={styles.toggleContainer}>
+        <TouchableOpacity
+          onPress={() => setShowFileLogs(false)}
+          style={[styles.toggleButton, !showFileLogs && styles.toggleButtonActive]}
+        >
+          <Text style={[styles.toggleButtonText, !showFileLogs && styles.toggleButtonTextActive]}>
+            AsyncStorage
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setShowFileLogs(true)}
+          style={[styles.toggleButton, showFileLogs && styles.toggleButtonActive]}
+        >
+          <Text style={[styles.toggleButtonText, showFileLogs && styles.toggleButtonTextActive]}>
+            File Logs
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Logs Count */}
       <View style={styles.infoBar}>
         <Text style={styles.infoText}>
-          {logs.length} entries (max 200)
+          {showFileLogs 
+            ? `${fileLogs.split('\n').filter(line => line.trim() !== '').length} file log entries`
+            : `${logs.length} entries (max 200)`
+          }
         </Text>
       </View>
 
       {/* Logs List */}
       <ScrollView style={styles.logsContainer} contentContainerStyle={styles.logsContent}>
-        {logs.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No logs yet</Text>
-          </View>
-        ) : (
-          logs.map((log, index) => (
-            <View key={index} style={styles.logEntry}>
-              <View style={styles.logHeader}>
-                <Text style={[styles.levelBadge, { color: getLevelColor(log.level) }]}>
-                  {log.level?.toUpperCase() || 'INFO'}
-                </Text>
-                <Text style={styles.timestamp}>{formatTimestamp(log.timestamp)}</Text>
-              </View>
-              <Text style={styles.eventName}>{log.eventName}</Text>
-              {log.data && (
-                <View style={styles.dataContainer}>
-                  <Text style={styles.dataText}>
-                    {typeof log.data === 'string'
-                      ? log.data
-                      : JSON.stringify(log.data, null, 2)}
-                  </Text>
-                </View>
-              )}
+        {showFileLogs ? (
+          // File logs view
+          fileLogs === '' ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No file logs yet</Text>
             </View>
-          ))
+          ) : (
+            <View style={styles.logEntry}>
+              <Text style={styles.dataText}>{fileLogs}</Text>
+            </View>
+          )
+        ) : (
+          // AsyncStorage logs view
+          logs.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No logs yet</Text>
+            </View>
+          ) : (
+            logs.map((log, index) => (
+              <View key={index} style={styles.logEntry}>
+                <View style={styles.logHeader}>
+                  <Text style={[styles.levelBadge, { color: getLevelColor(log.level) }]}>
+                    {log.level?.toUpperCase() || 'INFO'}
+                  </Text>
+                  <Text style={styles.timestamp}>{formatTimestamp(log.timestamp)}</Text>
+                </View>
+                <Text style={styles.eventName}>{log.eventName}</Text>
+                {log.data && (
+                  <View style={styles.dataContainer}>
+                    <Text style={styles.dataText}>
+                      {typeof log.data === 'string'
+                        ? log.data
+                        : JSON.stringify(log.data, null, 2)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            ))
+          )
         )}
       </ScrollView>
     </View>
@@ -249,5 +306,32 @@ const styles = StyleSheet.create({
     color: '#aaa',
     fontSize: 12,
     fontFamily: 'monospace',
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  toggleButton: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  toggleButtonActive: {
+    backgroundColor: '#2a2a2a',
+    borderColor: '#00aaff',
+  },
+  toggleButtonText: {
+    color: '#888',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  toggleButtonTextActive: {
+    color: '#00aaff',
   },
 });
