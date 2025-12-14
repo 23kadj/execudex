@@ -116,6 +116,15 @@ export default function Legi5() {
   const params = useLocalSearchParams();
   const { user } = useAuth();
   
+  // Log entry to card page (crash point)
+  const cardId = typeof params.cardId === 'string' ? params.cardId : undefined;
+  useEffect(() => {
+    console.log('[Legi5] Entering card page', {
+      screen: 'legi5',
+      cardId: cardId?.substring(0, 10)
+    });
+  }, [cardId]);
+  
   // Dynamic title and subtitle configuration
   const cardTitle = typeof params.cardTitle === 'string' ? params.cardTitle : 'No Data';
   const billName = typeof params.billName === 'string' ? params.billName : 'No Data Available';

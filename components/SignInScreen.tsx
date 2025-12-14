@@ -215,7 +215,7 @@ export default function SignInScreen() {
             ]}
             placeholder="Email"
             placeholderTextColor="#666"
-            value={email}
+            value={String(email ?? '')}
             onChangeText={handleEmailChange}
             keyboardType="email-address"
             autoCapitalize="none"
@@ -231,7 +231,7 @@ export default function SignInScreen() {
               ]}
               placeholder="Password"
               placeholderTextColor="#666"
-              value={password}
+              value={String(password ?? '')}
               onChangeText={handlePasswordChange}
               secureTextEntry={!showPassword}
               autoCapitalize="none"

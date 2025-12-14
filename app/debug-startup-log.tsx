@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { clearStartupLog, getStartupLog } from '../utils/startupLogger';
+import { areTextInputsDisabled, setTextInputsDisabled } from '../utils/debugFlags';
 
 export default function DebugStartupLog() {
   const [logContent, setLogContent] = useState<string>('Loading...');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [textInputsDisabled, setTextInputsDisabledState] = useState<boolean>(false);
 
   const loadLog = async () => {
     setIsRefreshing(true);
@@ -33,7 +35,14 @@ export default function DebugStartupLog() {
 
   useEffect(() => {
     loadLog();
+    // Load TextInput disable state
+    areTextInputsDisabled().then(set => setTextInputsDisabledState(set));
   }, []);
+  
+  const handleTextInputToggle = async (value: boolean) => {
+    setTextInputsDisabledState(value);
+    await setTextInputsDisabled(value);
+  };
 
   return (
     <View style={styles.container}>
@@ -55,6 +64,15 @@ export default function DebugStartupLog() {
           >
             <Text style={styles.buttonText}>Clear</Text>
           </TouchableOpacity>
+        </View>
+        <View style={styles.debugToggleContainer}>
+          <Text style={styles.debugToggleLabel}>Disable TextInputs (iOS crash test)</Text>
+          <Switch
+            value={textInputsDisabled}
+            onValueChange={handleTextInputToggle}
+            trackColor={{ false: '#767577', true: '#34C759' }}
+            thumbColor={textInputsDisabled ? '#fff' : '#f4f3f4'}
+          />
         </View>
       </View>
       
@@ -121,6 +139,20 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontFamily: 'monospace',
     lineHeight: 18,
+  },
+  debugToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 15,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  debugToggleLabel: {
+    fontSize: 14,
+    color: '#fff',
+    flex: 1,
   },
 });
 

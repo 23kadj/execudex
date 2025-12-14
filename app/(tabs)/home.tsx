@@ -2565,8 +2565,8 @@ return (
             keyboardAppearance={Platform.OS === 'ios' ? 'dark' : 'default'}
             multiline={false}
             autoCapitalize="words"
-            value={profileRequestText}
-            onChangeText={setProfileRequestText}
+            value={String(profileRequestText ?? '')}
+            onChangeText={(text) => setProfileRequestText(String(text ?? ''))}
           />
         </View>
 
@@ -2894,8 +2894,8 @@ return (
               keyboardAppearance={Platform.OS === 'ios' ? 'dark' : 'default'}
               multiline={false}
               autoCapitalize="words"
-              value={congressSessionText}
-              onChangeText={handleCongressInputChange}
+              value={String(congressSessionText ?? '')}
+              onChangeText={(text) => handleCongressInputChange(String(text ?? ''))}
             />
           </View>
         )}

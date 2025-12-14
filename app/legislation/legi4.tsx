@@ -420,10 +420,10 @@ export default function Legi4() {
           <TextInput
             ref={searchInputRef}
             style={styles.searchBarInput}
-            placeholder={`Search ${buttonText} Cards`}
+            placeholder={String(`Search ${buttonText ?? ''} Cards`)}
             placeholderTextColor="#666"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
+            value={String(searchQuery ?? '')}
+            onChangeText={(text) => setSearchQuery(String(text ?? ''))}
             keyboardAppearance={Platform.OS === 'ios' ? 'dark' : 'default'}
             blurOnSubmit={true}
           />

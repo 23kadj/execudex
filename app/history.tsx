@@ -304,8 +304,8 @@ export default function History() {
               style={styles.searchBarInput}
               placeholder="Search History"
               placeholderTextColor="#666"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
+              value={String(searchQuery ?? '')}
+              onChangeText={(text) => setSearchQuery(String(text ?? ''))}
               blurOnSubmit
             />
             {searchQuery.length > 0 && (

@@ -117,8 +117,8 @@ export default function Feedback() {
               ]}
               placeholder="Enter your feedback here..."
               placeholderTextColor="#666"
-              value={feedbackText}
-              onChangeText={setFeedbackText}
+              value={String(feedbackText ?? '')}
+              onChangeText={(text) => setFeedbackText(String(text ?? ''))}
               multiline
               maxLength={200}
               editable={!isSubmitted && !isDisabled}

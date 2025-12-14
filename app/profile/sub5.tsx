@@ -121,6 +121,15 @@ export default function Sub5() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
+  
+  // Log entry to card page (crash point)
+  const cardId = typeof params.cardId === 'string' ? params.cardId : undefined;
+  useEffect(() => {
+    console.log('[Sub5] Entering card page', {
+      screen: 'sub5',
+      cardId: cardId?.substring(0, 10)
+    });
+  }, [cardId]);
 
   const cardTitle = typeof params.cardTitle === 'string' ? params.cardTitle : 'No Data';
   const profileName = typeof params.profileName === 'string' ? params.profileName : 'No Data Available';

@@ -29,6 +29,15 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
   const router = useRouter();
   const params = useLocalSearchParams();
   
+  // Log entry to metrics page (crash point)
+  useEffect(() => {
+    console.log('[Synop] Entering metrics page', {
+      screen: 'synop',
+      profileId: index,
+      name: name?.substring(0, 20)
+    });
+  }, [index, name]);
+  
   // Debug logging for profileData prop
   useEffect(() => {
     console.log('Synop component received profileData:', profileData);

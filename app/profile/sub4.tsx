@@ -139,6 +139,16 @@ export default function Sub4() {
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<TextInput>(null);
   
+  // Log entry to category page (crash point)
+  useEffect(() => {
+    console.log('[Sub4] Entering category page', {
+      screen: 'sub4',
+      category: buttonText,
+      profileIndex,
+      originalPage
+    });
+  }, [buttonText, profileIndex, originalPage]);
+  
   // Search assistance functionality
   const [selectedFilterWords, setSelectedFilterWords] = useState<string[]>([]);
   const [commonWords, setCommonWords] = useState<string[]>([]);
@@ -646,14 +656,15 @@ export default function Sub4() {
         {/* Use FlatList to efficiently render N cards (no upper limit) */}
         <FlatList
           data={filteredCardData}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item) => String(item?.id ?? `card-${item?.title ?? 'unknown'}`)}
           renderItem={renderItem}
           contentContainerStyle={styles.cardsContainer}
           showsVerticalScrollIndicator={false}
-          removeClippedSubviews
-          initialNumToRender={12}
-          maxToRenderPerBatch={12}
-          windowSize={7}
+          removeClippedSubviews={false}
+          initialNumToRender={5}
+          maxToRenderPerBatch={5}
+          windowSize={5}
+          updateCellsBatchingPeriod={50}
           onScrollBeginDrag={dismissKeyboard}
           ListHeaderComponent={() => (
             <>
@@ -662,10 +673,10 @@ export default function Sub4() {
                 <TextInput
                   ref={searchInputRef}
                   style={styles.searchBarInput}
-                  placeholder={`Search ${buttonText} Cards`}
+                  placeholder={String(`Search ${buttonText ?? ''} Cards`)}
                   placeholderTextColor="#666"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
+                  value={String(searchQuery ?? '')}
+                  onChangeText={(text) => setSearchQuery(String(text ?? ''))}
                   keyboardAppearance={Platform.OS === 'ios' ? 'dark' : 'default'}
                   blurOnSubmit={true}
                 />

@@ -392,8 +392,8 @@ const exp1 = React.memo(() => {
               style={styles.searchBarInput}
               placeholder="Search Explore Page"
               placeholderTextColor="#666"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
+              value={String(searchQuery ?? '')}
+              onChangeText={(text) => setSearchQuery(String(text ?? ''))}
               onSubmitEditing={handleSearch}
               returnKeyType="search"
               keyboardAppearance={Platform.OS === 'ios' ? 'dark' : 'default'}

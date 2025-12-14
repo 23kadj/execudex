@@ -320,8 +320,8 @@ export default function Bookmarks() {
               style={styles.searchBarInput}
               placeholder="Search Bookmarks"
               placeholderTextColor="#666"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
+              value={String(searchQuery ?? '')}
+              onChangeText={(text) => setSearchQuery(String(text ?? ''))}
               blurOnSubmit
             />
             {searchQuery.length > 0 && (
