@@ -130,7 +130,6 @@ export default function Legi5() {
   const billName = typeof params.billName === 'string' ? params.billName : 'No Data Available';
   const originalPage = typeof params.originalPage === 'string' ? params.originalPage : '';
   const isMedia = typeof params.isMedia === 'string' ? params.isMedia === 'true' : false;
-  const cardId = typeof params.cardId === 'string' ? params.cardId : undefined;
   
   // Bookmark state
   const [isBookmarked, setIsBookmarked] = useState(false);
