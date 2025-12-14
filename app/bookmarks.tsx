@@ -6,6 +6,7 @@ import { useAuth } from '../components/AuthProvider';
 import { TypeFilterButton } from '../components/TypeFilterButton';
 import { NavigationService } from '../services/navigationService';
 import { BookmarkData, getUserBookmarks } from '../utils/bookmarkUtils';
+import { getSupabaseClient } from '../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(View);
 
@@ -75,6 +76,7 @@ export default function Bookmarks() {
           let data;
           let error;
           
+          const supabase = getSupabaseClient();
           switch (bookmark.bookmark_type) {
             case 'ppl':
               // Fetch politician data from ppl_index
@@ -82,7 +84,7 @@ export default function Bookmarks() {
                 .from('ppl_index')
                 .select('id, name, sub_name')
                 .eq('id', bookmark.owner_id)
-                .single();
+                .maybeSingle();
               data = pplResult.data;
               error = pplResult.error;
               break;
@@ -93,7 +95,7 @@ export default function Bookmarks() {
                 .from('legi_index')
                 .select('id, name, sub_name')
                 .eq('id', bookmark.owner_id)
-                .single();
+                .maybeSingle();
               data = legiResult.data;
               error = legiResult.error;
               break;
@@ -104,7 +106,7 @@ export default function Bookmarks() {
                 .from('card_index')
                 .select('id, title, subtext, owner_id, is_ppl')
                 .eq('id', bookmark.owner_id)
-                .single();
+                .maybeSingle();
               if (cardResult.data) {
                 const cardData = cardResult.data;
                 let ownerName = cardData.title; // fallback to card title
@@ -117,7 +119,7 @@ export default function Bookmarks() {
                     .from('ppl_index')
                     .select('name, sub_name')
                     .eq('id', cardData.owner_id)
-                    .single();
+                    .maybeSingle();
                   if (pplOwnerResult.data) {
                     ownerName = pplOwnerResult.data.name;
                     ownerSubName = pplOwnerResult.data.sub_name;
@@ -128,7 +130,7 @@ export default function Bookmarks() {
                     .from('legi_index')
                     .select('name, sub_name')
                     .eq('id', cardData.owner_id)
-                    .single();
+                    .maybeSingle();
                   if (legiOwnerResult.data) {
                     ownerName = legiOwnerResult.data.name;
                     ownerSubName = legiOwnerResult.data.sub_name;

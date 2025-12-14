@@ -7,6 +7,7 @@ import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
 import { CardData, fetchCardsByScreen, fetchLegislationTier } from '../../utils/cardData';
 import { incrementOpens } from '../../utils/incrementOpens7d';
+import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -71,6 +72,7 @@ export default function Legi3({ scrollY, name, position, scrollRef }: Legi3Props
           setCardData(cards);
           
           // Check if generate button should be shown (no unused coverage cards)
+          const supabase = getSupabaseClient();
           const { data: coverageCards, error } = await supabase
             .from('card_index')
             .select('id')

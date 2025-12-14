@@ -38,6 +38,7 @@ export default function Feedback() {
       const timestamp = new Date().toISOString();
       
       // Insert feedback into the feedback table with user_id and created_at
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('feedback')
         .insert({

@@ -25,7 +25,7 @@ import { ProfileLoadingIndicator } from '../components/ProfileLoadingIndicator';
 import { iapService } from '../services/iapService';
 import { SUBSCRIPTION_PRODUCTS } from '../types/iapTypes';
 import { isIAPAvailable } from '../utils/iapAvailability';
-import { supabase } from '../utils/supabase';
+import { getSupabaseClient } from '../utils/supabase';
 
 // Payment Plan Subscription Box Content - EDIT THESE TO CHANGE TEXT
 const BOX_1_CONTENT = {
@@ -100,6 +100,7 @@ const step: StepKey = steps[stepIndex];
   // Helper function to call edge function to save onboard data
   const saveOnboardData = async (userId: string, onboardData: string, plan?: string, cycle?: string) => {
     try {
+      const supabase = getSupabaseClient();
       const { data: { session } } = await supabase.auth.getSession();
       
       if (!session) {
@@ -159,6 +160,7 @@ const step: StepKey = steps[stepIndex];
       async (purchase) => {
         try {
           setPurchaseError(null);
+          const supabase = getSupabaseClient();
           const { data: { user } } = await supabase.auth.getUser();
           if (!user) {
             throw new Error('No authenticated user found');
@@ -374,6 +376,7 @@ const [reason, setReason] = useState<string>('');
 
     try {
       // Query the referrals table for the entered code (case-insensitive)
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('referrals')
         .select('referral_code')
@@ -1945,7 +1948,8 @@ if (step === 'paymentPlan') {
         onPress={async () => {
           try {
             // Get the current user's UUID from Supabase Auth
-            const { data: { user } } = await supabase.auth.getUser();
+            const supabase = getSupabaseClient();
+          const { data: { user } } = await supabase.auth.getUser();
             
             if (user) {
               const onboardData = buildOnboardData();

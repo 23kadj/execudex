@@ -10,6 +10,7 @@ export class CardService {
    */
   static async hasCardContent(cardId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('card_content')
         .select('id')

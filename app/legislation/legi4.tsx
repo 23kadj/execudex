@@ -21,6 +21,7 @@ import { CardService } from '../../services/cardService';
 import { CardData, getCategoryFromTitle } from '../../utils/cardData';
 import { incrementOpens } from '../../utils/incrementOpens7d';
 import { filterCardsByWords, getMostCommonWords, shouldShowSearchAssistance } from '../../utils/searchAssistanceUtils';
+import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -106,6 +107,7 @@ export default function Legi4() {
           const category = getCategoryFromTitle(buttonText);
           
           // Direct Supabase query for category filtering (no preview exclusion)
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('card_index')
             .select('id, title, subtext, screen, category, opens_7d, score')

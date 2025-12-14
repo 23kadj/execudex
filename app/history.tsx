@@ -6,6 +6,7 @@ import { useAuth } from '../components/AuthProvider';
 import { TypeFilterButton } from '../components/TypeFilterButton';
 import { NavigationService } from '../services/navigationService';
 import { getHistory, ProfileHistoryItem } from '../utils/historyUtils';
+import { getSupabaseClient } from '../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(View);
 
@@ -69,11 +70,12 @@ export default function History() {
           
           if (itemType === 'card') {
             // Fetch card data from card_index
+            const supabase = getSupabaseClient();
             const cardResult = await supabase
               .from('card_index')
               .select('id, title, subtext, owner_id, is_ppl')
               .eq('id', historyItem.id)
-              .single();
+              .maybeSingle();
             
             if (cardResult.data) {
               const cardData = cardResult.data;
@@ -86,7 +88,7 @@ export default function History() {
                   .from('ppl_index')
                   .select('name, sub_name')
                   .eq('id', cardData.owner_id)
-                  .single();
+                  .maybeSingle();
                 if (pplOwnerResult.data) {
                   ownerName = pplOwnerResult.data.name;
                   ownerSubName = pplOwnerResult.data.sub_name;
@@ -96,7 +98,7 @@ export default function History() {
                   .from('legi_index')
                   .select('name, sub_name')
                   .eq('id', cardData.owner_id)
-                  .single();
+                  .maybeSingle();
                 if (legiOwnerResult.data) {
                   ownerName = legiOwnerResult.data.name;
                   ownerSubName = legiOwnerResult.data.sub_name;
@@ -114,20 +116,22 @@ export default function History() {
             error = cardResult.error;
           } else if (itemType === 'ppl') {
             // Fetch politician data from ppl_index
+            const supabase = getSupabaseClient();
             const pplResult = await supabase
               .from('ppl_index')
               .select('id, name, sub_name')
               .eq('id', historyItem.id)
-              .single();
+              .maybeSingle();
             data = pplResult.data ? { ...pplResult.data, is_ppl: true, item_type: 'ppl' as const } : null;
             error = pplResult.error;
           } else {
             // Fetch legislation data from legi_index
+            const supabase = getSupabaseClient();
             const legiResult = await supabase
               .from('legi_index')
               .select('id, name, sub_name')
               .eq('id', historyItem.id)
-              .single();
+              .maybeSingle();
             data = legiResult.data ? { ...legiResult.data, is_ppl: false, item_type: 'legi' as const } : null;
             error = legiResult.error;
           }

@@ -438,6 +438,7 @@ export default function Sub4() {
             let to = pageSize - 1;
             let allRows: any[] = [];
 
+            const supabase = getSupabaseClient();
             while (true) {
               const { data, error } = await supabase
                 .from('card_index')

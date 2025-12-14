@@ -8,11 +8,12 @@ import { getSupabaseClient } from './supabase';
  */
 export const incrementOpens = async (cardId: string) => {
   try {
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from("card_index")
       .select("opens_7d")
       .eq("id", cardId)
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error("Error fetching opens_7d:", error);
