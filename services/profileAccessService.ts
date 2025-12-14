@@ -72,12 +72,11 @@ export async function getWeeklyProfileUsage(userId: string): Promise<{
   plan: string;
 }> {
   try {
-    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('users')
       .select('plan, week_profiles')
       .eq('uuid', userId)
-      .maybeSingle();
+      .single();
 
     if (error || !data) {
       console.error('Error fetching weekly profile usage:', error);
@@ -94,40 +93,23 @@ export async function getWeeklyProfileUsage(userId: string): Promise<{
     console.log('Array length:', data.week_profiles?.length);
     console.log('Array contents:', data.week_profiles);
 
-    // Handle different data types: null, empty string, string, or array
-    let weekProfiles: string[] = [];
-    const weekProfilesRaw = data.week_profiles;
-    
-    // Handle null or undefined first
-    if (weekProfilesRaw == null) {
-      console.log('week_profiles is null/undefined, defaulting to empty array');
-      weekProfiles = [];
-    }
-    // Handle empty string
-    else if (typeof weekProfilesRaw === 'string' && weekProfilesRaw.trim() === '') {
-      console.log('week_profiles is empty string, defaulting to empty array');
-      weekProfiles = [];
-    }
     // Handle comma-separated string format
-    else if (typeof weekProfilesRaw === 'string') {
+    let weekProfiles = data.week_profiles;
+    if (typeof weekProfiles === 'string') {
       console.log('week_profiles is a string, parsing comma-separated format...');
       try {
         // Simple comma-separated format: "123ppl,329ppl,11legi"
-        weekProfiles = weekProfilesRaw.split(',').filter(id => id.trim() !== '');
+        weekProfiles = weekProfiles.split(',').filter(id => id.trim() !== '');
         console.log('Extracted profile IDs:', weekProfiles);
       } catch (e) {
         console.error('Failed to parse week_profiles comma format:', e);
         weekProfiles = [];
       }
     }
-    // Handle array format (if database column is text[] instead of text)
-    else if (Array.isArray(weekProfilesRaw)) {
-      console.log('week_profiles is already an array');
-      weekProfiles = weekProfilesRaw.filter(id => id != null && String(id).trim() !== '');
-    }
-    // Fallback for any other type
-    else {
-      console.warn('week_profiles is unexpected type, defaulting to []', typeof weekProfilesRaw);
+    
+    // If it's not an array at all, default to empty array
+    if (!Array.isArray(weekProfiles)) {
+      console.warn('week_profiles is not an array, defaulting to []');
       weekProfiles = [];
     }
 
