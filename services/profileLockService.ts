@@ -56,11 +56,12 @@ export class ProfileLockService {
       logDiag('lock:ppl:check', { profileId }, trace);
       
       // Step 1: Check if profile is marked as weak
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('ppl_index')
         .select('id, name, weak')
         .eq('id', profileId)
-        .single();
+        .maybeSingle();
 
       if (indexError || !indexData) {
         console.error('Error fetching politician index data:', indexError);
@@ -124,11 +125,12 @@ export class ProfileLockService {
   private static async checkLegislationLockStatus(profileId: number, trace?: string): Promise<ProfileLockStatus> {
     try {
       // Step 1: Check if profile is marked as weak
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('legi_index')
         .select('id, name, weak')
         .eq('id', profileId)
-        .single();
+        .maybeSingle();
 
       if (indexError || !indexData) {
         console.error('Error fetching legislation index data:', indexError);
@@ -186,6 +188,7 @@ export class ProfileLockService {
    */
   private static async checkPoliticianHasCards(profileId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('card_index')
         .select('id')
@@ -211,6 +214,7 @@ export class ProfileLockService {
    */
   private static async checkLegislationCardCount(profileId: number, trace?: string): Promise<number> {
     try {
+      const supabase = getSupabaseClient();
       const { count, error } = await supabase
         .from('card_index')
         .select('*', { count: 'exact', head: true })
@@ -235,6 +239,7 @@ export class ProfileLockService {
    */
   private static async checkPoliticianCardCount(profileId: number, trace?: string): Promise<number> {
     try {
+      const supabase = getSupabaseClient();
       const { count, error } = await supabase
         .from('card_index')
         .select('*', { count: 'exact', head: true })
@@ -262,6 +267,7 @@ export class ProfileLockService {
    */
   private static async checkLegislationHasCards(profileId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('card_index')
         .select('id')
@@ -328,11 +334,12 @@ export class ProfileLockService {
   ): Promise<{ isWeak: boolean; lockedPage: 'synopsis' | 'overview' | null }> {
     try {
       const tableName = isPpl ? 'ppl_index' : 'legi_index';
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from(tableName)
         .select('weak')
         .eq('id', profileId)
-        .single();
+        .maybeSingle();
 
       if (error || !data) {
         return { isWeak: false, lockedPage: null };

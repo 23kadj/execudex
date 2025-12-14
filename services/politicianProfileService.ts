@@ -98,11 +98,12 @@ export class PoliticianProfileService {
       logDiag('svc:step1:start', { politicianId }, trace);
       
       // Check weak flag first (from ppl_index)
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('ppl_index')
         .select('weak')
         .eq('id', politicianId)
-        .single();
+        .maybeSingle();
       
       if (indexData?.weak === true) {
         console.log('Profile is marked weak - stopping processing');
@@ -115,7 +116,7 @@ export class PoliticianProfileService {
         .from('ppl_profiles')
         .select('index_id, updated_at')
         .eq('index_id', politicianId)
-        .single();
+        .maybeSingle();
       
       // Scenario: Row exists
       if (profileData) {
@@ -157,11 +158,12 @@ export class PoliticianProfileService {
       console.log('STEP 2: Checking indexed status');
       logDiag('svc:step2:start', { politicianId }, trace);
       
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('ppl_index')
         .select('indexed')
         .eq('id', politicianId)
-        .single();
+        .maybeSingle();
       
       if (indexError) {
         console.error('Error checking indexed status:', indexError);
@@ -204,11 +206,12 @@ export class PoliticianProfileService {
       console.log('STEP 3: Checking synopsis');
       logDiag('svc:step3:start', { politicianId }, trace);
       
+      const supabase = getSupabaseClient();
       const { data: profileData, error: profileError } = await supabase
         .from('ppl_profiles')
         .select('synopsis')
         .eq('index_id', politicianId)
-        .single();
+        .maybeSingle();
       
       const synopsis = profileData?.synopsis;
       const needsSynopsis = !synopsis || synopsis.trim() === '' || synopsis.toLowerCase().includes('no data');
@@ -258,6 +261,7 @@ export class PoliticianProfileService {
       logDiag('svc:step4:start', { politicianId }, trace);
       
       // Mark as indexed
+      const supabase = getSupabaseClient();
       const { error } = await supabase
         .from('ppl_index')
         .update({ indexed: true })
@@ -337,11 +341,12 @@ export class PoliticianProfileService {
   private static async handleProfileChecks(politicianId: number, checkResult: ProfileCheckResult, onProgress?: ProgressCallback): Promise<void> {
     try {
       // Check ppl_profiles table
+      const supabase = getSupabaseClient();
       const { data: profileData, error: profileError } = await supabase
         .from('ppl_profiles')
         .select('index_id, synopsis, updated_at')
         .eq('index_id', politicianId)
-        .single();
+        .maybeSingle();
 
       if (profileError && profileError.code !== 'PGRST116') {
         console.error('Error fetching profile data:', profileError);
@@ -420,6 +425,7 @@ export class PoliticianProfileService {
       
       if (lockStatus.isLocked && lockStatus.lockReason === 'no_cards') {
         // Mark profile as weak if it has no cards
+        const supabase = getSupabaseClient();
         const { error } = await supabase
           .from('ppl_index')
           .update({ weak: true })
@@ -441,6 +447,7 @@ export class PoliticianProfileService {
    */
   private static async markProfileAsIndexed(politicianId: number): Promise<void> {
     try {
+      const supabase = getSupabaseClient();
       const { error } = await supabase
         .from('ppl_index')
         .update({ indexed: true })
@@ -475,6 +482,7 @@ export class PoliticianProfileService {
    */
   private static async checkForCards(politicianId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('card_index')
         .select('id')
@@ -502,11 +510,12 @@ export class PoliticianProfileService {
   private static async executeStep1IfNeeded(politicianId: number, onProgress?: ProgressCallback): Promise<void> {
     try {
       // Check if tier is already present
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('ppl_index')
         .select('tier')
         .eq('id', politicianId)
-        .single();
+        .maybeSingle();
 
       if (indexError) {
         console.error('Error checking tier for politician ID:', politicianId, indexError);
@@ -745,11 +754,12 @@ export class PoliticianProfileService {
   ): Promise<{ success: boolean; message?: string; data?: any }> {
     try {
       // Fetch current profile data
+      const supabase = getSupabaseClient();
       const { data: profileData, error: profileError } = await supabase
         .from('ppl_profiles')
         .select('index_id, approval, disapproval, votes, updated_at')
         .eq('index_id', politicianId)
-        .single();
+        .maybeSingle();
 
       if (profileError) {
         return { success: false, message: 'Profile not found' };
@@ -827,11 +837,12 @@ export class PoliticianProfileService {
     indexData: PPLIndex | null;
     profileData: PPLProfile | null;
   }> {
+    const supabase = getSupabaseClient();
     const { data: indexData } = await supabase
       .from('ppl_index')
       .select('id, name, sub_name, tier, indexed')
       .eq('id', politicianId)
-      .single();
+      .maybeSingle();
     
     const { data: profileData } = await supabase
       .from('ppl_profiles')

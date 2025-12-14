@@ -190,10 +190,13 @@ export default function Sub5() {
             .select('*')
             .eq('owner_id', cardId)
             .eq('bookmark_type', 'card')
-            .single();
+            .maybeSingle();
           
+          // Handle errors gracefully - PGRST116 = no rows (expected)
           if (!bookmarkError && bookmarkData) {
             setIsBookmarked(true);
+          } else if (bookmarkError && bookmarkError.code !== 'PGRST116') {
+            console.error('[SUB5] Bookmark query error:', bookmarkError);
           }
         } catch (error) {
           console.error('Error checking bookmark status:', error);
@@ -256,10 +259,17 @@ export default function Sub5() {
               .from('card_content')
               .select('title, body_text, tldr, link1, excerpt')
               .eq('card_id', parsedCardId)
-              .single();
+              .maybeSingle();
             
+            // Handle errors gracefully - don't throw to prevent TurboModule crash
             if (error) {
-              throw error;
+              // PGRST116 = no rows returned (expected, not an error)
+              if (error.code === 'PGRST116') {
+                return null;
+              }
+              // For other errors, log but return null instead of throwing
+              console.error('[SUB5] Card content query error:', error);
+              return null;
             }
             
             return data;
@@ -315,10 +325,17 @@ export default function Sub5() {
               .from('card_index')
               .select('subtext, is_active, screen, category, created_at')
               .eq('id', parsedCardId)
-              .single();
+              .maybeSingle();
             
+            // Handle errors gracefully - don't throw to prevent TurboModule crash
             if (error) {
-              throw error;
+              // PGRST116 = no rows returned (expected, not an error)
+              if (error.code === 'PGRST116') {
+                return null;
+              }
+              // For other errors, log but return null instead of throwing
+              console.error('[SUB5] Card index query error:', error);
+              return null;
             }
             
             return data;

@@ -73,7 +73,7 @@ export default function SeeMore({
           .from('ppl_index')
           .select('name, sub_name')
           .eq('id', politicianId)
-          .single();
+          .maybeSingle();
         
         if (indexError) {
           console.error('Error fetching politician data:', indexError);

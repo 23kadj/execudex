@@ -221,7 +221,7 @@ export default function Sub4() {
             .from('ppl_index')
             .select('tier')
             .eq('id', parseInt(profileIndex))
-            .single();
+            .maybeSingle();
           
           if (error) {
             console.error('Error fetching profile tier:', error);

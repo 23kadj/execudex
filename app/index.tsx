@@ -566,7 +566,7 @@ useLayoutEffect(() => {
   }
 
   if (step === 'getStarted') {
-    return (
+  return (
       <AnimatedSafeAreaView style={[styles.container, { backgroundColor: '#000' }]}>
               {/* HEADER */}
       <View style={styles.headerRow}>
@@ -878,7 +878,7 @@ useLayoutEffect(() => {
                   },
                 ]}
               />
-            </View>
+    </View>
           )}
         </View>
 

@@ -214,13 +214,34 @@ export async function safeNativeCall<T>(
     // Log after success
     persistentLogger.log(`native:${type}:${method}:success`, { params: nativeCallDebugger.sanitizeParams(params) }, 'info');
     return result;
-  } catch (error) {
-    nativeCallDebugger.logCall(type, method, params, false, error);
+  } catch (error: any) {
+    // For Supabase queries, handle errors gracefully to prevent TurboModule crashes
+    if (type === 'supabase' && error?.code === 'PGRST116') {
+      // PGRST116 = no rows returned - this is expected, not an error
+      console.log(`[NATIVE_CALL] ${type}.${method} - No rows found (expected)`);
+      nativeCallDebugger.logCall(type, method, params, true); // Log as success since it's expected
+      persistentLogger.log(`native:${type}:${method}:no-rows`, { params: nativeCallDebugger.sanitizeParams(params) }, 'info');
+      return null;
+    }
+    
+    // Sanitize error before logging to prevent issues with error conversion
+    const sanitizedError = nativeCallDebugger.sanitizeError(error);
+    nativeCallDebugger.logCall(type, method, params, false, sanitizedError);
+    
     // Log failure
     persistentLogger.log(`native:${type}:${method}:failure`, { 
       params: nativeCallDebugger.sanitizeParams(params),
-      error: nativeCallDebugger.sanitizeError(error)
+      error: sanitizedError
     }, 'error');
+    
+    // For Supabase errors in preview builds, return null instead of throwing
+    // to prevent TurboModule error conversion crashes
+    if (type === 'supabase') {
+      console.error(`[NATIVE_CALL] Supabase error in ${method}:`, sanitizedError);
+      return null;
+    }
+    
+    // For other errors, still throw but with sanitized error
     throw error;
   }
 }

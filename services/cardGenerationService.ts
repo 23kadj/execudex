@@ -33,6 +33,7 @@ export class CardGenerationService {
           return 0;
       }
 
+      const supabase = getSupabaseClient();
       const { count, error } = await supabase
         .from('card_index')
         .select('*', { count: 'exact', head: true })
@@ -58,6 +59,7 @@ export class CardGenerationService {
    */
   static async checkCategoryCardCount(politicianId: number, category: string): Promise<number> {
     try {
+      const supabase = getSupabaseClient();
       const { count, error } = await supabase
         .from('card_index')
         .select('*', { count: 'exact', head: true })
@@ -83,6 +85,7 @@ export class CardGenerationService {
    */
   static async checkLegislationCardCount(legislationId: number): Promise<number> {
     try {
+      const supabase = getSupabaseClient();
       const { count, error } = await supabase
         .from('card_index')
         .select('*', { count: 'exact', head: true })
@@ -396,6 +399,7 @@ export class CardGenerationService {
    */
   static async checkAgendaButtonVisibility(legislationId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('web_content')
         .select('id')
@@ -423,6 +427,7 @@ export class CardGenerationService {
    */
   static async checkImpactButtonVisibility(legislationId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('web_content')
         .select('id')
@@ -450,6 +455,7 @@ export class CardGenerationService {
    */
   static async checkDiscourseButtonVisibility(legislationId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('web_content')
         .select('id')
@@ -477,6 +483,7 @@ export class CardGenerationService {
    */
   static async checkExistingWebContentForCategory(politicianId: number, category: string): Promise<number[]> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('web_content')
         .select('id')
@@ -517,6 +524,7 @@ export class CardGenerationService {
       // Build ILIKE conditions for all search terms
       const conditions = searchTerms.map(term => `path.ilike.%${term}%`).join(',');
 
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('web_content')
         .select('id')
@@ -543,6 +551,7 @@ export class CardGenerationService {
    */
   static async checkAnyExistingWebContent(politicianId: number): Promise<number[]> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('web_content')
         .select('id')
@@ -569,6 +578,7 @@ export class CardGenerationService {
    */
   static async hasUnusedWebContent(politicianId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('web_content')
         .select('id')
@@ -692,6 +702,7 @@ export class CardGenerationService {
    */
   static async isLegislationWeak(legislationId: number): Promise<boolean> {
     try {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('legi_index')
         .select('weak')
@@ -806,11 +817,12 @@ export class CardGenerationService {
   static async shouldShowGenerateButtonForSynopsis(politicianId: number): Promise<boolean> {
     try {
       // Step 1: Check if politician is marked as weak
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('ppl_index')
         .select('weak')
         .eq('id', politicianId)
-        .single();
+        .maybeSingle();
 
       if (indexError || !indexData) {
         console.error('Error fetching politician weak status:', indexError);
@@ -852,11 +864,12 @@ export class CardGenerationService {
   static async shouldShowGenerateButtonForOverview(legislationId: number): Promise<boolean> {
     try {
       // Step 1: Check if legislation is marked as weak
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('legi_index')
         .select('weak')
         .eq('id', legislationId)
-        .single();
+        .maybeSingle();
 
       if (indexError || !indexData) {
         console.error('Error fetching legislation weak status:', indexError);
