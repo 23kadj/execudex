@@ -41,6 +41,20 @@ export default function Onboarding() {
         >
           <Text style={styles.buttonText}>Debug: Crash Log</Text>
         </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => router.push('/debug-flags')}
+        >
+          <Text style={styles.buttonText}>Debug Flags</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => router.push('/debug-logs')}
+        >
+          <Text style={styles.buttonText}>Debug Logs</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
