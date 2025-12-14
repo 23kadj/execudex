@@ -108,6 +108,29 @@ export default function DebugFlags() {
             <Text style={styles.navButtonText}>View Debug Logs →</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Screen Ladder Navigation */}
+        <View style={styles.navSection}>
+          <Text style={styles.sectionTitle}>Screen Ladder (Crash Isolation)</Text>
+          <TouchableOpacity
+            onPress={() => router.push('/z1')}
+            style={styles.navButton}
+          >
+            <Text style={styles.navButtonText}>Z1 - Minimal Safe Screen →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.push('/z2')}
+            style={styles.navButton}
+          >
+            <Text style={styles.navButtonText}>Z2 - Module Import Test →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.push('/z3')}
+            style={styles.navButton}
+          >
+            <Text style={styles.navButtonText}>Z3 - Native Call Test →</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </View>
   );
@@ -242,3 +265,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+

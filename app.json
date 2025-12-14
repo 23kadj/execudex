@@ -41,7 +41,14 @@
       "favicon": "./assets/icon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "sentry-expo",
+        {
+          "organization": "execudex",
+          "project": "execudex"
+        }
+      ]
     ],
     "extra": {
       "router": {},
