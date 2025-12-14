@@ -35,8 +35,8 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   splashLogo: {
-    width: 240,
-    height: 240,
+    width: 100,
+    height: 100,
     resizeMode: 'contain',
   },
 });
