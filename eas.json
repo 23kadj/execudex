@@ -11,18 +11,12 @@
     },
     "preview": {
       "distribution": "internal",
-      "channel": "preview",
-      "env": {
-        "RCT_NEW_ARCH_ENABLED": "0"
-      }
+      "channel": "preview"
     },
     "production": {
       "distribution": "store",
       "channel": "production",
-      "autoIncrement": true,
-      "env": {
-        "RCT_NEW_ARCH_ENABLED": "0"
-      }
+      "autoIncrement": true
     }
   },
   "submit": {
