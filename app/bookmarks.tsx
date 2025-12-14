@@ -6,7 +6,6 @@ import { useAuth } from '../components/AuthProvider';
 import { TypeFilterButton } from '../components/TypeFilterButton';
 import { NavigationService } from '../services/navigationService';
 import { BookmarkData, getUserBookmarks } from '../utils/bookmarkUtils';
-import { getSupabaseClient } from '../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(View);
 
@@ -254,13 +253,20 @@ export default function Bookmarks() {
       case 'card':
         // Navigate to appropriate card info page based on card type
         const isPoliticianCard = profile.is_ppl;
+        // Ensure cardId is a string
+        const cardId = bookmark.owner_id ? String(bookmark.owner_id) : '';
+        if (!cardId) {
+          console.error('Invalid cardId in bookmark:', bookmark);
+          return;
+        }
+        
         const baseParams = {
-          cardTitle: profile.name,
+          cardTitle: profile.name || 'No Data',
           sourcePage: 'bookmarks',
           originalPage: 'bookmarks',
           isMedia: 'false',
           pageCount: '1',
-          cardId: bookmark.owner_id,
+          cardId: cardId,
         };
         
         if (isPoliticianCard) {

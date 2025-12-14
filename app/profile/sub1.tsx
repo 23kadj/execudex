@@ -377,15 +377,22 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
           onPress={async () => {
             const cardId = String(cardData[cardNumber - 1]?.id || '');
             if (cardId) {
+              // Validate cardId is a valid number before parsing
+              const parsedCardId = parseInt(cardId, 10);
+              if (isNaN(parsedCardId) || parsedCardId <= 0) {
+                console.error('Invalid cardId:', cardId);
+                return;
+              }
+              
               incrementOpens(cardId);
               
               // Track the currently loading card
-              currentLoadingCardId.current = parseInt(cardId);
+              currentLoadingCardId.current = parsedCardId;
               
               // Execute full_card_gen script
               let wasCancelled = false;
               try {
-                await CardService.generateFullCard(parseInt(cardId), setIsCardLoading);
+                await CardService.generateFullCard(parsedCardId, setIsCardLoading);
               } catch (error: any) {
                 if (error?.message === 'CANCELLED') {
                   console.log('Card loading was cancelled, not navigating');

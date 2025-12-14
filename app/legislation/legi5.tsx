@@ -1,4 +1,3 @@
-import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -12,6 +11,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
 import { addToHistory } from '../../utils/historyUtils';
+import { safeHapticsSelection } from '../../utils/safeHaptics';
 import { getSupabaseClient } from '../../utils/supabase';
 
 function getDisplayText(url: string) {
@@ -206,13 +206,22 @@ export default function Legi5() {
     const fetchCardContent = async () => {
       if (!cardId) return;
       
+      // Validate cardId is a valid number before parsing
+      const parsedCardId = parseInt(cardId, 10);
+      if (isNaN(parsedCardId) || parsedCardId <= 0) {
+        console.error('Invalid cardId:', cardId);
+        setCardContent(null);
+        setIsLoadingContent(false);
+        return;
+      }
+      
       setIsLoadingContent(true);
       try {
         const supabase = getSupabaseClient();
         const { data, error } = await supabase
           .from('card_content')
           .select('title, body_text, tldr, link1, excerpt')
-          .eq('card_id', parseInt(cardId))
+          .eq('card_id', parsedCardId)
           .single();
         
         if (error) {
@@ -237,13 +246,22 @@ export default function Legi5() {
     const fetchCardIndexData = async () => {
       if (!cardId) return;
       
+      // Validate cardId is a valid number before parsing
+      const parsedCardId = parseInt(cardId, 10);
+      if (isNaN(parsedCardId) || parsedCardId <= 0) {
+        console.error('Invalid cardId:', cardId);
+        setCardIndexData(null);
+        setIsLoadingIndex(false);
+        return;
+      }
+      
       setIsLoadingIndex(true);
       try {
         const supabase = getSupabaseClient();
         const { data, error } = await supabase
           .from('card_index')
           .select('subtext, is_active, screen, category, created_at')
-          .eq('id', parseInt(cardId))
+          .eq('id', parsedCardId)
           .single();
         
         if (error) {
@@ -329,18 +347,32 @@ export default function Legi5() {
 
   // Handler for haptic feedback
   const handleHaptic = () => {
-    Haptics.selectionAsync();
+    safeHapticsSelection();
   };
 
   // Handler for opening links
   const handleLinkPress = async (url: string) => {
-    Haptics.selectionAsync();
+    safeHapticsSelection();
+    
     try {
-      const supported = await Linking.canOpenURL(url);
+      // Validate URL format before attempting to open
+      if (!url || typeof url !== 'string' || url.trim() === '') {
+        console.error('Invalid URL:', url);
+        return;
+      }
+      
+      // Basic URL validation - must start with http:// or https://
+      const trimmedUrl = url.trim();
+      if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
+        console.error('URL must start with http:// or https://:', trimmedUrl);
+        return;
+      }
+      
+      const supported = await Linking.canOpenURL(trimmedUrl);
       if (supported) {
-        await Linking.openURL(url);
+        await Linking.openURL(trimmedUrl);
       } else {
-        console.log("Can't open URL: " + url);
+        console.log("Can't open URL: " + trimmedUrl);
       }
     } catch (error) {
       console.error("Error opening URL: ", error);

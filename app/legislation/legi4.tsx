@@ -21,7 +21,6 @@ import { CardService } from '../../services/cardService';
 import { CardData, getCategoryFromTitle } from '../../utils/cardData';
 import { incrementOpens } from '../../utils/incrementOpens7d';
 import { filterCardsByWords, getMostCommonWords, shouldShowSearchAssistance } from '../../utils/searchAssistanceUtils';
-import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -310,15 +309,22 @@ export default function Legi4() {
           onPress={async () => {
             const cardId = String(card.id || '');
             if (cardId) {
+              // Validate cardId is a valid number before parsing
+              const parsedCardId = parseInt(cardId, 10);
+              if (isNaN(parsedCardId) || parsedCardId <= 0) {
+                console.error('Invalid cardId:', cardId);
+                return;
+              }
+              
               incrementOpens(cardId);
               
               // Track the currently loading card
-              currentLoadingCardId.current = parseInt(cardId);
+              currentLoadingCardId.current = parsedCardId;
               
               // Execute full_card_gen script
               let wasCancelled = false;
               try {
-                await CardService.generateFullCard(parseInt(cardId), setIsCardLoading, false);
+                await CardService.generateFullCard(parsedCardId, setIsCardLoading, false);
               } catch (error: any) {
                 if (error?.message === 'CANCELLED') {
                   console.log('Card loading was cancelled, not navigating');

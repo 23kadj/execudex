@@ -6,7 +6,6 @@ import { useAuth } from '../components/AuthProvider';
 import { TypeFilterButton } from '../components/TypeFilterButton';
 import { NavigationService } from '../services/navigationService';
 import { getHistory, ProfileHistoryItem } from '../utils/historyUtils';
-import { getSupabaseClient } from '../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(View);
 
@@ -213,13 +212,20 @@ export default function History() {
       if (itemType === 'card') {
         // Navigate to card info page based on card type
         const isPoliticianCard = profile.is_ppl;
+        // Ensure cardId is a string
+        const cardId = historyItem.id ? String(historyItem.id) : '';
+        if (!cardId) {
+          console.error('Invalid cardId in history item:', historyItem);
+          return;
+        }
+        
         const baseParams = {
-          cardTitle: profile.name,
+          cardTitle: profile.name || 'No Data',
           sourcePage: 'history',
           originalPage: 'history',
           isMedia: 'false',
           pageCount: '1',
-          cardId: historyItem.id,
+          cardId: cardId,
         };
         
         if (isPoliticianCard) {

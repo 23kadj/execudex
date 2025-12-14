@@ -551,18 +551,25 @@ export default function Sub4() {
         key={card.id}
         onPressIn={() => onPressIn(index)}
         onPressOut={() => onPressOut(index)}
-        onPress={async () => {
-          const cardId = String(card.id || '');
-          if (cardId) {
-            incrementOpens(cardId);
-            
-            // Track the currently loading card
-            currentLoadingCardId.current = parseInt(cardId);
-            
-            // Execute full_card_gen script
-            let wasCancelled = false;
-            try {
-              await CardService.generateFullCard(parseInt(cardId), setIsCardLoading);
+          onPress={async () => {
+            const cardId = String(card.id || '');
+            if (cardId) {
+              // Validate cardId is a valid number before parsing
+              const parsedCardId = parseInt(cardId, 10);
+              if (isNaN(parsedCardId) || parsedCardId <= 0) {
+                console.error('Invalid cardId:', cardId);
+                return;
+              }
+              
+              incrementOpens(cardId);
+              
+              // Track the currently loading card
+              currentLoadingCardId.current = parsedCardId;
+              
+              // Execute full_card_gen script
+              let wasCancelled = false;
+              try {
+                await CardService.generateFullCard(parsedCardId, setIsCardLoading);
             } catch (error: any) {
               if (error?.message === 'CANCELLED') {
                 console.log('Card loading was cancelled, not navigating');

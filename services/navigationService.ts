@@ -67,10 +67,19 @@ export class NavigationService {
     try {
       this.isProcessing = true;
       
-      // Extract politician ID from params
-      const politicianId = parseInt(params.params.index);
-      if (isNaN(politicianId)) {
-        console.error('Invalid politician ID:', params.params.index);
+      // Extract politician ID from params with validation
+      const indexParam = params.params?.index;
+      if (!indexParam || (typeof indexParam !== 'string' && typeof indexParam !== 'number')) {
+        console.error('Invalid or missing politician ID:', indexParam);
+        // Navigate anyway with invalid ID
+        router.push(params);
+        this.isProcessing = false;
+        return;
+      }
+      
+      const politicianId = typeof indexParam === 'string' ? parseInt(indexParam, 10) : Math.floor(Number(indexParam));
+      if (isNaN(politicianId) || politicianId <= 0) {
+        console.error('Invalid politician ID (not a valid number):', indexParam);
         // Navigate anyway with invalid ID
         router.push(params);
         this.isProcessing = false;
@@ -223,10 +232,19 @@ export class NavigationService {
     try {
       this.isProcessing = true;
       
-      // Extract legislation ID from params
-      const legislationId = parseInt(params.params.index);
-      if (isNaN(legislationId)) {
-        console.error('Invalid legislation ID:', params.params.index);
+      // Extract legislation ID from params with validation
+      const indexParam = params.params?.index;
+      if (!indexParam || (typeof indexParam !== 'string' && typeof indexParam !== 'number')) {
+        console.error('Invalid or missing legislation ID:', indexParam);
+        // Navigate anyway with invalid ID
+        router.push(params);
+        this.isProcessing = false;
+        return;
+      }
+      
+      const legislationId = typeof indexParam === 'string' ? parseInt(indexParam, 10) : Math.floor(Number(indexParam));
+      if (isNaN(legislationId) || legislationId <= 0) {
+        console.error('Invalid legislation ID (not a valid number):', indexParam);
         // Navigate anyway with invalid ID
         router.push(params);
         this.isProcessing = false;

@@ -342,15 +342,22 @@ export default function Legi1({ scrollY, name, position, scrollRef }: Legi1Props
           onPress={async () => {
             const cardId = String(cardData[cardNumber - 1]?.id || '');
             if (cardId) {
+              // Validate cardId is a valid number before parsing
+              const parsedCardId = parseInt(cardId, 10);
+              if (isNaN(parsedCardId) || parsedCardId <= 0) {
+                console.error('Invalid cardId:', cardId);
+                return;
+              }
+              
               incrementOpens(cardId);
               
               // Track the currently loading card
-              currentLoadingCardId.current = parseInt(cardId);
+              currentLoadingCardId.current = parsedCardId;
               
               // Execute full_card_gen script
               let wasCancelled = false;
               try {
-                await CardService.generateFullCard(parseInt(cardId), setIsCardLoading, false);
+                await CardService.generateFullCard(parsedCardId, setIsCardLoading, false);
               } catch (error: any) {
                 if (error?.message === 'CANCELLED') {
                   console.log('Card loading was cancelled, not navigating');
