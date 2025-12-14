@@ -6,10 +6,23 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect } from 'react';
 import { AuthProvider } from '../components/AuthProvider';
+import { ErrorOverlayManager } from '../components/ErrorOverlay';
+import { initDebugFlags } from '../utils/debugFlags';
+import { initGlobalErrorHandler } from '../utils/globalErrorHandler';
+import { persistentLogger } from '../utils/persistentLogger';
 
 // Keep the native splash screen visible while we're loading
 SplashScreen.preventAutoHideAsync();
 
+// Initialize global error handler as early as possible
+initGlobalErrorHandler();
+
+// Initialize debug flags and persistent logger on app startup
+(async () => {
+  await initDebugFlags();
+  await persistentLogger.init();
+  persistentLogger.log('app', { action: 'startup', timestamp: Date.now() });
+})();
 
 export default function Layout() {
   // Hide splash screen when component mounts
@@ -20,6 +33,7 @@ export default function Layout() {
   // Stack layout wrapped in AuthProvider for auth context
   return (
     <AuthProvider>
+      <ErrorOverlayManager />
       <Stack
         screenOptions={{
           animation: 'slide_from_right',
@@ -41,6 +55,8 @@ export default function Layout() {
         <Stack.Screen name="debug-supabase" />
         <Stack.Screen name="debug-crash-log" />
         <Stack.Screen name="debug-startup-log" />
+        <Stack.Screen name="debug-logs" />
+        <Stack.Screen name="debug-flags" />
         <Stack.Screen name="test-ppl-data-simple" />
         <Stack.Screen name="test-ppl-data" />
         <Stack.Screen name="test-step2-data-models" />

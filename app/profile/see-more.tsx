@@ -2,6 +2,8 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef } from 'react';
 import { Animated, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { safeNativeCall } from '../../utils/nativeCallDebugger';
+import { persistentLogger } from '../../utils/persistentLogger';
 
 interface SeeMoreProps {
   name?: string;
@@ -32,6 +34,17 @@ export default function SeeMore({
   pollSummary = '',
   pollLink = ''
 }: SeeMoreProps) {
+  // ============================================
+  // VERY EARLY CHECKPOINT - FIRST THING IN COMPONENT
+  // ============================================
+  persistentLogger.checkpoint('see-more:entry', {
+    timestamp: Date.now(),
+    name,
+    position,
+    approvalPercentage,
+    disapprovalPercentage,
+  });
+
   const router = useRouter();
   const params = useLocalSearchParams();
   
@@ -42,6 +55,16 @@ export default function SeeMore({
   const disapproval = typeof params.disapproval === 'string' ? parseFloat(params.disapproval.toString()) : disapprovalPercentage;
   const pollSummaryText = typeof params.pollSummary === 'string' ? params.pollSummary : pollSummary;
   const pollLinkText = typeof params.pollLink === 'string' ? params.pollLink : pollLink;
+
+  // Log all params
+  persistentLogger.log('see-more:params', {
+    politicianName,
+    politicianPosition,
+    approval,
+    disapproval,
+    hasPollSummary: !!pollSummaryText,
+    hasPollLink: !!pollLinkText,
+  });
 
   // Check if both approval and disapproval values are valid (not null/undefined and not default fallback values)
   const hasValidPollData = () => {
@@ -58,16 +81,44 @@ export default function SeeMore({
 
   // Handler for opening links
   const handleLinkPress = async (url: string) => {
-    Haptics.selectionAsync();
+    persistentLogger.checkpoint('see-more:handleLinkPress:before', { url: url?.substring(0, 50) });
+    
+    // Haptics call with checkpoint
     try {
-      const supported = await Linking.canOpenURL(url);
+      await safeNativeCall('haptics', 'selectionAsync', {}, () => {
+        Haptics.selectionAsync();
+        return Promise.resolve();
+      });
+      persistentLogger.checkpoint('see-more:haptics:success');
+    } catch (error) {
+      persistentLogger.log('see-more:haptics:error', { error }, 'error');
+    }
+    
+    // Linking calls with checkpoints
+    try {
+      persistentLogger.checkpoint('see-more:linking:canOpenURL:before', { url });
+      
+      const supported = await safeNativeCall(
+        'linking',
+        'canOpenURL',
+        { url },
+        () => Linking.canOpenURL(url)
+      );
+      
       if (supported) {
-        await Linking.openURL(url);
+        persistentLogger.checkpoint('see-more:linking:openURL:before', { url });
+        await safeNativeCall(
+          'linking',
+          'openURL',
+          { url },
+          () => Linking.openURL(url)
+        );
+        persistentLogger.checkpoint('see-more:linking:openURL:success');
       } else {
-        console.log("Can't open URL: " + url);
+        persistentLogger.log('see-more:linking:notSupported', { url });
       }
     } catch (error) {
-      console.error("Error opening URL: ", error);
+      persistentLogger.log('see-more:linking:error', { error, url }, 'error');
     }
   };
 
@@ -88,11 +139,24 @@ export default function SeeMore({
 
   // Header component (same as index1.tsx but without bookmark)
   const Header = () => {
+    const handleBack = () => {
+      persistentLogger.checkpoint('see-more:router:back:before');
+      try {
+        safeNativeCall('router', 'back', {}, () => {
+          router.back();
+          return Promise.resolve();
+        });
+        persistentLogger.checkpoint('see-more:router:back:success');
+      } catch (error) {
+        persistentLogger.log('see-more:router:back:error', { error }, 'error');
+      }
+    };
+    
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity
           style={styles.headerIconBtn}
-          onPress={() => router.back()}
+          onPress={handleBack}
           hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
         >
           <Image source={require('../../assets/back1.png')} style={styles.headerIcon} />

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
 import { addToHistory } from '../../utils/historyUtils';
+import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { safeHapticsSelection } from '../../utils/safeHaptics';
 import { getSupabaseClient } from '../../utils/supabase';
 
@@ -112,24 +113,39 @@ function InfoSection({
 }
 
 export default function Legi5() {
+  // ============================================
+  // VERY EARLY LOGGING - FIRST THING IN COMPONENT
+  // ============================================
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
   
-  // Log entry to card page (crash point)
-  const cardId = typeof params.cardId === 'string' ? params.cardId : undefined;
-  useEffect(() => {
-    console.log('[Legi5] Entering card page', {
-      screen: 'legi5',
-      cardId: cardId?.substring(0, 10)
-    });
-  }, [cardId]);
+  // Log screen entry immediately with all params
+  console.log('========================================');
+  console.log('[LEGI5] SCREEN ENTRY - VERY EARLY');
+  console.log('[LEGI5] Timestamp:', new Date().toISOString());
+  console.log('[LEGI5] All params (raw):', JSON.stringify(params, null, 2));
+  console.log('[LEGI5] Params keys:', Object.keys(params));
+  console.log('[LEGI5] User ID:', user?.id || 'null');
+  console.log('========================================');
   
-  // Dynamic title and subtitle configuration
+  // Extract and validate params with logging
+  const cardId = typeof params.cardId === 'string' ? params.cardId : undefined;
   const cardTitle = typeof params.cardTitle === 'string' ? params.cardTitle : 'No Data';
   const billName = typeof params.billName === 'string' ? params.billName : 'No Data Available';
   const originalPage = typeof params.originalPage === 'string' ? params.originalPage : '';
   const isMedia = typeof params.isMedia === 'string' ? params.isMedia === 'true' : false;
+  
+  console.log('[LEGI5] Extracted params:', {
+    cardId: cardId ? `${cardId.substring(0, 10)}...` : 'undefined',
+    cardTitle: cardTitle.substring(0, 30),
+    billName: billName.substring(0, 30),
+    originalPage,
+    isMedia,
+  });
+  
+  // Log first native call checkpoint
+  console.log('[LEGI5] Checkpoint: Component initialized, about to make first native calls');
   
   // Bookmark state
   const [isBookmarked, setIsBookmarked] = useState(false);
@@ -157,23 +173,43 @@ export default function Legi5() {
   // Check bookmark status when component mounts
   useEffect(() => {
     const checkBookmarkStatus = async () => {
-      if (cardId) {
-        try {
-          const supabase = getSupabaseClient();
-          // For now, check if any bookmark exists (without user restriction)
-          const { data: bookmarkData, error: bookmarkError } = await supabase
-            .from('bookmarks')
-            .select('*')
-            .eq('owner_id', cardId)
-            .eq('bookmark_type', 'card')
-            .single();
-          
-          if (!bookmarkError && bookmarkData) {
-            setIsBookmarked(true);
+      if (!cardId) {
+        console.log('[LEGI5] Skipping bookmark check - no cardId');
+        return;
+      }
+      
+      console.log('[LEGI5] Checkpoint: Starting bookmark status check');
+      
+      try {
+        const result = await safeNativeCall(
+          'supabase',
+          'bookmarks.select',
+          { owner_id: cardId, bookmark_type: 'card' },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { data: bookmarkData, error: bookmarkError } = await supabase
+              .from('bookmarks')
+              .select('*')
+              .eq('owner_id', cardId)
+              .eq('bookmark_type', 'card')
+              .single();
+            
+            if (bookmarkError) {
+              throw bookmarkError;
+            }
+            
+            return bookmarkData;
           }
-        } catch (error) {
-          console.error('Error checking bookmark status:', error);
+        );
+        
+        if (result) {
+          console.log('[LEGI5] Bookmark found, setting isBookmarked=true');
+          setIsBookmarked(true);
+        } else {
+          console.log('[LEGI5] No bookmark found');
         }
+      } catch (error) {
+        console.error('[LEGI5] Error checking bookmark status:', error);
       }
     };
     
@@ -204,12 +240,17 @@ export default function Legi5() {
   // Fetch card content from card_content table
   useEffect(() => {
     const fetchCardContent = async () => {
-      if (!cardId) return;
+      if (!cardId) {
+        console.log('[LEGI5] Skipping card content fetch - no cardId');
+        return;
+      }
+      
+      console.log('[LEGI5] Checkpoint: Starting card content fetch');
       
       // Validate cardId is a valid number before parsing
       const parsedCardId = parseInt(cardId, 10);
       if (isNaN(parsedCardId) || parsedCardId <= 0) {
-        console.error('Invalid cardId:', cardId);
+        console.error('[LEGI5] Invalid cardId:', cardId);
         setCardContent(null);
         setIsLoadingContent(false);
         return;
@@ -217,21 +258,35 @@ export default function Legi5() {
       
       setIsLoadingContent(true);
       try {
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
-          .from('card_content')
-          .select('title, body_text, tldr, link1, excerpt')
-          .eq('card_id', parsedCardId)
-          .single();
+        const result = await safeNativeCall(
+          'supabase',
+          'card_content.select',
+          { card_id: parsedCardId },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { data, error } = await supabase
+              .from('card_content')
+              .select('title, body_text, tldr, link1, excerpt')
+              .eq('card_id', parsedCardId)
+              .single();
+            
+            if (error) {
+              throw error;
+            }
+            
+            return data;
+          }
+        );
         
-        if (error) {
-          console.error('Error fetching card content:', error);
+        if (result) {
+          console.log('[LEGI5] Card content fetched successfully');
+          setCardContent(result);
+        } else {
+          console.log('[LEGI5] No card content found');
           setCardContent(null);
-        } else if (data) {
-          setCardContent(data);
         }
       } catch (error) {
-        console.error('Error in fetchCardContent:', error);
+        console.error('[LEGI5] Error in fetchCardContent:', error);
         setCardContent(null);
       } finally {
         setIsLoadingContent(false);
@@ -244,12 +299,17 @@ export default function Legi5() {
   // Fetch card index data for subtext, is_active, screen, and category
   useEffect(() => {
     const fetchCardIndexData = async () => {
-      if (!cardId) return;
+      if (!cardId) {
+        console.log('[LEGI5] Skipping card index fetch - no cardId');
+        return;
+      }
+      
+      console.log('[LEGI5] Checkpoint: Starting card index fetch');
       
       // Validate cardId is a valid number before parsing
       const parsedCardId = parseInt(cardId, 10);
       if (isNaN(parsedCardId) || parsedCardId <= 0) {
-        console.error('Invalid cardId:', cardId);
+        console.error('[LEGI5] Invalid cardId:', cardId);
         setCardIndexData(null);
         setIsLoadingIndex(false);
         return;
@@ -257,21 +317,35 @@ export default function Legi5() {
       
       setIsLoadingIndex(true);
       try {
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
-          .from('card_index')
-          .select('subtext, is_active, screen, category, created_at')
-          .eq('id', parsedCardId)
-          .single();
+        const result = await safeNativeCall(
+          'supabase',
+          'card_index.select',
+          { id: parsedCardId },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { data, error } = await supabase
+              .from('card_index')
+              .select('subtext, is_active, screen, category, created_at')
+              .eq('id', parsedCardId)
+              .single();
+            
+            if (error) {
+              throw error;
+            }
+            
+            return data;
+          }
+        );
         
-        if (error) {
-          console.error('Error fetching card index data:', error);
+        if (result) {
+          console.log('[LEGI5] Card index data fetched successfully');
+          setCardIndexData(result);
+        } else {
+          console.log('[LEGI5] No card index data found');
           setCardIndexData(null);
-        } else if (data) {
-          setCardIndexData(data);
         }
       } catch (error) {
-        console.error('Error in fetchCardIndexData:', error);
+        console.error('[LEGI5] Error in fetchCardIndexData:', error);
         setCardIndexData(null);
       } finally {
         setIsLoadingIndex(false);
@@ -381,11 +455,23 @@ export default function Legi5() {
 
   // Header with bookmark button
   const Header = useCallback(() => {
+    const handleBack = () => {
+      console.log('[LEGI5] Checkpoint: Back button pressed, about to call router.back()');
+      try {
+        safeNativeCall('router', 'back', {}, () => {
+          router.back();
+          return Promise.resolve();
+        });
+      } catch (error) {
+        console.error('[LEGI5] Error calling router.back():', error);
+      }
+    };
+    
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity
           style={styles.headerIconBtn}
-          onPress={() => router.back()}
+          onPress={handleBack}
           hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
         >
           <Image source={require('../../assets/back1.png')} style={styles.headerIcon} />
@@ -469,7 +555,12 @@ const BookmarkButton = ({ isBookmarked, setIsBookmarked, cardId }: {
   const { user } = useAuth();
   
   const handleBookmarkToggle = async () => {
-    if (!cardId) return;
+    if (!cardId) {
+      console.log('[LEGI5] Bookmark toggle skipped - no cardId');
+      return;
+    }
+    
+    console.log('[LEGI5] Checkpoint: Bookmark toggle', { currentState: isBookmarked });
     
     const newBookmarkState = !isBookmarked;
     setIsBookmarked(newBookmarkState);
@@ -477,6 +568,7 @@ const BookmarkButton = ({ isBookmarked, setIsBookmarked, cardId }: {
     try {
       if (newBookmarkState) {
         // Bookmarking - insert into database
+        console.log('[LEGI5] Checkpoint: Inserting bookmark');
         const bookmarkData: any = {
           owner_id: cardId,
           bookmark_type: 'card'
@@ -487,33 +579,48 @@ const BookmarkButton = ({ isBookmarked, setIsBookmarked, cardId }: {
           bookmarkData.user_id = user.id;
         }
         
-        const supabase = getSupabaseClient();
-        const { error: insertError } = await supabase
-          .from('bookmarks')
-          .insert(bookmarkData);
+        await safeNativeCall(
+          'supabase',
+          'bookmarks.insert',
+          bookmarkData,
+          async () => {
+            const supabase = getSupabaseClient();
+            const { error: insertError } = await supabase
+              .from('bookmarks')
+              .insert(bookmarkData);
+            
+            if (insertError) {
+              throw insertError;
+            }
+          }
+        );
         
-        if (insertError) {
-          console.error('Error inserting bookmark:', insertError);
-          // Revert state if insert failed
-          setIsBookmarked(false);
-        }
+        console.log('[LEGI5] Bookmark inserted successfully');
       } else {
         // Unbookmarking - delete from database
-        const supabase = getSupabaseClient();
-        const { error: deleteError } = await supabase
-          .from('bookmarks')
-          .delete()
-          .eq('owner_id', cardId)
-          .eq('bookmark_type', 'card');
+        console.log('[LEGI5] Checkpoint: Deleting bookmark');
+        await safeNativeCall(
+          'supabase',
+          'bookmarks.delete',
+          { owner_id: cardId, bookmark_type: 'card' },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { error: deleteError } = await supabase
+              .from('bookmarks')
+              .delete()
+              .eq('owner_id', cardId)
+              .eq('bookmark_type', 'card');
+            
+            if (deleteError) {
+              throw deleteError;
+            }
+          }
+        );
         
-        if (deleteError) {
-          console.error('Error deleting bookmark:', deleteError);
-          // Revert state if delete failed
-          setIsBookmarked(true);
-        }
+        console.log('[LEGI5] Bookmark deleted successfully');
       }
     } catch (error) {
-      console.error('Error handling bookmark:', error);
+      console.error('[LEGI5] Error handling bookmark:', error);
       // Revert state on error
       setIsBookmarked(!newBookmarkState);
     }

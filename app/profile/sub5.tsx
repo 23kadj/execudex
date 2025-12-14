@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
 import { addToHistory } from '../../utils/historyUtils';
+import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { safeHapticsSelection } from '../../utils/safeHaptics';
 import { getSupabaseClient } from '../../utils/supabase';
 
@@ -118,24 +119,41 @@ function InfoSection({
 }
 
 export default function Sub5() {
+  // ============================================
+  // VERY EARLY LOGGING - FIRST THING IN COMPONENT
+  // ============================================
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
   
-  // Log entry to card page (crash point)
+  // Log screen entry immediately with all params
+  console.log('========================================');
+  console.log('[SUB5] SCREEN ENTRY - VERY EARLY');
+  console.log('[SUB5] Timestamp:', new Date().toISOString());
+  console.log('[SUB5] All params (raw):', JSON.stringify(params, null, 2));
+  console.log('[SUB5] Params keys:', Object.keys(params));
+  console.log('[SUB5] User ID:', user?.id || 'null');
+  console.log('========================================');
+  
+  // Extract and validate params with logging
   const cardId = typeof params.cardId === 'string' ? params.cardId : undefined;
-  useEffect(() => {
-    console.log('[Sub5] Entering card page', {
-      screen: 'sub5',
-      cardId: cardId?.substring(0, 10)
-    });
-  }, [cardId]);
-
   const cardTitle = typeof params.cardTitle === 'string' ? params.cardTitle : 'No Data';
   const profileName = typeof params.profileName === 'string' ? params.profileName : 'No Data Available';
   const sourcePage = typeof params.sourcePage === 'string' ? params.sourcePage : '';
   const originalPage = typeof params.originalPage === 'string' ? params.originalPage : '';
   const isMedia = typeof params.isMedia === 'string' ? params.isMedia === 'true' : false;
+  
+  console.log('[SUB5] Extracted params:', {
+    cardId: cardId ? `${cardId.substring(0, 10)}...` : 'undefined',
+    cardTitle: cardTitle.substring(0, 30),
+    profileName: profileName.substring(0, 30),
+    sourcePage,
+    originalPage,
+    isMedia,
+  });
+  
+  // Log first native call checkpoint
+  console.log('[SUB5] Checkpoint: Component initialized, about to make first native calls');
   
   // Bookmark state
   const [isBookmarked, setIsBookmarked] = useState(false);
@@ -210,12 +228,17 @@ export default function Sub5() {
   // Fetch card content from card_content table
   useEffect(() => {
     const fetchCardContent = async () => {
-      if (!cardId) return;
+      if (!cardId) {
+        console.log('[SUB5] Skipping card content fetch - no cardId');
+        return;
+      }
+      
+      console.log('[SUB5] Checkpoint: Starting card content fetch');
       
       // Validate cardId is a valid number before parsing
       const parsedCardId = parseInt(cardId, 10);
       if (isNaN(parsedCardId) || parsedCardId <= 0) {
-        console.error('Invalid cardId:', cardId);
+        console.error('[SUB5] Invalid cardId:', cardId);
         setCardContent(null);
         setIsLoadingContent(false);
         return;
@@ -223,21 +246,35 @@ export default function Sub5() {
       
       setIsLoadingContent(true);
       try {
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
-          .from('card_content')
-          .select('title, body_text, tldr, link1, excerpt')
-          .eq('card_id', parsedCardId)
-          .single();
+        const result = await safeNativeCall(
+          'supabase',
+          'card_content.select',
+          { card_id: parsedCardId },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { data, error } = await supabase
+              .from('card_content')
+              .select('title, body_text, tldr, link1, excerpt')
+              .eq('card_id', parsedCardId)
+              .single();
+            
+            if (error) {
+              throw error;
+            }
+            
+            return data;
+          }
+        );
         
-        if (error) {
-          console.error('Error fetching card content:', error);
+        if (result) {
+          console.log('[SUB5] Card content fetched successfully');
+          setCardContent(result);
+        } else {
+          console.log('[SUB5] No card content found');
           setCardContent(null);
-        } else if (data) {
-          setCardContent(data);
         }
       } catch (error) {
-        console.error('Error in fetchCardContent:', error);
+        console.error('[SUB5] Error in fetchCardContent:', error);
         setCardContent(null);
       } finally {
         setIsLoadingContent(false);
@@ -250,12 +287,17 @@ export default function Sub5() {
   // Fetch card index data for subtext, is_active, and category
   useEffect(() => {
     const fetchCardIndexData = async () => {
-      if (!cardId) return;
+      if (!cardId) {
+        console.log('[SUB5] Skipping card index fetch - no cardId');
+        return;
+      }
+      
+      console.log('[SUB5] Checkpoint: Starting card index fetch');
       
       // Validate cardId is a valid number before parsing
       const parsedCardId = parseInt(cardId, 10);
       if (isNaN(parsedCardId) || parsedCardId <= 0) {
-        console.error('Invalid cardId:', cardId);
+        console.error('[SUB5] Invalid cardId:', cardId);
         setCardIndexData(null);
         setIsLoadingIndex(false);
         return;
@@ -263,21 +305,35 @@ export default function Sub5() {
       
       setIsLoadingIndex(true);
       try {
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase
-          .from('card_index')
-          .select('subtext, is_active, screen, category, created_at')
-          .eq('id', parsedCardId)
-          .single();
+        const result = await safeNativeCall(
+          'supabase',
+          'card_index.select',
+          { id: parsedCardId },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { data, error } = await supabase
+              .from('card_index')
+              .select('subtext, is_active, screen, category, created_at')
+              .eq('id', parsedCardId)
+              .single();
+            
+            if (error) {
+              throw error;
+            }
+            
+            return data;
+          }
+        );
         
-        if (error) {
-          console.error('Error fetching card index data:', error);
+        if (result) {
+          console.log('[SUB5] Card index data fetched successfully');
+          setCardIndexData(result);
+        } else {
+          console.log('[SUB5] No card index data found');
           setCardIndexData(null);
-        } else if (data) {
-          setCardIndexData(data);
         }
       } catch (error) {
-        console.error('Error in fetchCardIndexData:', error);
+        console.error('[SUB5] Error in fetchCardIndexData:', error);
         setCardIndexData(null);
       } finally {
         setIsLoadingIndex(false);
@@ -359,30 +415,55 @@ export default function Sub5() {
 
   // Handler for opening links
   const handleLinkPress = async (url: string) => {
-    safeHapticsSelection();
+    console.log('[SUB5] Checkpoint: handleLinkPress called', { url: url?.substring(0, 50) });
+    
+    // Haptics call with logging
+    try {
+      await safeNativeCall('haptics', 'selectionAsync', {}, () => {
+        safeHapticsSelection();
+        return Promise.resolve();
+      });
+    } catch (error) {
+      console.error('[SUB5] Haptics error (non-fatal):', error);
+    }
     
     try {
       // Validate URL format before attempting to open
       if (!url || typeof url !== 'string' || url.trim() === '') {
-        console.error('Invalid URL:', url);
+        console.error('[SUB5] Invalid URL:', url);
         return;
       }
       
       // Basic URL validation - must start with http:// or https://
       const trimmedUrl = url.trim();
       if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
-        console.error('URL must start with http:// or https://:', trimmedUrl);
+        console.error('[SUB5] URL must start with http:// or https://:', trimmedUrl);
         return;
       }
       
-      const supported = await Linking.canOpenURL(trimmedUrl);
+      console.log('[SUB5] Checkpoint: About to call Linking.canOpenURL');
+      
+      const supported = await safeNativeCall(
+        'linking',
+        'canOpenURL',
+        { url: trimmedUrl },
+        () => Linking.canOpenURL(trimmedUrl)
+      );
+      
       if (supported) {
-        await Linking.openURL(trimmedUrl);
+        console.log('[SUB5] Checkpoint: About to call Linking.openURL');
+        await safeNativeCall(
+          'linking',
+          'openURL',
+          { url: trimmedUrl },
+          () => Linking.openURL(trimmedUrl)
+        );
+        console.log('[SUB5] Checkpoint: Linking.openURL completed');
       } else {
-        console.log("Can't open URL: " + trimmedUrl);
+        console.log('[SUB5] URL not supported:', trimmedUrl);
       }
     } catch (error) {
-      console.error("Error opening URL: ", error);
+      console.error('[SUB5] Error opening URL:', error);
     }
   };
 
@@ -416,11 +497,23 @@ export default function Sub5() {
 
   // Header with bookmark button
   const Header = useCallback(() => {
+    const handleBack = () => {
+      console.log('[SUB5] Checkpoint: Back button pressed, about to call router.back()');
+      try {
+        safeNativeCall('router', 'back', {}, () => {
+          router.back();
+          return Promise.resolve();
+        });
+      } catch (error) {
+        console.error('[SUB5] Error calling router.back():', error);
+      }
+    };
+    
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity
           style={styles.headerIconBtn}
-          onPress={() => router.back()}
+          onPress={handleBack}
           hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
         >
           <Image source={require('../../assets/back1.png')} style={styles.headerIcon} />
