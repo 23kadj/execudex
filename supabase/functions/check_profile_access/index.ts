@@ -131,13 +131,14 @@ serve(async (req) => {
       console.log('Weekly reset triggered (most recent Sunday was before last_reset or no reset exists)');
       
       // Reset the week_profiles array and add current profile
+      // This tracks the profile for ALL users (both basic and plus) - tracking is universal
       weekProfiles = [profile_id];
       
       // Create simple comma-separated format for reset
       const resetString = profile_id;
-      console.log('Creating reset string:', resetString);
+      console.log(`Creating reset string for ${isBasicPlan ? 'basic' : 'plus'} plan user:`, resetString);
       
-      // Update database with reset
+      // Update database with reset (tracks for all users)
       const { error: updateError } = await supabaseClient
         .from('users')
         .update({
@@ -176,6 +177,8 @@ serve(async (req) => {
     // Check if profile_id is already in the array
     if (weekProfiles.includes(profile_id)) {
       console.log(`Profile ${profile_id} already accessed this week. Current count: ${weekProfiles.length}`);
+      const planType = isBasicPlan ? 'basic' : 'plus';
+      console.log(`${planType} plan user - profile already tracked`);
       return new Response(
         JSON.stringify({ 
           allowed: true,
@@ -189,13 +192,19 @@ serve(async (req) => {
       );
     }
 
-    // Profile is not in array - check if there's room (only for basic plan)
+    // Profile is not in array - need to add it for tracking
+    // IMPORTANT: We track profiles for ALL users (both basic and plus)
+    // - Basic users: Tracking is used for quota enforcement (limit of 5 per week)
+    // - Plus users: Tracking is for record-keeping (no limits, unlimited access)
+    
+    // For basic plan users: Check quota BEFORE adding
     if (isBasicPlan) {
-      console.log(`Checking quota: ${weekProfiles.length} profiles used, limit is ${BASIC_WEEKLY_LIMIT}`);
+      console.log(`Basic plan: Checking quota: ${weekProfiles.length} profiles used, limit is ${BASIC_WEEKLY_LIMIT}`);
       if (weekProfiles.length >= BASIC_WEEKLY_LIMIT) {
         console.log(`Weekly profile limit reached: ${weekProfiles.length} >= ${BASIC_WEEKLY_LIMIT}`);
         const nextSundayDate = getNextSunday(currentDate);
         
+        // Basic plan user exceeded quota - deny access (don't track this profile)
         return new Response(
           JSON.stringify({ 
             allowed: false,
@@ -209,16 +218,19 @@ serve(async (req) => {
           }
         );
       }
-    } else {
-      console.log(`Plus plan user - unlimited access (tracking ${weekProfiles.length} profiles)`);
     }
 
-    // There's room (or unlimited for plus) - add the profile to the array
+    // Add the profile to the array for tracking
+    // This happens for ALL users (both basic and plus):
+    // - Basic: Only reaches here if quota check passed (under limit)
+    // - Plus: Always reaches here (unlimited, tracking for records)
     weekProfiles.push(profile_id);
     const newLength = weekProfiles.length;
-    console.log(`Adding profile ${profile_id}. New count will be: ${newLength}${isBasicPlan ? ` (limit: ${BASIC_WEEKLY_LIMIT})` : ' (unlimited)'}`);
+    console.log(`Adding profile ${profile_id} to tracking. New count: ${newLength}${isBasicPlan ? ` (basic plan, limit: ${BASIC_WEEKLY_LIMIT})` : ' (plus plan - unlimited, tracking for records)'}`);
     
     // Double-check we're not exceeding the limit before updating database (only for basic plan)
+    // This is a defensive check - should never happen if logic above is correct
+    // Plus users can have unlimited profiles tracked, so skip this check for them
     if (isBasicPlan && newLength > BASIC_WEEKLY_LIMIT) {
       console.error(`ERROR: Attempted to add profile would exceed limit! Current: ${newLength}, Limit: ${BASIC_WEEKLY_LIMIT}`);
       // Remove the profile we just added
@@ -279,18 +291,21 @@ serve(async (req) => {
         verifyProfiles = verifyData.week_profiles;
       }
       
-      if (verifyProfiles.length > BASIC_WEEKLY_LIMIT) {
-        console.error(`CRITICAL: week_profiles exceeded limit after update! Count: ${verifyProfiles.length}, Limit: ${BASIC_WEEKLY_LIMIT}`);
+      // Only check limit for basic plan users (plus users can have unlimited)
+      if (isBasicPlan && verifyProfiles.length > BASIC_WEEKLY_LIMIT) {
+        console.error(`CRITICAL: Basic plan user exceeded limit after update! Count: ${verifyProfiles.length}, Limit: ${BASIC_WEEKLY_LIMIT}`);
         console.error('Stored profiles:', verifyProfiles);
         // This shouldn't happen, but log it for debugging
       } else {
-        console.log(`Verified: Database has ${verifyProfiles.length} profiles stored (limit: ${BASIC_WEEKLY_LIMIT})`);
+        const planType = isBasicPlan ? 'basic' : 'plus';
+        console.log(`Verified: Database has ${verifyProfiles.length} profiles stored for ${planType} plan user${isBasicPlan ? ` (limit: ${BASIC_WEEKLY_LIMIT})` : ' (unlimited tracking)'}`);
       }
     }
 
-    console.log(`Profile added successfully. Total profiles: ${newLength}`);
+    console.log(`Profile added successfully. Total profiles tracked: ${newLength}${isBasicPlan ? ` (basic plan)` : ' (plus plan - unlimited)'}`);
 
     // Calculate remaining profiles for warning system (only for basic plan)
+    // Plus users don't need warnings since they have unlimited access
     let showWarning = false;
     let remaining = 0;
     
@@ -300,15 +315,18 @@ serve(async (req) => {
       // This means warnings show at profiles 3 and 4 (out of 5)
       if (WARNING_THRESHOLDS.includes(remaining)) {
         showWarning = true;
-        console.log(`Warning triggered: ${remaining} profile(s) remaining`);
+        console.log(`Warning triggered for basic plan: ${remaining} profile(s) remaining`);
       }
+    } else {
+      // Plus plan: No warnings needed, but log tracking info
+      console.log(`Plus plan user: Profile tracked (${newLength} total this week) - no limits, tracking for records only`);
     }
 
     return new Response(
       JSON.stringify({ 
         allowed: true,
         profilesUsed: newLength,
-        reason: isBasicPlan ? 'profile_added' : 'unlimited_plan',
+        reason: isBasicPlan ? 'profile_added' : 'unlimited_plan_tracked',
         showWarning: showWarning,
         remainingProfiles: isBasicPlan ? remaining : undefined
       }),

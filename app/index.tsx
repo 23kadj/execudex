@@ -1,6 +1,6 @@
 // app/index.tsx
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
@@ -57,18 +57,12 @@ const AnimatedSafeAreaView = Animated.createAnimatedComponent(SafeAreaView);
 export default function Onboarding() {
   const { session, loading: authLoading } = useAuth();
   const router = useRouter();
-
-  // Immediately redirect to home if user is already authenticated
-  useEffect(() => {
-    if (!authLoading && session) {
-      console.log('[Onboarding] User already authenticated, redirecting to home');
-      router.replace('/(tabs)/home');
-    }
-  }, [session, authLoading, router]);
+  const params = useLocalSearchParams();
 
 const steps = ['getStarted','ageGender','nextScreenKey','hearAbout','stayInformed','unsatisfiedReason','valueProp','profileHighlight', 'paymentPlan'];
 type StepKey = typeof steps[number];
 const [stepIndex, setStepIndex] = useState(0);
+const previousSessionRef = useRef<boolean>(false); // Track previous session state
 
 // Original onboarding flow - no overrides
 const progressAnim = useRef(new Animated.Value(0)).current;
@@ -144,11 +138,82 @@ const step: StepKey = steps[stepIndex];
   const buildOnboardData = () =>
     `[${age}], [${gender}], [${involvement}], [${heardFrom}], [${informedFrom}], [${reason}]`;
 
-  // Keep refs in sync for purchase handler
+  // Only redirect to home if user is authenticated AND has completed onboarding (has a plan)
+  // Don't redirect if user is currently on the payment plan step (they're selecting a plan)
+  // Also reset to first step if user logs out (detect session transition from true to false)
   useEffect(() => {
-    selectedPlanRef.current = plan;
-    selectedCycleRef.current = cycle;
-  }, [plan, cycle]);
+    // CHECK FOR LOGOUT FLAG FIRST
+    // If we just came from the profile screen, ignore any lingering session data
+    if (params.logout === 'true') {
+      console.log('[Onboarding] Explicit logout detected. Skipping auto-redirect.');
+      // Ensure we reset to the first step
+      if (stepIndex !== 0) {
+        setStepIndex(0);
+      }
+      // Update ref to reflect no session
+      previousSessionRef.current = false;
+      return; // Skip all redirect logic
+    }
+
+    const hadSession = previousSessionRef.current;
+    const hasSession = !!session?.user?.id;
+    
+    // Detect logout: had session before, but no session now
+    if (!authLoading && hadSession && !hasSession) {
+      console.log('[Onboarding] User logged out - resetting to first step');
+      setStepIndex(0);
+      // Update ref immediately after detecting logout
+      previousSessionRef.current = false;
+      // Don't check for plan if user just logged out - stay on onboarding
+      return;
+    }
+    
+    // Update the ref for next comparison
+    previousSessionRef.current = hasSession;
+    
+    // If no session, don't check for plan or redirect
+    if (!hasSession) {
+      return;
+    }
+    
+    // Don't check/redirect if user is on payment plan step (stepIndex 8) - let them complete it
+    if (stepIndex === 8) {
+      return;
+    }
+    
+    // Only check if we have a valid session and auth is not loading
+    if (!authLoading && hasSession) {
+      const checkUserPlan = async () => {
+        try {
+          const supabase = getSupabaseClient();
+          const { data, error } = await supabase
+            .from('users')
+            .select('plan')
+            .eq('uuid', session.user.id)
+            .maybeSingle();
+          
+          if (error) {
+            console.error('[Onboarding] Error checking user plan:', error);
+            return; // Stay on onboarding if we can't check
+          }
+          
+          // Only redirect if user has a plan (has completed onboarding)
+          const userData = data as { plan?: string } | null;
+          if (userData?.plan && userData.plan.trim() !== '') {
+            console.log('[Onboarding] User has plan, redirecting to home');
+            router.replace('/(tabs)/home');
+          } else {
+            console.log('[Onboarding] User authenticated but no plan found - staying on onboarding to complete plan selection');
+          }
+        } catch (error) {
+          console.error('[Onboarding] Exception checking user plan:', error);
+          // Stay on onboarding if there's an error
+        }
+      };
+      
+      checkUserPlan();
+    }
+  }, [session, authLoading, router, stepIndex, params.logout]);
 
   // Set up purchase listeners once (on demand initialization happens in handler)
   useEffect(() => {
@@ -562,9 +627,10 @@ useLayoutEffect(() => {
   }
 }, [step]);
 
-  // Show nothing while checking auth or if already authenticated
-  // This check must come AFTER all hooks are declared to avoid React hooks violations
-  if (authLoading || session) {
+  // Show nothing while checking auth
+  // Don't return null if user has session - let them complete onboarding (payment plan step)
+  // The useEffect above will handle redirecting users who have completed onboarding
+  if (authLoading) {
     return null;
   }
 

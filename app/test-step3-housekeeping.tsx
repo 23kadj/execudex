@@ -17,6 +17,7 @@ export default function TestStep3Housekeeping() {
 
   const getFirstPolitician = async () => {
     try {
+      const supabase = getSupabaseClient();
       const { data: politicians, error } = await supabase
         .from('ppl_index')
         .select('*')
@@ -154,6 +155,7 @@ export default function TestStep3Housekeeping() {
 
   const testCreateTestData = async () => {
     try {
+      const supabase = getSupabaseClient();
       addResult('Creating test data for housekeeping...');
       
       // Get the first politician

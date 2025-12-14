@@ -11,6 +11,7 @@ export default function DebugSupabase() {
   useEffect(() => {
     const debugSupabase = async () => {
       try {
+        const supabase = getSupabaseClient();
         // Test basic connection
         console.log('Testing Supabase connection...');
         

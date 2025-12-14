@@ -16,6 +16,7 @@ export default function TestPPLDataSimple() {
 
   const testDirectCardCreation = async () => {
     try {
+      const supabase = getSupabaseClient();
       addResult('Testing direct card creation...');
       
       // First, let's check what tables exist
@@ -78,6 +79,7 @@ export default function TestPPLDataSimple() {
 
   const testGetActiveCards = async () => {
     try {
+      const supabase = getSupabaseClient();
       addResult('Testing getActiveCards...');
       const { data: cards, error } = await supabase
         .from('card_index')
@@ -101,6 +103,7 @@ export default function TestPPLDataSimple() {
 
   const testGetProfileData = async () => {
     try {
+      const supabase = getSupabaseClient();
       addResult('Testing getProfileData...');
       const { data: profile, error } = await supabase
         .from('ppl_profiles')
@@ -125,6 +128,7 @@ export default function TestPPLDataSimple() {
 
   const testUpdateProfile = async () => {
     try {
+      const supabase = getSupabaseClient();
       addResult('Testing updateProfile...');
       
       // FIRST: Scan what already exists
@@ -171,6 +175,7 @@ export default function TestPPLDataSimple() {
 
   const testTableStructure = async () => {
     try {
+      const supabase = getSupabaseClient();
       addResult('Testing table structure...');
       
       // Check all tables

@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { Alert } from 'react-native';
 import { addToHistory } from '../utils/historyUtils';
+import { getSupabaseClient } from '../utils/supabase';
 import { LegislationProfileService } from './legislationProfileService';
 import { PoliticianProfileService } from './politicianProfileService';
 import { checkProfileAccess } from './profileAccessService';
@@ -91,56 +92,93 @@ export class NavigationService {
         throw new Error('CANCELLED');
       }
 
-      // ✅ STEP 1: Check access FIRST (before any processing)
-      if (userId) {
-        console.log('Checking profile access before processing:', politicianId);
+      // ✅ STEP 1: Get userId if not provided, then check access FIRST (before any processing)
+      let finalUserId = userId;
+      
+      // If userId not provided, try to get it from Supabase session
+      if (!finalUserId) {
+        console.log('[NavigationService] userId not provided, attempting to get from session...');
+        try {
+          const { data: { session } } = await getSupabaseClient().auth.getSession();
+          finalUserId = session?.user?.id;
+          if (finalUserId) {
+            console.log('[NavigationService] Successfully retrieved userId from session:', finalUserId);
+          } else {
+            console.warn('[NavigationService] No userId found in session - profile tracking will be skipped');
+          }
+        } catch (error) {
+          console.error('[NavigationService] Error getting userId from session:', error);
+        }
+      } else {
+        console.log('[NavigationService] userId provided:', finalUserId);
+      }
+
+      // Only check access if we have a userId
+      if (finalUserId) {
+        console.log('[NavigationService] Checking profile access before processing:', { politicianId, userId: finalUserId });
         this.loadingCallback?.(true);
         
-        const accessCheck = await checkProfileAccess(userId, `${politicianId}ppl`);
-        
-        // Check if cancelled after async operation
-        if (this.currentAbortController?.signal.aborted) {
-          throw new Error('CANCELLED');
-        }
-        
-        this.loadingCallback?.(false);
-        
-        if (!accessCheck.allowed) {
-          console.log('Profile access denied, preventing processing and navigation');
+        try {
+          const accessCheck = await checkProfileAccess(finalUserId, `${politicianId}ppl`);
           
-          // Show access denied alert with upgrade option
-          Alert.alert(
-            'Weekly Profile Limit Reached',
-            `You've reached your weekly limit for new profiles, come back Sunday.\n\nCheck your history to revisit authorized profiles or upgrade to Execudex Plus for unlimited access.`,
-            [
-              {
-                text: 'Upgrade Now',
-                onPress: () => {
-                  router.push('/subscription');
+          // Check if cancelled after async operation
+          if (this.currentAbortController?.signal.aborted) {
+            throw new Error('CANCELLED');
+          }
+          
+          console.log('[NavigationService] Access check result:', {
+            allowed: accessCheck.allowed,
+            profilesUsed: accessCheck.profilesUsed,
+            reason: accessCheck.reason,
+            error: accessCheck.error
+          });
+          
+          this.loadingCallback?.(false);
+          
+          if (!accessCheck.allowed) {
+            console.log('[NavigationService] Profile access denied, preventing processing and navigation');
+            
+            // Show access denied alert with upgrade option
+            Alert.alert(
+              'Weekly Profile Limit Reached',
+              `You've reached your weekly limit for new profiles, come back Sunday.\n\nCheck your history to revisit authorized profiles or upgrade to Execudex Plus for unlimited access.`,
+              [
+                {
+                  text: 'Upgrade Now',
+                  onPress: () => {
+                    router.push('/subscription');
+                  },
                 },
-              },
-              {
-                text: 'OK',
-              },
-            ],
-            { cancelable: false }
-          );
+                {
+                  text: 'OK',
+                },
+              ],
+              { cancelable: false }
+            );
+            
+            this.isProcessing = false;
+            return; // Stop completely - no processing, no navigation
+          }
           
-          this.isProcessing = false;
-          return; // Stop completely - no processing, no navigation
+          // Show warning if user is running low on profiles (2 or 1 remaining)
+          if (accessCheck.showWarning && accessCheck.remainingProfiles !== undefined) {
+            const remaining = accessCheck.remainingProfiles;
+            Alert.alert(
+              'Profile Limit Warning',
+              `You have ${remaining} profile${remaining === 1 ? '' : 's'} remaining this week. Your limit resets on Sunday.`,
+              [{ text: 'OK' }]
+            );
+          }
+          
+          console.log('[NavigationService] Profile access granted, proceeding with processing');
+        } catch (error) {
+          console.error('[NavigationService] Error during access check:', error);
+          this.loadingCallback?.(false);
+          // Continue with processing even if access check fails (graceful degradation)
+          console.warn('[NavigationService] Continuing despite access check error');
         }
-        
-        // Show warning if user is running low on profiles (2 or 1 remaining)
-        if (accessCheck.showWarning && accessCheck.remainingProfiles !== undefined) {
-          const remaining = accessCheck.remainingProfiles;
-          Alert.alert(
-            'Profile Limit Warning',
-            `You have ${remaining} profile${remaining === 1 ? '' : 's'} remaining this week. Your limit resets on Sunday.`,
-            [{ text: 'OK' }]
-          );
-        }
-        
-        console.log('Profile access granted, proceeding with processing');
+      } else {
+        console.warn('[NavigationService] No userId available - skipping profile access check and tracking');
       }
 
       // ✅ STEP 2: Execute profile processing (only if access granted)
@@ -256,56 +294,93 @@ export class NavigationService {
         throw new Error('CANCELLED');
       }
 
-      // ✅ STEP 1: Check access FIRST (before any processing)
-      if (userId) {
-        console.log('Checking profile access before processing:', legislationId);
+      // ✅ STEP 1: Get userId if not provided, then check access FIRST (before any processing)
+      let finalUserId = userId;
+      
+      // If userId not provided, try to get it from Supabase session
+      if (!finalUserId) {
+        console.log('[NavigationService] userId not provided, attempting to get from session...');
+        try {
+          const { data: { session } } = await getSupabaseClient().auth.getSession();
+          finalUserId = session?.user?.id;
+          if (finalUserId) {
+            console.log('[NavigationService] Successfully retrieved userId from session:', finalUserId);
+          } else {
+            console.warn('[NavigationService] No userId found in session - profile tracking will be skipped');
+          }
+        } catch (error) {
+          console.error('[NavigationService] Error getting userId from session:', error);
+        }
+      } else {
+        console.log('[NavigationService] userId provided:', finalUserId);
+      }
+
+      // Only check access if we have a userId
+      if (finalUserId) {
+        console.log('[NavigationService] Checking profile access before processing:', { legislationId, userId: finalUserId });
         this.loadingCallback?.(true);
         
-        const accessCheck = await checkProfileAccess(userId, `${legislationId}legi`);
-        
-        // Check if cancelled after async operation
-        if (this.currentAbortController?.signal.aborted) {
-          throw new Error('CANCELLED');
-        }
-        
-        this.loadingCallback?.(false);
-        
-        if (!accessCheck.allowed) {
-          console.log('Profile access denied, preventing processing and navigation');
+        try {
+          const accessCheck = await checkProfileAccess(finalUserId, `${legislationId}legi`);
           
-          // Show access denied alert with upgrade option
-          Alert.alert(
-            'Weekly Profile Limit Reached',
-            `You've reached your weekly limit for new profiles, come back Sunday.\n\nCheck your history to revisit authorized profiles or upgrade to Execudex Plus for unlimited access.`,
-            [
-              {
-                text: 'Upgrade Now',
-                onPress: () => {
-                  router.push('/subscription');
+          // Check if cancelled after async operation
+          if (this.currentAbortController?.signal.aborted) {
+            throw new Error('CANCELLED');
+          }
+          
+          console.log('[NavigationService] Access check result:', {
+            allowed: accessCheck.allowed,
+            profilesUsed: accessCheck.profilesUsed,
+            reason: accessCheck.reason,
+            error: accessCheck.error
+          });
+          
+          this.loadingCallback?.(false);
+          
+          if (!accessCheck.allowed) {
+            console.log('[NavigationService] Profile access denied, preventing processing and navigation');
+            
+            // Show access denied alert with upgrade option
+            Alert.alert(
+              'Weekly Profile Limit Reached',
+              `You've reached your weekly limit for new profiles, come back Sunday.\n\nCheck your history to revisit authorized profiles or upgrade to Execudex Plus for unlimited access.`,
+              [
+                {
+                  text: 'Upgrade Now',
+                  onPress: () => {
+                    router.push('/subscription');
+                  },
                 },
-              },
-              {
-                text: 'OK',
-              },
-            ],
-            { cancelable: false }
-          );
+                {
+                  text: 'OK',
+                },
+              ],
+              { cancelable: false }
+            );
+            
+            this.isProcessing = false;
+            return; // Stop completely - no processing, no navigation
+          }
           
-          this.isProcessing = false;
-          return; // Stop completely - no processing, no navigation
+          // Show warning if user is running low on profiles (2 or 1 remaining)
+          if (accessCheck.showWarning && accessCheck.remainingProfiles !== undefined) {
+            const remaining = accessCheck.remainingProfiles;
+            Alert.alert(
+              'Profile Limit Warning',
+              `You have ${remaining} profile${remaining === 1 ? '' : 's'} remaining this week. Your limit resets on Sunday.`,
+              [{ text: 'OK' }]
+            );
+          }
+          
+          console.log('[NavigationService] Profile access granted, proceeding with processing');
+        } catch (error) {
+          console.error('[NavigationService] Error during access check:', error);
+          this.loadingCallback?.(false);
+          // Continue with processing even if access check fails (graceful degradation)
+          console.warn('[NavigationService] Continuing despite access check error');
         }
-        
-        // Show warning if user is running low on profiles (5, 3, or 1 remaining)
-        if (accessCheck.showWarning && accessCheck.remainingProfiles !== undefined) {
-          const remaining = accessCheck.remainingProfiles;
-          Alert.alert(
-            'Profile Limit Warning',
-            `You have ${remaining} profile${remaining === 1 ? '' : 's'} remaining this week. Your limit resets on Sunday.`,
-            [{ text: 'OK' }]
-          );
-        }
-        
-        console.log('Profile access granted, proceeding with processing');
+      } else {
+        console.warn('[NavigationService] No userId available - skipping profile access check and tracking');
       }
 
       // ✅ STEP 2: Execute profile processing (only if access granted)

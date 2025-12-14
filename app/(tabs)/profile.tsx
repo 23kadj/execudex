@@ -28,11 +28,14 @@ export default function Profile() {
           style: 'destructive',
           onPress: async () => {
             try {
+              console.log('[Profile] Starting sign out...');
               await signOut();
-              // Navigate to onboarding screen after successful sign out
-              router.replace('/');
+              
+              console.log('[Profile] Navigating to onboarding with logout flag');
+              // Pass logout=true parameter to bypass race condition
+              router.replace('/?logout=true');
             } catch (error) {
-              console.error('Sign out error:', error);
+              console.error('[Profile] Sign out error:', error);
               Alert.alert('Error', 'Failed to sign out. Please try again.');
             }
           },

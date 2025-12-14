@@ -206,7 +206,16 @@ export class PoliticianProfileService {
       console.log('STEP 3: Checking synopsis');
       logDiag('svc:step3:start', { politicianId }, trace);
       
+      // Check indexed status first - if true, don't run profile_index even if synopsis fails
       const supabase = getSupabaseClient();
+      const { data: indexData, error: indexError } = await supabase
+        .from('ppl_index')
+        .select('indexed')
+        .eq('id', politicianId)
+        .maybeSingle();
+      
+      const isIndexed = indexData?.indexed === true;
+      
       const { data: profileData, error: profileError } = await supabase
         .from('ppl_profiles')
         .select('synopsis')
@@ -230,10 +239,18 @@ export class PoliticianProfileService {
       
       // Check response body for "no source data available"
       if (synopsisResult && synopsisResult.includes('no source data')) {
+        // Only run profile_index if indexed is false or NULL
+        // If indexed=true, just grant access (don't risk marking profile as weak)
+        if (isIndexed) {
+          console.log('Synopsis returned "no source data" but profile is already indexed - granting access without re-running profile_index');
+          logDiag('svc:step3:no-source-data-but-indexed', { politicianId }, trace);
+          return; // Grant access, don't risk marking as weak
+        }
+        
         console.log('Synopsis returned "no source data" - re-running profile_index then synopsis');
         logDiag('svc:step3:no-source-data', { politicianId }, trace);
         
-        // Run profile_index again
+        // Run profile_index again (only if not already indexed)
         await this.executeProfileIndex(politicianId, onProgress, trace);
         
         // Run synopsis again (second attempt)

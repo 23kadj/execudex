@@ -40,7 +40,12 @@ export default function Layout() {
           headerShown: false,
         }}
       >
-        <Stack.Screen name="index" /> {/* Onboarding screen */}
+        <Stack.Screen 
+          name="index" 
+          options={{
+            animation: 'slide_from_left', // Backward animation for onboarding
+          }}
+        /> {/* Onboarding screen */}
         <Stack.Screen name="signin" />
         <Stack.Screen name="auth/callback" />
         <Stack.Screen name="(tabs)" options={{ gestureEnabled: false }} />
