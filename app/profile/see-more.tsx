@@ -1,14 +1,10 @@
 import * as Haptics from 'expo-haptics';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useRef } from 'react';
-import { Animated, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useGlobalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { persistentLogger } from '../../utils/persistentLogger';
-
-// Module-load breadcrumb - logs when this module is loaded
-persistentLogger.log('see-more:module_loaded').catch(() => {
-  // Fail silently if logger not ready yet
-});
+import { getSupabaseClient } from '../../utils/supabase';
 
 interface SeeMoreProps {
   name?: string;
@@ -39,50 +35,102 @@ export default function SeeMore({
   pollSummary = '',
   pollLink = ''
 }: SeeMoreProps) {
-  // ============================================
-  // VERY EARLY CHECKPOINT - FIRST THING IN COMPONENT
-  // ============================================
   const router = useRouter();
-  const params = useLocalSearchParams();
+  const params = useGlobalSearchParams();
   
-  // Log component entry with params snapshot immediately
-  persistentLogger.log('see-more:component_enter', {
-    paramsSnapshot: {
-      name: typeof params.name === 'string' ? params.name : name,
-      position: typeof params.position === 'string' ? params.position : position,
-      approval: params.approval,
-      disapproval: params.disapproval,
-      pollSummary: params.pollSummary,
-      pollLink: params.pollLink,
-    },
-    timestamp: Date.now(),
-  }, 'checkpoint');
+  // Extract id from params and validate
+  const idParam = params.id;
+  const politicianId = idParam && typeof idParam === 'string' ? parseInt(idParam, 10) : null;
   
-  persistentLogger.checkpoint('see-more:entry', {
-    timestamp: Date.now(),
-    name,
-    position,
-    approvalPercentage,
-    disapprovalPercentage,
-  });
+  // State for fetched data
+  const [politicianName, setPoliticianName] = useState<string>('No Data Available');
+  const [politicianPosition, setPoliticianPosition] = useState<string>('No Data Available');
+  const [approval, setApproval] = useState<number>(50);
+  const [disapproval, setDisapproval] = useState<number>(50);
+  const [pollSummaryText, setPollSummaryText] = useState<string>('');
+  const [pollLinkText, setPollLinkText] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [hasError, setHasError] = useState<boolean>(false);
   
-  // Get data from params if not provided as props
-  const politicianName = typeof params.name === 'string' ? params.name : name;
-  const politicianPosition = typeof params.position === 'string' ? params.position : position;
-  const approval = typeof params.approval === 'string' ? parseFloat(params.approval.toString()) : approvalPercentage;
-  const disapproval = typeof params.disapproval === 'string' ? parseFloat(params.disapproval.toString()) : disapprovalPercentage;
-  const pollSummaryText = typeof params.pollSummary === 'string' ? params.pollSummary : pollSummary;
-  const pollLinkText = typeof params.pollLink === 'string' ? params.pollLink : pollLink;
-
-  // Log all params
-  persistentLogger.log('see-more:params', {
-    politicianName,
-    politicianPosition,
-    approval,
-    disapproval,
-    hasPollSummary: !!pollSummaryText,
-    hasPollLink: !!pollLinkText,
-  });
+  // Fetch profile data using id
+  useEffect(() => {
+    const fetchProfileData = async () => {
+      if (!politicianId || isNaN(politicianId)) {
+        console.error('Invalid politician ID:', idParam);
+        setHasError(true);
+        setIsLoading(false);
+        return;
+      }
+      
+      try {
+        setIsLoading(true);
+        setHasError(false);
+        
+        const supabase = getSupabaseClient();
+        
+        // Fetch basic info from ppl_index
+        const { data: indexData, error: indexError } = await supabase
+          .from('ppl_index')
+          .select('name, sub_name')
+          .eq('id', politicianId)
+          .single();
+        
+        if (indexError) {
+          console.error('Error fetching politician data:', indexError);
+          setHasError(true);
+          setIsLoading(false);
+          return;
+        }
+        
+        if (indexData) {
+          const index = indexData as { name?: string; sub_name?: string };
+          setPoliticianName(index.name || 'No Data Available');
+          setPoliticianPosition(index.sub_name || 'No Data Available');
+        }
+        
+        // Fetch profile data from ppl_profiles
+        const { data: profileData, error: profileError } = await supabase
+          .from('ppl_profiles')
+          .select('approval, disapproval, poll_summary, poll_link')
+          .eq('index_id', politicianId)
+          .maybeSingle();
+        
+        if (profileError) {
+          console.error('Error fetching profile data:', profileError);
+          setHasError(true);
+          setIsLoading(false);
+          return;
+        }
+        
+        if (profileData) {
+          const profile = profileData as { approval?: number | null; disapproval?: number | null; poll_summary?: string | null; poll_link?: string | null };
+          // Update approval/disapproval
+          if (profile.approval !== null && profile.approval !== undefined) {
+            setApproval(Number(profile.approval));
+          }
+          if (profile.disapproval !== null && profile.disapproval !== undefined) {
+            setDisapproval(Number(profile.disapproval));
+          }
+          
+          // Update poll summary and link
+          if (profile.poll_summary) {
+            setPollSummaryText(profile.poll_summary);
+          }
+          if (profile.poll_link) {
+            setPollLinkText(profile.poll_link);
+          }
+        }
+        
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Error in fetchProfileData:', err);
+        setHasError(true);
+        setIsLoading(false);
+      }
+    };
+    
+    fetchProfileData();
+  }, [politicianId, idParam]);
 
   // Check if both approval and disapproval values are valid (not null/undefined and not default fallback values)
   const hasValidPollData = () => {
@@ -226,6 +274,32 @@ export default function SeeMore({
     const timer = setTimeout(animateBars, 300);
     return () => clearTimeout(timer);
   }, [approval, disapproval]);
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <View style={styles.container}>
+        <Header />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.loadingText}>Loading metrics...</Text>
+        </View>
+      </View>
+    );
+  }
+  
+  // Show error state
+  if (hasError || !politicianId) {
+    return (
+      <View style={styles.container}>
+        <Header />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Unable to load metrics data.</Text>
+          <Text style={styles.errorSubtext}>Please try again later.</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -465,5 +539,37 @@ const styles = StyleSheet.create({
     color: '#434343',
     fontSize: 11,
     fontWeight: '400',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 90,
+  },
+  loadingText: {
+    color: '#fff',
+    fontSize: 16,
+    marginTop: 16,
+    fontWeight: '400',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 90,
+    paddingHorizontal: 40,
+  },
+  errorText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  errorSubtext: {
+    color: '#aaa',
+    fontSize: 14,
+    fontWeight: '400',
+    textAlign: 'center',
   },
 }); 

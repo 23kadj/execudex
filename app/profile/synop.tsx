@@ -338,13 +338,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
     router.push({
       pathname: '/profile/see-more',
       params: { 
-        name: name,
-        position: position,
-        approval: Number(localApproval ?? 0).toString(),
-        disapproval: Number(localDisapproval ?? 0).toString(),
-        votes: Number(votes ?? 0).toString(),
-        pollSummary: pollSummary || '',
-        pollLink: pollLink || ''
+        id: String(index || '')
       }
     });
   };
