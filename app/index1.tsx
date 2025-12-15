@@ -22,11 +22,39 @@ import Sub2 from './profile/sub2';
 import Sub3 from './profile/sub3';
 import Synop from './profile/synop';
 
+// Fallback component for when a tab component fails to load
+const ErrorComponent: React.FC<any> = ({ componentName }: { componentName?: string }) => (
+  <View style={styles.container}>
+    <Text style={{ color: '#fff', fontSize: 16, textAlign: 'center', padding: 20 }}>
+      Unable to load {componentName || 'component'}
+    </Text>
+  </View>
+);
+
+// Validate imported components immediately after import
+// This prevents the "Element type is invalid" React error and subsequent Hermes VM crash
+const validateComponent = (component: any, name: string): React.ComponentType<any> => {
+  if (!component || (typeof component !== 'function' && typeof component !== 'object')) {
+    console.error(`[CRITICAL] Component "${name}" failed to load or is undefined. Using fallback.`);
+    console.error(`Component value:`, component);
+    console.error(`Component type:`, typeof component);
+    // Return a fallback component bound with the name for display
+    return (props: any) => <ErrorComponent {...props} componentName={name} />;
+  }
+  return component;
+};
+
+// Validate all components before creating TABS array
+const ValidatedSynop = validateComponent(Synop, 'Synop');
+const ValidatedSub1 = validateComponent(Sub1, 'Sub1');
+const ValidatedSub2 = validateComponent(Sub2, 'Sub2');
+const ValidatedSub3 = validateComponent(Sub3, 'Sub3');
+
 const TABS = [
-  { label: 'Synopsis',  key: 'synop',   component: Synop  },
-  { label: 'Agenda',    key: 'sub1a',   component: Sub1   },
-  { label: 'Identity',  key: 'sub2',    component: Sub2   },
-  { label: 'Affiliates',key: 'sub3',    component: Sub3   },
+  { label: 'Synopsis',  key: 'synop',   component: ValidatedSynop  },
+  { label: 'Agenda',    key: 'sub1a',   component: ValidatedSub1   },
+  { label: 'Identity',  key: 'sub2',    component: ValidatedSub2   },
+  { label: 'Affiliates',key: 'sub3',    component: ValidatedSub3   },
 ];
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
