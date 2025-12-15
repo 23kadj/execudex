@@ -5,33 +5,17 @@
 // Initialize Sentry as early as possible (before any other imports that might cause issues)
 import * as Sentry from '@sentry/react-native';
 
-// Initialize Sentry with DSN from environment variable
-const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
-if (SENTRY_DSN) {
-  Sentry.init({
-    dsn: SENTRY_DSN,
-    // Adds more context data to events (IP address, cookies, user, etc.)
-    // For more information, visit: https://docs.sentry.io/platforms/react-native/data-management/data-collected/
-    sendDefaultPii: true,
-    // Enable native crash reporting for Preview/Release builds
-    enableNativeCrashHandling: true,
-    // Disable Sentry in development mode (replaces enableInExpoDevelopment)
-    enabled: !__DEV__,
-    debug: false,
-    // Set tracesSampleRate to 1.0 to capture 100% of transactions for tracing.
-    // We recommend adjusting this value in production.
-    // Learn more at
-    // https://docs.sentry.io/platforms/react-native/configuration/options/#traces-sample-rate
-    tracesSampleRate: 1.0,
-    // profilesSampleRate is relative to tracesSampleRate.
-    // Here, we'll capture profiles for 100% of transactions.
-    profilesSampleRate: 1.0,
-    // Record session replays for 100% of errors and 10% of sessions
-    replaysOnErrorSampleRate: 1.0,
-    replaysSessionSampleRate: 0.1,
-    integrations: [Sentry.mobileReplayIntegration()],
-  });
-}
+// Initialize Sentry with DSN from environment variable (or use provided DSN)
+const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN || "https://629881682d93034eef29bdc0f0bd4e83@o4510534342410240.ingest.us.sentry.io/4510534343458816";
+Sentry.init({
+  dsn: SENTRY_DSN,
+  sendDefaultPii: true,
+  tracesSampleRate: 1.0,
+  profilesSampleRate: 1.0,
+  replaysOnErrorSampleRate: 1.0,
+  replaysSessionSampleRate: 0.1,
+  integrations: [Sentry.mobileReplayIntegration()],
+});
 
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
@@ -80,7 +64,7 @@ initGlobalErrorHandler();
   persistentLogger.log('app', { action: 'startup', timestamp: Date.now() });
 })();
 
-export default function Layout() {
+export default Sentry.wrap(function Layout() {
   // Hide splash screen when component mounts
   useEffect(() => {
     SplashScreen.hideAsync();
@@ -128,4 +112,4 @@ export default function Layout() {
       </Stack>
     </AuthProvider>
   );
-}
+});

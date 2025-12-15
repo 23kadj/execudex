@@ -184,7 +184,8 @@ export class NavigationService {
       // ✅ STEP 2: Execute profile processing (only if access granted)
       console.log('Starting profile processing for politician:', politicianId);
       
-      // Show loading indicator
+      // Always show loading indicator (even for already-indexed profiles)
+      // This ensures users see feedback even when profiles should load instantly
       this.loadingCallback?.(true);
       
       // Execute politician profile checks and scripts BEFORE navigation
@@ -197,11 +198,13 @@ export class NavigationService {
       
       console.log('Profile processing completed, navigating to profile');
       
-      // Hide loading indicator
-      this.loadingCallback?.(false);
-      
       // Navigate after processing is complete
       router.push(params);
+      
+      // Hide loading indicator after navigation (small delay to ensure smooth transition)
+      setTimeout(() => {
+        this.loadingCallback?.(false);
+      }, 100);
       
       // Add to history after successful navigation
       await addToHistory({
@@ -386,7 +389,8 @@ export class NavigationService {
       // ✅ STEP 2: Execute profile processing (only if access granted)
       console.log('Starting profile processing for legislation:', legislationId);
       
-      // Show loading indicator
+      // Always show loading indicator (even for already-indexed profiles)
+      // This ensures users see feedback even when profiles should load instantly
       this.loadingCallback?.(true);
       
       // Execute legislation profile checks and scripts BEFORE navigation
@@ -407,11 +411,13 @@ export class NavigationService {
         this.lowMaterialityCallback?.(false);
       }
       
-      // Hide loading indicator
-      this.loadingCallback?.(false);
-      
       // Navigate after processing is complete
       router.push(params);
+      
+      // Hide loading indicator after navigation (small delay to ensure smooth transition)
+      setTimeout(() => {
+        this.loadingCallback?.(false);
+      }, 100);
       
       // Add to history after successful navigation
       await addToHistory({

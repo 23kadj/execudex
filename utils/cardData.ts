@@ -666,6 +666,21 @@ export function getScreenForPage(pageName: string, isPpl: boolean): string {
 }
 
 /**
+ * Maps screen values to display names
+ */
+export function getScreenDisplayName(screen: string): string {
+  const screenMap: Record<string, string> = {
+    'agenda_ppl': 'Agenda',
+    'identity': 'Identity',
+    'affiliates': 'Affiliates',
+    'agenda_legi': 'Agenda',
+    'impact': 'Impact',
+    'discourse': 'Discourse'
+  };
+  return screenMap[screen] || screen;
+}
+
+/**
  * Maps category names to their corresponding page titles
  */
 export function getCategoryMapping(): Record<string, string> {

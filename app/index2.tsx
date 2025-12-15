@@ -59,6 +59,7 @@ export default function Index2({ navigation }: { navigation?: any }) {
       if (index) {
         try {
           // For now, check if any bookmark exists (without user restriction)
+          const supabase = getSupabaseClient();
           const { data: bookmarkData, error: bookmarkError } = await supabase
             .from('bookmarks')
             .select('*')
@@ -92,7 +93,7 @@ export default function Index2({ navigation }: { navigation?: any }) {
       const index = params.index;
       if (index) {
         try {
-          
+          const supabase = getSupabaseClient();
           const { data: legislationData, error } = await supabase
             .from('legi_index')
             .select('bill_status')
@@ -379,6 +380,7 @@ const BookmarkButton = memo(function BookmarkButton({ isBookmarked, setIsBookmar
           bookmarkData.user_id = user.id;
         }
         
+        const supabase = getSupabaseClient();
         const { error: insertError } = await supabase
           .from('bookmarks')
           .insert(bookmarkData);
@@ -390,6 +392,7 @@ const BookmarkButton = memo(function BookmarkButton({ isBookmarked, setIsBookmar
         }
       } else {
         // Unbookmarking - delete from database
+        const supabase = getSupabaseClient();
         const { error: deleteError } = await supabase
           .from('bookmarks')
           .delete()

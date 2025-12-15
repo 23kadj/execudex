@@ -900,4 +900,50 @@ export class CardGenerationService {
       return false;
     }
   }
+
+  /**
+   * Get categories of cards generated after a specific timestamp
+   * Returns array of objects with category and screen information
+   */
+  static async getGeneratedCardCategories(
+    ownerId: number, 
+    isPpl: boolean, 
+    afterTimestamp: string
+  ): Promise<Array<{ category: string; screen: string }>> {
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('card_index')
+        .select('category, screen')
+        .eq('owner_id', ownerId)
+        .eq('is_ppl', isPpl)
+        .eq('is_active', true)
+        .gte('created_at', afterTimestamp);
+
+      if (error) {
+        console.error('Error fetching generated card categories:', error);
+        return [];
+      }
+
+      if (!data || data.length === 0) {
+        return [];
+      }
+
+      // Extract unique category-screen pairs
+      const uniquePairs = new Map<string, { category: string; screen: string }>();
+      data.forEach(card => {
+        if (card.category && card.screen) {
+          const key = `${card.category}:${card.screen}`;
+          if (!uniquePairs.has(key)) {
+            uniquePairs.set(key, { category: card.category, screen: card.screen });
+          }
+        }
+      });
+
+      return Array.from(uniquePairs.values());
+    } catch (error) {
+      console.error('Error in getGeneratedCardCategories:', error);
+      return [];
+    }
+  }
 }

@@ -20,7 +20,7 @@ import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { SearchFilterButton } from '../../components/SearchFilterButton';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
-import { CardData, getCategoryFromTitle } from '../../utils/cardData';
+import { CardData, getCategoryFromTitle, getCategoryMapping, getScreenDisplayName } from '../../utils/cardData';
 import { incrementOpens } from '../../utils/incrementOpens7d';
 import { filterCardsByWords, getMostCommonWords, shouldShowSearchAssistance } from '../../utils/searchAssistanceUtils';
 import { getSupabaseClient } from '../../utils/supabase';
@@ -397,6 +397,9 @@ export default function Sub4() {
         return;
       }
 
+      // Save timestamp before generation to find newly created cards
+      const beforeGenerationTimestamp = new Date().toISOString();
+      
       const result = await CardGenerationService.generatePoliticianCards(
         ownerId, 
         'sub4',
@@ -412,10 +415,45 @@ export default function Sub4() {
         // Get number of cards generated
         const cardsGenerated = result.data?.inserted || 0;
         
+        // Get categories of newly generated cards with screen info
+        const generatedCategoryScreenPairs = await CardGenerationService.getGeneratedCardCategories(
+          ownerId,
+          true, // isPpl
+          beforeGenerationTimestamp
+        );
+        
+        // Map category values to display names, handling "more" category specially
+        const categoryMapping = getCategoryMapping();
+        const categoryDisplayNames = generatedCategoryScreenPairs.map(({ category, screen }) => {
+          if (category === 'more') {
+            // Format "more" category with screen name
+            const screenDisplayName = getScreenDisplayName(screen);
+            return `${categoryMapping[category]}: ${screenDisplayName}`;
+          } else {
+            return categoryMapping[category] || category;
+          }
+        }).filter(Boolean);
+        
+        // Check if requested category was found in generated cards
+        const requestedCategoryFound = generatedCategoryScreenPairs.some(
+          ({ category: cat }) => cat === category
+        );
+        
+        // Build success message
+        let message = `Generated ${cardsGenerated} card${cardsGenerated !== 1 ? 's' : ''} successfully!`;
+        
+        if (categoryDisplayNames.length > 0) {
+          message += `\n\nThe new cards can be found in the following categories: ${categoryDisplayNames.join(', ')}.`;
+        }
+        
+        if (!requestedCategoryFound && categoryDisplayNames.length > 0) {
+          message += `\n\nThere weren't enough cards for the requested section, we apologize for the inconvenience.`;
+        }
+        
         // Show success message
         Alert.alert(
           'Success',
-          `Generated ${cardsGenerated} card${cardsGenerated !== 1 ? 's' : ''} successfully!`,
+          message,
           [{ text: 'OK' }]
         );
         

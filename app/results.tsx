@@ -96,6 +96,7 @@ export default function Results() {
     setError(null);
     
     try {
+      const supabase = getSupabaseClient();
       
       let pplResults: ResultItem[] = [];
       let legiResults: ResultItem[] = [];
@@ -276,6 +277,7 @@ export default function Results() {
     
     setIsLoadingLegislation(true);
     try {
+      const supabase = getSupabaseClient();
       let legiQuery = supabase
         .from('legi_index')
         .select('id, name, sub_name')

@@ -24,6 +24,7 @@ export default function Overview({ scrollY, name, position, legislationId: propL
     const fetchCongressData = async () => {
       if (legislationId) {
         try {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('legi_index')
             .select('congress, bill_status')
@@ -50,6 +51,7 @@ export default function Overview({ scrollY, name, position, legislationId: propL
     const fetchCongressLink = async () => {
       if (legislationId) {
         try {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('web_content')
             .select('link')

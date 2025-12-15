@@ -43,3 +43,5 @@ __pycache__/
 
 # explicitly ignore this too
 .env.server
+
+.env.local

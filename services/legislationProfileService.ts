@@ -96,6 +96,7 @@ export class LegislationProfileService {
       }
 
       // Step 2: Fetch index data
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('legi_index')
         .select('id, name, sub_name, bill_lvl, indexed')
@@ -218,6 +219,7 @@ export class LegislationProfileService {
   private static async handleProfileChecks(legislationId: number, checkResult: ProfileCheckResult, onProgress?: ProgressCallback): Promise<void> {
     try {
       // Check legi_profiles table
+      const supabase = getSupabaseClient();
       const { data: profileData, error: profileError } = await supabase
         .from('legi_profiles')
         .select('owner_id, overview')
@@ -287,6 +289,7 @@ export class LegislationProfileService {
       
       if (lockStatus.isLocked && lockStatus.lockReason === 'no_cards') {
         // Mark profile as weak if it has no cards
+        const supabase = getSupabaseClient();
         const { error } = await supabase
           .from('legi_index')
           .update({ weak: true })
@@ -308,6 +311,7 @@ export class LegislationProfileService {
    */
   private static async markProfileAsIndexed(legislationId: number): Promise<void> {
     try {
+      const supabase = getSupabaseClient();
       const { error } = await supabase
         .from('legi_index')
         .update({ indexed: true })
@@ -329,6 +333,7 @@ export class LegislationProfileService {
   private static async executeStep1IfNeeded(legislationId: number, onProgress?: ProgressCallback): Promise<void> {
     try {
       // Check if bill_lvl is already present
+      const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('legi_index')
         .select('bill_lvl')
@@ -419,6 +424,7 @@ export class LegislationProfileService {
   }> {
     const validation = await this.checkProfileValidation(legislationId);
     
+    const supabase = getSupabaseClient();
     const { data: profileData } = await supabase
       .from('legi_profiles')
       .select('owner_id, overview')

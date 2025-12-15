@@ -5,7 +5,7 @@ import { Alert, Animated, Pressable, ScrollView, StyleSheet, Text, View } from '
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
-import { CardData, fetchCardsByScreen } from '../../utils/cardData';
+import { CardData, fetchCardsByScreen, getCategoryMapping, getScreenDisplayName } from '../../utils/cardData';
 import { incrementOpens } from '../../utils/incrementOpens7d';
 import { getSupabaseClient } from '../../utils/supabase';
 
@@ -121,8 +121,12 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
     
     setIsGeneratingCards(true);
     try {
+      const ownerId = parseInt(index.toString());
+      // Save timestamp before generation to find newly created cards
+      const beforeGenerationTimestamp = new Date().toISOString();
+      
       const result = await CardGenerationService.generatePoliticianCards(
-        parseInt(index.toString()), 
+        ownerId, 
         'sub1'
       ) as any;
       
@@ -135,9 +139,44 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
         // Get number of cards generated
         const cardsGenerated = result.data?.inserted || 0;
         
+        // Get categories of newly generated cards with screen info
+        const generatedCategoryScreenPairs = await CardGenerationService.getGeneratedCardCategories(
+          ownerId,
+          true, // isPpl
+          beforeGenerationTimestamp
+        );
+        
+        // Map category values to display names, handling "more" category specially
+        const categoryMapping = getCategoryMapping();
+        const categoryDisplayNames = generatedCategoryScreenPairs.map(({ category, screen }) => {
+          if (category === 'more') {
+            // Format "more" category with screen name
+            const screenDisplayName = getScreenDisplayName(screen);
+            return `${categoryMapping[category]}: ${screenDisplayName}`;
+          } else {
+            return categoryMapping[category] || category;
+          }
+        }).filter(Boolean);
+        
+        // Check if requested category (agenda) was found
+        const requestedCategoryFound = generatedCategoryScreenPairs.some(({ category: cat }) => 
+          ['economy', 'immigration', 'healthcare', 'environment', 'defense', 'education', 'more'].includes(cat)
+        );
+        
+        // Build success message
+        let message = `Generated ${cardsGenerated} card${cardsGenerated !== 1 ? 's' : ''} successfully!`;
+        
+        if (categoryDisplayNames.length > 0) {
+          message += `\n\nThe new cards can be found in the following categories: ${categoryDisplayNames.join(', ')}.`;
+        }
+        
+        if (!requestedCategoryFound && categoryDisplayNames.length > 0) {
+          message += `\n\nThere weren't enough cards for the requested section, we apologize for the inconvenience.`;
+        }
+        
         // Refresh cards after generation
         const cards = await fetchCardsByScreen({
-          ownerId: parseInt(index.toString()),
+          ownerId: ownerId,
           isPpl: true,
           pageName: 'sub1',
           tier: tier
@@ -145,13 +184,13 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
         setCardData(cards);
         
         // Check if button should still be shown using new logic
-        const shouldShow = await CardGenerationService.shouldShowGenerateButtonForPage(parseInt(index.toString()), 'sub1');
+        const shouldShow = await CardGenerationService.shouldShowGenerateButtonForPage(ownerId, 'sub1');
         setShowGenerateButton(shouldShow);
         
         // Show success message
         Alert.alert(
           'Success',
-          `Generated ${cardsGenerated} card${cardsGenerated !== 1 ? 's' : ''} successfully!`,
+          message,
           [{ text: 'OK' }]
         );
       }

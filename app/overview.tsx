@@ -37,6 +37,7 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }
     const fetchCongressData = async () => {
       if (legislationId) {
         try {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('legi_index')
             .select('congress, bill_status')
@@ -98,6 +99,7 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }
     const fetchProfileData = async () => {
       if (legislationId) {
         try {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('legi_profiles')
             .select('overview, agenda, impact')
@@ -125,6 +127,7 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }
     const fetchCongressLink = async () => {
       if (legislationId) {
         try {
+          const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('web_content')
             .select('link')
