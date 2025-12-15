@@ -22,11 +22,30 @@ import Sub2 from './profile/sub2';
 import Sub3 from './profile/sub3';
 import Synop from './profile/synop';
 
+// Defensive validation: ensure all components are valid before using them
+const validateComponent = (component: any, name: string): React.ComponentType<any> | null => {
+  if (!component) {
+    console.error(`Component ${name} is null or undefined`);
+    return null;
+  }
+  if (typeof component !== 'function' && typeof component !== 'object') {
+    console.error(`Component ${name} is not a valid React component`);
+    return null;
+  }
+  return component as React.ComponentType<any>;
+};
+
+// Validate all imported components
+const ValidatedSynop = validateComponent(Synop, 'Synop');
+const ValidatedSub1 = validateComponent(Sub1, 'Sub1');
+const ValidatedSub2 = validateComponent(Sub2, 'Sub2');
+const ValidatedSub3 = validateComponent(Sub3, 'Sub3');
+
 const TABS = [
-  { label: 'Synopsis',  key: 'synop',   component: Synop  },
-  { label: 'Agenda',    key: 'sub1a',   component: Sub1   },
-  { label: 'Identity',  key: 'sub2',    component: Sub2   },
-  { label: 'Affiliates',key: 'sub3',    component: Sub3   },
+  { label: 'Synopsis',  key: 'synop',   component: ValidatedSynop  },
+  { label: 'Agenda',    key: 'sub1a',   component: ValidatedSub1   },
+  { label: 'Identity',  key: 'sub2',    component: ValidatedSub2   },
+  { label: 'Affiliates',key: 'sub3',    component: ValidatedSub3   },
 ];
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -283,25 +302,6 @@ export default function Index1({ navigation }: { navigation?: any }) {
     }
   };
 
-  // Header
-  const Header = useCallback(() => {
-    return (
-      <View style={styles.headerContainer}>
-        <TouchableOpacity
-          style={styles.headerIconBtn}
-          onPress={() =>
-            navigation?.goBack ? navigation.goBack() : router.back()
-          }
-          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
-        >
-          <Image source={require('../assets/back1.png')} style={styles.headerIcon} />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }} />
-        <BookmarkButton isBookmarked={isBookmarked} setIsBookmarked={setIsBookmarked} profileId={params.index as string} />
-      </View>
-    );
-  }, [navigation, router, isBookmarked]);
-
   // Footer with animated pill
   const Footer = useCallback(() => {
     // If profile is locked, don't show the tab bar
@@ -356,7 +356,13 @@ export default function Index1({ navigation }: { navigation?: any }) {
 
   return (
     <View style={styles.container}>
-      <Header />
+      <Header 
+        navigation={navigation}
+        router={router}
+        isBookmarked={isBookmarked}
+        setIsBookmarked={setIsBookmarked}
+        profileId={params.index as string}
+      />
 
       <Animated.ScrollView
         ref={scrollRef}
@@ -376,20 +382,62 @@ export default function Index1({ navigation }: { navigation?: any }) {
           // Defensive validation: ensure tab exists and has valid component
           if (!tab || !tab.component) {
             console.error(`Tab missing or invalid for index=${idx}, key=${tab?.key || 'unknown'}`);
-            return null;
+            return (
+              <Animated.View
+                key={`error-${idx}`}
+                style={{
+                  width: SCREEN_WIDTH,
+                  flex: 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingTop: 100,
+                  paddingBottom: bottomPadding,
+                }}
+              >
+                <Text style={{ color: '#fff' }}>Component not available</Text>
+              </Animated.View>
+            );
           }
 
           // Validate component is a valid React component (function or class)
           const Component = tab.component;
           if (typeof Component !== 'function' && typeof Component !== 'object') {
             console.error(`Tab component is not a valid React component for key=${tab.key}`);
-            return null;
+            return (
+              <Animated.View
+                key={tab.key}
+                style={{
+                  width: SCREEN_WIDTH,
+                  flex: 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingTop: 100,
+                  paddingBottom: bottomPadding,
+                }}
+              >
+                <Text style={{ color: '#fff' }}>Component not available</Text>
+              </Animated.View>
+            );
           }
 
           // Additional safety check: ensure component is not null/undefined
           if (Component === null || Component === undefined) {
             console.error(`Tab component is null/undefined for key=${tab.key}`);
-            return null;
+            return (
+              <Animated.View
+                key={tab.key}
+                style={{
+                  width: SCREEN_WIDTH,
+                  flex: 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingTop: 100,
+                  paddingBottom: bottomPadding,
+                }}
+              >
+                <Text style={{ color: '#fff' }}>Component not available</Text>
+              </Animated.View>
+            );
           }
 
           // Type assertion for TypeScript - safer than 'as any' as it ensures React component type
@@ -407,8 +455,8 @@ export default function Index1({ navigation }: { navigation?: any }) {
                 paddingBottom: bottomPadding, // animated padding for footer
               }}
             >
-              {tab.key === 'synop' ? (
-                <Synop 
+              {tab.key === 'synop' && ValidatedSynop ? (
+                <ValidatedSynop 
                   scrollY={scrollY} 
                   goToTab={goToTab} 
                   name={name} 
@@ -422,7 +470,7 @@ export default function Index1({ navigation }: { navigation?: any }) {
                   refetchLockStatus={refetchLockStatus}
                   triggerCardRefresh={triggerCardRefresh}
                 />
-              ) : (
+              ) : ValidatedComponent ? (
                 <ValidatedComponent 
                   scrollY={scrollY} 
                   name={name} 
@@ -432,6 +480,8 @@ export default function Index1({ navigation }: { navigation?: any }) {
                   scrollRef={tab.key === 'sub1a' ? sub1ScrollRef : tab.key === 'sub2' ? sub2ScrollRef : sub3ScrollRef}
                   cardRefreshTrigger={cardRefreshTrigger}
                 />
+              ) : (
+                <Text style={{ color: '#fff' }}>Component not available</Text>
               )}
 
             </Animated.View>
@@ -440,12 +490,116 @@ export default function Index1({ navigation }: { navigation?: any }) {
       </Animated.ScrollView>
 
       <Animated.View style={{ opacity: scrollY.interpolate({ inputRange: [0, 120], outputRange: [1, 0.15], extrapolate: 'clamp' }) }}>
-        <Footer />
+        <Footer 
+          tabIndex={tabIndex}
+          translateX={translateX}
+          pillWidth={pillWidth}
+          lockStatus={lockStatus}
+          goToTab={goToTab}
+          tabLayouts={tabLayouts}
+          pillInitialized={pillInitialized}
+        />
       </Animated.View>
       
     </View>
   );
 }
+
+// Header component - converted from useCallback to proper React component
+const Header = memo(function Header({ 
+  navigation, 
+  router, 
+  isBookmarked, 
+  setIsBookmarked, 
+  profileId 
+}: { 
+  navigation?: any; 
+  router: any; 
+  isBookmarked: boolean; 
+  setIsBookmarked: (value: boolean | ((prev: boolean) => boolean)) => void; 
+  profileId: string | undefined;
+}) {
+  return (
+    <View style={styles.headerContainer}>
+      <TouchableOpacity
+        style={styles.headerIconBtn}
+        onPress={() =>
+          navigation?.goBack ? navigation.goBack() : router.back()
+        }
+        hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+      >
+        <Image source={require('../assets/back1.png')} style={styles.headerIcon} />
+      </TouchableOpacity>
+      <View style={{ flex: 1 }} />
+      <BookmarkButton isBookmarked={isBookmarked} setIsBookmarked={setIsBookmarked} profileId={profileId} />
+    </View>
+  );
+});
+
+// Footer component - converted from useCallback to proper React component
+const Footer = memo(function Footer({ 
+  tabIndex, 
+  translateX, 
+  pillWidth, 
+  lockStatus, 
+  goToTab, 
+  tabLayouts, 
+  pillInitialized 
+}: { 
+  tabIndex: number; 
+  translateX: Animated.Value; 
+  pillWidth: Animated.Value; 
+  lockStatus: any; 
+  goToTab: (idx: number) => void; 
+  tabLayouts: React.MutableRefObject<{ x: number; width: number }[]>; 
+  pillInitialized: React.MutableRefObject<boolean>;
+}) {
+  // If profile is locked, don't show the tab bar
+  if (lockStatus?.isLocked) {
+    return null;
+  }
+
+  return (
+    <View style={styles.bottomBarWrapper}>
+      <View style={styles.bottomBarPill}>
+        <View style={styles.bottomBar}>
+          {/* Animated white pill indicator */}
+          <Animated.View
+            style={[
+              styles.animatedPill,
+              {
+                transform: [{ translateX }],
+                width: pillWidth,
+              },
+            ]}
+          />
+          {TABS.map((tab, idx) => (
+            <TouchableOpacity
+              key={tab.key}
+              style={styles.tabButton}
+              activeOpacity={0.85}
+              onPress={() => goToTab(idx)}
+              onLayout={e => {
+                const { x, width } = e.nativeEvent.layout;
+                tabLayouts.current[idx] = { x, width };
+                // Set initial pill position/width on first render
+                if (idx === tabIndex && !pillInitialized.current) {
+                  translateX.setValue(x);
+                  pillWidth.setValue(width);
+                  pillInitialized.current = true;
+                }
+              }}
+            >
+              <Text style={[styles.tabText, tabIndex === idx && styles.tabTextActive]}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+});
 
 const BookmarkButton = memo(function BookmarkButton({ isBookmarked, setIsBookmarked, profileId }: { isBookmarked: boolean; setIsBookmarked: (value: boolean | ((prev: boolean) => boolean)) => void; profileId: string | undefined }) {
   const { user } = useAuth();
