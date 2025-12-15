@@ -59,7 +59,7 @@ export default function Onboarding() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
-const steps = ['getStarted','ageGender','nextScreenKey','hearAbout','stayInformed','unsatisfiedReason','valueProp','profileHighlight', 'paymentPlan'];
+const steps = ['getStarted','ageGender','nextScreenKey','hearAbout','stayInformed','unsatisfiedReason','alignment','valueProp','profileHighlight', 'paymentPlan'];
 type StepKey = typeof steps[number];
 const [stepIndex, setStepIndex] = useState(0);
 const previousSessionRef = useRef<boolean>(false); // Track previous session state
@@ -2095,7 +2095,14 @@ if (step === 'paymentPlan') {
   );
 }
 
-
+  // Fallback return for unexpected states
+  return (
+    <AnimatedSafeAreaView style={[styles.container, { backgroundColor: '#000' }]}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#fff" />
+      </View>
+    </AnimatedSafeAreaView>
+  );
 }
 
 
