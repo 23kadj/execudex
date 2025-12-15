@@ -373,23 +373,58 @@ export default function Index1({ navigation }: { navigation?: any }) {
         }}
       >
         {TABS.map((tab, idx) => {
+          // Create a fallback error component to prevent rendering undefined
+          const ErrorFallback = () => (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>Unable to load this section</Text>
+            </View>
+          );
+
           // Defensive validation: ensure tab exists and has valid component
           if (!tab || !tab.component) {
             console.error(`Tab missing or invalid for index=${idx}, key=${tab?.key || 'unknown'}`);
-            return null;
+            return (
+              <Animated.View
+                key={`error-${idx}`}
+                style={{
+                  width: SCREEN_WIDTH,
+                  flex: 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingTop: 100,
+                  paddingBottom: bottomPadding,
+                }}
+              >
+                <ErrorFallback />
+              </Animated.View>
+            );
           }
 
           // Validate component is a valid React component (function or class)
           const Component = tab.component;
-          if (typeof Component !== 'function' && typeof Component !== 'object') {
-            console.error(`Tab component is not a valid React component for key=${tab.key}`);
-            return null;
-          }
-
-          // Additional safety check: ensure component is not null/undefined
-          if (Component === null || Component === undefined) {
-            console.error(`Tab component is null/undefined for key=${tab.key}`);
-            return null;
+          
+          // Comprehensive type checking for React components
+          const isValidComponent = 
+            typeof Component === 'function' || 
+            (typeof Component === 'object' && Component !== null && (Component.$$typeof || Component.render));
+          
+          if (!isValidComponent || Component === null || Component === undefined) {
+            console.error(`Tab component is not a valid React component for key=${tab.key}, type=${typeof Component}`);
+            return (
+              <Animated.View
+                key={tab.key}
+                style={{
+                  width: SCREEN_WIDTH,
+                  flex: 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingTop: 100,
+                  paddingBottom: bottomPadding,
+                }}
+              >
+                <ErrorFallback />
+              </Animated.View>
+            );
           }
 
           // Type assertion for TypeScript - safer than 'as any' as it ensures React component type
@@ -573,4 +608,17 @@ const styles = StyleSheet.create({
   // MAIN
   container:  { flex: 1, backgroundColor: '#000' },
   animatedPages: { flex: 1 },
+  
+  // ERROR FALLBACK
+  errorContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  errorText: {
+    color: '#999',
+    fontSize: 16,
+    textAlign: 'center',
+  },
 });
