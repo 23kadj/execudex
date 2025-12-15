@@ -20,16 +20,17 @@ Sentry.init({
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import { Stack } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet } from 'react-native';
-import { AuthProvider } from '../components/AuthProvider';
+import { AuthProvider, useAuth } from '../components/AuthProvider';
 import { ErrorOverlayManager } from '../components/ErrorOverlay';
 import { initDebugFlags } from '../utils/debugFlags';
 import { initGlobalErrorHandler } from '../utils/globalErrorHandler';
 import { persistentLogger } from '../utils/persistentLogger';
+import { getSupabaseClient } from '../utils/supabase';
 
 // Set Expo-specific tags and extras for Sentry (no longer added by default)
 if (SENTRY_DSN) {
@@ -65,6 +66,108 @@ initGlobalErrorHandler();
   persistentLogger.log('app', { action: 'startup', timestamp: Date.now() });
 })();
 
+// Component to handle initial route based on auth state
+// This runs inside AuthProvider, so it has access to auth context
+function InitialRouteHandler({ children, onRouteChecked }: { children: React.ReactNode; onRouteChecked: () => void }) {
+  const { session, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [hasCheckedRoute, setHasCheckedRoute] = useState(false);
+  const hasRedirectedRef = useRef(false);
+  const onRouteCheckedRef = useRef(onRouteChecked);
+  const hasCalledCallbackRef = useRef(false);
+
+  // Update ref when callback changes
+  useEffect(() => {
+    onRouteCheckedRef.current = onRouteChecked;
+  }, [onRouteChecked]);
+
+  useEffect(() => {
+    // Wait for auth to finish loading before checking route
+    if (authLoading) {
+      return;
+    }
+
+    // Only check once on initial load
+    if (hasCheckedRoute || hasRedirectedRef.current) {
+      return;
+    }
+
+    const checkInitialRoute = async () => {
+      try {
+        // Check if user is logged in
+        const hasSession = !!session?.user?.id;
+
+        if (hasSession) {
+          // Check if user has completed onboarding (has a plan)
+          try {
+            const supabase = getSupabaseClient();
+            const { data, error } = await supabase
+              .from('users')
+              .select('plan')
+              .eq('uuid', session.user.id)
+              .maybeSingle();
+
+            if (error) {
+              console.error('[InitialRouteHandler] Error checking user plan:', error);
+              // On error, let the default route (onboarding) show
+              setHasCheckedRoute(true);
+              if (!hasCalledCallbackRef.current) {
+                hasCalledCallbackRef.current = true;
+                onRouteCheckedRef.current();
+              }
+              return;
+            }
+
+            // If user has a plan, redirect to home
+            const userData = data as { plan?: string } | null;
+            if (userData?.plan && userData.plan.trim() !== '') {
+              console.log('[InitialRouteHandler] User has plan, redirecting to home');
+              hasRedirectedRef.current = true;
+              // Only redirect if we're on the index (onboarding) route or root
+              if (!pathname || pathname === '/' || pathname === '/index') {
+                router.replace('/(tabs)/home');
+              }
+            } else {
+              console.log('[InitialRouteHandler] User authenticated but no plan - staying on onboarding');
+            }
+          } catch (error) {
+            console.error('[InitialRouteHandler] Exception checking user plan:', error);
+            // On exception, let the default route show
+          }
+        } else {
+          console.log('[InitialRouteHandler] No session - staying on onboarding');
+        }
+
+        setHasCheckedRoute(true);
+        if (!hasCalledCallbackRef.current) {
+          hasCalledCallbackRef.current = true;
+          onRouteCheckedRef.current();
+        }
+      } catch (error) {
+        console.error('[InitialRouteHandler] Error in checkInitialRoute:', error);
+        setHasCheckedRoute(true);
+        if (!hasCalledCallbackRef.current) {
+          hasCalledCallbackRef.current = true;
+          onRouteCheckedRef.current();
+        }
+      }
+    };
+
+    checkInitialRoute();
+  }, [authLoading, session, router, pathname, hasCheckedRoute]);
+
+  // Don't render children until we've checked the route (prevents flash)
+  // But only wait if we're on the index route and haven't redirected yet
+  const shouldWait = !hasCheckedRoute && (!pathname || pathname === '/' || pathname === '/index') && !hasRedirectedRef.current;
+
+  if (shouldWait) {
+    return null; // Keep splash screen visible
+  }
+
+  return <>{children}</>;
+}
+
 export default Sentry.wrap(function Layout() {
   const [appIsReady, setAppIsReady] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -77,25 +180,10 @@ export default Sentry.wrap(function Layout() {
         // Small delay to ensure smooth transition
         await new Promise(resolve => setTimeout(resolve, 100));
         setAppIsReady(true);
-        // Hide splash screen after app is ready
-        await SplashScreen.hideAsync();
-        
-        // Start fade-in animation after splash screen is hidden
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 300, // Quick fade-in for smooth transition
-          useNativeDriver: true,
-        }).start();
+        // Note: We'll hide splash screen in InitialRouteHandler after route check
       } catch (e) {
         console.warn('Error preparing app:', e);
         setAppIsReady(true);
-        await SplashScreen.hideAsync();
-        // Start fade-in even on error
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true,
-        }).start();
       }
     };
 
@@ -110,44 +198,62 @@ export default Sentry.wrap(function Layout() {
   return (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
       <AuthProvider>
-        <ErrorOverlayManager />
-        <Stack
-          screenOptions={{
-            animation: 'slide_from_right',
-            headerShown: false,
-            contentStyle: { backgroundColor: '#000000' },
-          }}
-        >
-        <Stack.Screen 
-          name="index" 
-          options={{
-            animation: 'slide_from_left', // Backward animation for onboarding
-          }}
-        /> {/* Onboarding screen */}
-        <Stack.Screen name="signin" />
-        <Stack.Screen name="auth/callback" />
-        <Stack.Screen name="(tabs)" options={{ gestureEnabled: false }} />
-        <Stack.Screen name="index1" />
-        <Stack.Screen name="index2" />
-        <Stack.Screen name="index3" />
-        <Stack.Screen name="results" />
-        <Stack.Screen name="bookmarks" />
-        <Stack.Screen name="feedback" />
-        <Stack.Screen name="legislation" />
-        <Stack.Screen name="profile" />
-        <Stack.Screen name="debug-supabase" />
-        <Stack.Screen name="debug-crash-log" />
-        <Stack.Screen name="debug-startup-log" />
-        <Stack.Screen name="debug-logs" />
-        <Stack.Screen name="debug-flags" />
-        <Stack.Screen name="test-ppl-data-simple" />
-        <Stack.Screen name="test-ppl-data" />
-        <Stack.Screen name="test-step2-data-models" />
-        <Stack.Screen name="test-step3-housekeeping" />
-        <Stack.Screen name="z1" />
-        <Stack.Screen name="z2" />
-        <Stack.Screen name="z3" />
-      </Stack>
+        <InitialRouteHandler onRouteChecked={() => {
+          // Hide splash screen and start fade-in after route is checked
+          SplashScreen.hideAsync().then(() => {
+            Animated.timing(fadeAnim, {
+              toValue: 1,
+              duration: 300,
+              useNativeDriver: true,
+            }).start();
+          }).catch((e) => {
+            console.warn('Error hiding splash screen:', e);
+            Animated.timing(fadeAnim, {
+              toValue: 1,
+              duration: 300,
+              useNativeDriver: true,
+            }).start();
+          });
+        }}>
+          <ErrorOverlayManager />
+          <Stack
+            screenOptions={{
+              animation: 'slide_from_right',
+              headerShown: false,
+              contentStyle: { backgroundColor: '#000000' },
+            }}
+          >
+          <Stack.Screen 
+            name="index" 
+            options={{
+              animation: 'slide_from_left', // Backward animation for onboarding
+            }}
+          /> {/* Onboarding screen */}
+          <Stack.Screen name="signin" />
+          <Stack.Screen name="auth/callback" />
+          <Stack.Screen name="(tabs)" options={{ gestureEnabled: false }} />
+          <Stack.Screen name="index1" />
+          <Stack.Screen name="index2" />
+          <Stack.Screen name="index3" />
+          <Stack.Screen name="results" />
+          <Stack.Screen name="bookmarks" />
+          <Stack.Screen name="feedback" />
+          <Stack.Screen name="legislation" />
+          <Stack.Screen name="profile" />
+          <Stack.Screen name="debug-supabase" />
+          <Stack.Screen name="debug-crash-log" />
+          <Stack.Screen name="debug-startup-log" />
+          <Stack.Screen name="debug-logs" />
+          <Stack.Screen name="debug-flags" />
+          <Stack.Screen name="test-ppl-data-simple" />
+          <Stack.Screen name="test-ppl-data" />
+          <Stack.Screen name="test-step2-data-models" />
+          <Stack.Screen name="test-step3-housekeeping" />
+          <Stack.Screen name="z1" />
+          <Stack.Screen name="z2" />
+          <Stack.Screen name="z3" />
+        </Stack>
+        </InitialRouteHandler>
       </AuthProvider>
     </Animated.View>
   );
