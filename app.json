@@ -8,7 +8,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/wordlogo1.png",
+      "image": "./assets/splashimg.png",
       "resizeMode": "contain",
       "backgroundColor": "#000000"
     },

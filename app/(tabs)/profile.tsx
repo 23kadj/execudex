@@ -31,8 +31,9 @@ export default function Profile() {
               console.log('[Profile] Starting sign out...');
               await signOut();
               
-              console.log('[Profile] Navigating to onboarding');
-              router.replace({ pathname: '/', params: { logout: 'true' } });
+              console.log('[Profile] Navigating to onboarding with logout flag');
+              // Pass logout=true parameter to bypass race condition
+              router.replace('/?logout=true');
             } catch (error) {
               console.error('[Profile] Sign out error:', error);
               Alert.alert('Error', 'Failed to sign out. Please try again.');

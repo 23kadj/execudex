@@ -150,12 +150,6 @@ const step: StepKey = steps[stepIndex];
       if (stepIndex !== 0) {
         setStepIndex(0);
       }
-      // Proactively clear any lingering Supabase session to avoid bounce-back
-      if (session?.user?.id) {
-        getSupabaseClient().auth.signOut().catch((err) => {
-          console.warn('[Onboarding] signOut during logout flow failed:', err);
-        });
-      }
       // Update ref to reflect no session
       previousSessionRef.current = false;
       return; // Skip all redirect logic

@@ -325,30 +325,38 @@ export default function Index2({ navigation }: { navigation?: any }) {
           }
         }}
       >
-        {TABS.map((tab, idx) => (
-          <Animated.View
-            key={tab.key}
-            style={{
-              width: SCREEN_WIDTH,
-              flex: 1,
-              alignItems: 'stretch',
-              justifyContent: 'flex-start',
-              paddingTop: 100,   // leave space for header
-              paddingBottom: bottomPadding, // animated padding for footer
-            }}
-          >
-            {tab.key === 'overview' ? (
-              <tab.component name={name} position={position} billStatus={billStatus} isLowMateriality={isLowMateriality} congressLink={suggestUI?.congress_link} />
-            ) : (
-              <tab.component 
-                name={name} 
-                position={position} 
-                scrollY={scrollY}
-                scrollRef={tabRefs[idx]}
-              />
-            )}
-          </Animated.View>
-        ))}
+        {TABS.map((tab, idx) => {
+          const Component = tab.component as any;
+          if (!Component) {
+            console.error(`Tab component missing for key=${tab.key}`);
+            return null;
+          }
+
+          return (
+            <Animated.View
+              key={tab.key}
+              style={{
+                width: SCREEN_WIDTH,
+                flex: 1,
+                alignItems: 'stretch',
+                justifyContent: 'flex-start',
+                paddingTop: 100,   // leave space for header
+                paddingBottom: bottomPadding, // animated padding for footer
+              }}
+            >
+              {tab.key === 'overview' ? (
+                <Component name={name} position={position} billStatus={billStatus} isLowMateriality={isLowMateriality} congressLink={suggestUI?.congress_link} />
+              ) : (
+                <Component 
+                  name={name} 
+                  position={position} 
+                  scrollY={scrollY}
+                  scrollRef={tabRefs[idx]}
+                />
+              )}
+            </Animated.View>
+          );
+        })}
       </Animated.ScrollView>
 
       <Animated.View style={{ opacity: scrollY.interpolate({ inputRange: [0, 120], outputRange: [1, 0.15], extrapolate: 'clamp' }) }}>

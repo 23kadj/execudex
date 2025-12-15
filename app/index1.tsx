@@ -370,48 +370,55 @@ export default function Index1({ navigation }: { navigation?: any }) {
           scrollCurrentTabToTop(); // Scroll to top when switching tabs
         }}
       >
-        {TABS.map((tab, idx) => (
-          <Animated.View
-            key={tab.key}
-            style={{
-              width: SCREEN_WIDTH,
-              flex: 1,
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingTop: 100,   // leave space for header
-              paddingBottom: bottomPadding, // animated padding for footer
-            }}
-          >
-            {tab.key === 'synop' ? (
-              <Synop 
-                scrollY={scrollY} 
-                goToTab={goToTab} 
-                name={name} 
-                position={position} 
-                submittedStars={submittedStars}
-                approvalPercentage={approvalPercentage}
-                disapprovalPercentage={disapprovalPercentage}
-                profileData={profileData}
-                index={params.index as string | undefined}
-                scrollRef={synopScrollRef}
-                refetchLockStatus={refetchLockStatus}
-                triggerCardRefresh={triggerCardRefresh}
-              />
-            ) : (
-              // @ts-expect-error Type mismatch in index prop
-              <tab.component 
-                scrollY={scrollY} 
-                name={name} 
-                position={position} 
-                goToTab={goToTab} 
-                {...(params.index ? { index: parseInt(params.index as string) } : {})}
-                scrollRef={tab.key === 'sub1a' ? sub1ScrollRef : tab.key === 'sub2' ? sub2ScrollRef : sub3ScrollRef}
-                cardRefreshTrigger={cardRefreshTrigger}
-              />
-            )}
+        {TABS.map((tab, idx) => {
+          const Component = tab.component as any;
+          if (!Component) {
+            console.error(`Tab component missing for key=${tab.key}`);
+            return null;
+          }
 
-          </Animated.View>
-        ))}
+          return (
+            <Animated.View
+              key={tab.key}
+              style={{
+                width: SCREEN_WIDTH,
+                flex: 1,
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingTop: 100,   // leave space for header
+                paddingBottom: bottomPadding, // animated padding for footer
+              }}
+            >
+              {tab.key === 'synop' ? (
+                <Synop 
+                  scrollY={scrollY} 
+                  goToTab={goToTab} 
+                  name={name} 
+                  position={position} 
+                  submittedStars={submittedStars}
+                  approvalPercentage={approvalPercentage}
+                  disapprovalPercentage={disapprovalPercentage}
+                  profileData={profileData}
+                  index={params.index as string | undefined}
+                  scrollRef={synopScrollRef}
+                  refetchLockStatus={refetchLockStatus}
+                  triggerCardRefresh={triggerCardRefresh}
+                />
+              ) : (
+                <Component 
+                  scrollY={scrollY} 
+                  name={name} 
+                  position={position} 
+                  goToTab={goToTab} 
+                  {...(params.index ? { index: parseInt(params.index as string) } : {})}
+                  scrollRef={tab.key === 'sub1a' ? sub1ScrollRef : tab.key === 'sub2' ? sub2ScrollRef : sub3ScrollRef}
+                  cardRefreshTrigger={cardRefreshTrigger}
+                />
+              )}
+
+            </Animated.View>
+          );
+        })}
       </Animated.ScrollView>
 
       <Animated.View style={{ opacity: scrollY.interpolate({ inputRange: [0, 120], outputRange: [1, 0.15], extrapolate: 'clamp' }) }}>

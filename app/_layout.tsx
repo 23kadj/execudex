@@ -20,7 +20,7 @@ Sentry.init({
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import { Stack, useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import React, { useEffect, useRef, useState } from 'react';
@@ -72,55 +72,19 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
   const { session, loading: authLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const params = useGlobalSearchParams();
   const [hasCheckedRoute, setHasCheckedRoute] = useState(false);
   const hasRedirectedRef = useRef(false);
   const onRouteCheckedRef = useRef(onRouteChecked);
   const hasCalledCallbackRef = useRef(false);
-  const lastSessionIdRef = useRef<string | null>(null);
 
   // Update ref when callback changes
   useEffect(() => {
     onRouteCheckedRef.current = onRouteChecked;
   }, [onRouteChecked]);
 
-  // Reset route check flags whenever the auth session changes (login or logout)
-  useEffect(() => {
-    const currentSessionId = session?.user?.id ?? null;
-    if (currentSessionId !== lastSessionIdRef.current) {
-      lastSessionIdRef.current = currentSessionId;
-      setHasCheckedRoute(false);
-      hasRedirectedRef.current = false;
-    }
-  }, [session?.user?.id]);
-
-  // Helper to ensure we notify once when route check is done
-  const markRouteChecked = () => {
-    setHasCheckedRoute(true);
-    if (!hasCalledCallbackRef.current) {
-      hasCalledCallbackRef.current = true;
-      onRouteCheckedRef.current();
-    }
-  };
-
   useEffect(() => {
     // Wait for auth to finish loading before checking route
     if (authLoading) {
-      return;
-    }
-
-    const isLogoutFlow = params.logout === 'true';
-
-    // If we're explicitly in logout flow, skip any redirects and just mark as checked
-    if (isLogoutFlow) {
-      // Also ensure any lingering session is cleared to prevent bounce-back
-      try {
-        const supabase = getSupabaseClient();
-        supabase.auth.signOut().catch(() => {});
-      } catch (e) {
-        // ignore
-      }
-      markRouteChecked();
       return;
     }
 
@@ -133,14 +97,6 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
       try {
         // Check if user is logged in
         const hasSession = !!session?.user?.id;
-
-        // If user is logged out but somehow on a tabs route, force them back to onboarding
-        if (!hasSession && pathname?.startsWith('/(tabs)')) {
-          console.log('[InitialRouteHandler] Logged out on tabs route - redirecting to onboarding');
-          router.replace('/?logout=true');
-          markRouteChecked();
-          return;
-        }
 
         if (hasSession) {
           // Check if user has completed onboarding (has a plan)
@@ -183,15 +139,23 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
           console.log('[InitialRouteHandler] No session - staying on onboarding');
         }
 
-        markRouteChecked();
+        setHasCheckedRoute(true);
+        if (!hasCalledCallbackRef.current) {
+          hasCalledCallbackRef.current = true;
+          onRouteCheckedRef.current();
+        }
       } catch (error) {
         console.error('[InitialRouteHandler] Error in checkInitialRoute:', error);
-        markRouteChecked();
+        setHasCheckedRoute(true);
+        if (!hasCalledCallbackRef.current) {
+          hasCalledCallbackRef.current = true;
+          onRouteCheckedRef.current();
+        }
       }
     };
 
     checkInitialRoute();
-  }, [authLoading, session, router, pathname, hasCheckedRoute, params.logout]);
+  }, [authLoading, session, router, pathname, hasCheckedRoute]);
 
   // Don't render children until we've checked the route (prevents flash)
   // But only wait if we're on the index route and haven't redirected yet
