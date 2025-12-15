@@ -1,13 +1,15 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useRef } from 'react';
 import { Alert, Animated, Image, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
+import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function Profile() {
-  const { signOut, user } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   
   // Animated scale values for account settings cards
@@ -28,15 +30,17 @@ export default function Profile() {
           style: 'destructive',
           onPress: async () => {
             try {
-              console.log('[Profile] Starting sign out...');
-              await signOut();
+              // 1. Sign out from Supabase
+              await getSupabaseClient().auth.signOut();
               
-              console.log('[Profile] Navigating to onboarding with logout flag');
-              // Pass logout=true parameter to bypass race condition
-              router.replace('/?logout=true');
-            } catch (error) {
-              console.error('[Profile] Sign out error:', error);
-              Alert.alert('Error', 'Failed to sign out. Please try again.');
+              // 2. FORCE CLEAR all local storage (The fix from Account Deletion logic)
+              // This ensures InitialRouteHandler finds NO session data
+              await AsyncStorage.clear();
+              
+              // 3. Navigate to onboarding with logout flag
+              router.replace({ pathname: '/', params: { logout: 'true' } });
+            } catch (e: any) {
+              Alert.alert('Error', e?.message ?? 'Failed to sign out.');
             }
           },
         },

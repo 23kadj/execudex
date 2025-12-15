@@ -20,7 +20,7 @@ Sentry.init({
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import { Stack, usePathname, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import React, { useEffect, useRef, useState } from 'react';
@@ -72,6 +72,7 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
   const { session, loading: authLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const params = useLocalSearchParams();
   const [hasCheckedRoute, setHasCheckedRoute] = useState(false);
   const hasRedirectedRef = useRef(false);
   const onRouteCheckedRef = useRef(onRouteChecked);
@@ -88,6 +89,20 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
       return;
     }
 
+    // CHECK FOR LOGOUT FLAG FIRST - this check must run even if we've already checked the route
+    // If we just came from the profile screen after logout, skip redirect logic
+    if (params.logout === 'true') {
+      console.log('[InitialRouteHandler] Explicit logout detected. Skipping auto-redirect.');
+      // Reset redirect flags to allow onboarding to show
+      hasRedirectedRef.current = false;
+      setHasCheckedRoute(true);
+      if (!hasCalledCallbackRef.current) {
+        hasCalledCallbackRef.current = true;
+        onRouteCheckedRef.current();
+      }
+      return; // Skip all redirect logic
+    }
+
     // Only check once on initial load
     if (hasCheckedRoute || hasRedirectedRef.current) {
       return;
@@ -95,6 +110,7 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
 
     const checkInitialRoute = async () => {
       try {
+
         // Check if user is logged in
         const hasSession = !!session?.user?.id;
 
@@ -155,7 +171,7 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
     };
 
     checkInitialRoute();
-  }, [authLoading, session, router, pathname, hasCheckedRoute]);
+  }, [authLoading, session, router, pathname, hasCheckedRoute, params.logout]);
 
   // Don't render children until we've checked the route (prevents flash)
   // But only wait if we're on the index route and haven't redirected yet

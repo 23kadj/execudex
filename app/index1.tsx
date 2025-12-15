@@ -225,8 +225,9 @@ export default function Index1({ navigation }: { navigation?: any }) {
     
     // Scroll to top of the new tab's content
     const refs = [synopScrollRef, sub1ScrollRef, sub2ScrollRef, sub3ScrollRef];
-    if (refs[idx]) {
-      refs[idx]?.current?.scrollTo({ y: 0, animated: true });
+    // Defensive check: ensure idx is within bounds
+    if (idx >= 0 && idx < refs.length && refs[idx]?.current) {
+      refs[idx].current?.scrollTo({ y: 0, animated: true });
     }
     
     const layout = tabLayouts.current[idx];
@@ -276,8 +277,9 @@ export default function Index1({ navigation }: { navigation?: any }) {
   // Function to scroll to top of current tab
   const scrollCurrentTabToTop = () => {
     const refs = [synopScrollRef, sub1ScrollRef, sub2ScrollRef, sub3ScrollRef];
-    if (refs[tabIndex]) {
-      refs[tabIndex]?.current?.scrollTo({ y: 0, animated: true });
+    // Defensive check: ensure tabIndex is within bounds
+    if (tabIndex >= 0 && tabIndex < refs.length && refs[tabIndex]?.current) {
+      refs[tabIndex].current?.scrollTo({ y: 0, animated: true });
     }
   };
 
@@ -371,11 +373,27 @@ export default function Index1({ navigation }: { navigation?: any }) {
         }}
       >
         {TABS.map((tab, idx) => {
-          const Component = tab.component as any;
-          if (!Component) {
-            console.error(`Tab component missing for key=${tab.key}`);
+          // Defensive validation: ensure tab exists and has valid component
+          if (!tab || !tab.component) {
+            console.error(`Tab missing or invalid for index=${idx}, key=${tab?.key || 'unknown'}`);
             return null;
           }
+
+          // Validate component is a valid React component (function or class)
+          const Component = tab.component;
+          if (typeof Component !== 'function' && typeof Component !== 'object') {
+            console.error(`Tab component is not a valid React component for key=${tab.key}`);
+            return null;
+          }
+
+          // Additional safety check: ensure component is not null/undefined
+          if (Component === null || Component === undefined) {
+            console.error(`Tab component is null/undefined for key=${tab.key}`);
+            return null;
+          }
+
+          // Type assertion for TypeScript - safer than 'as any' as it ensures React component type
+          const ValidatedComponent = Component as React.ComponentType<any>;
 
           return (
             <Animated.View
@@ -405,7 +423,7 @@ export default function Index1({ navigation }: { navigation?: any }) {
                   triggerCardRefresh={triggerCardRefresh}
                 />
               ) : (
-                <Component 
+                <ValidatedComponent 
                   scrollY={scrollY} 
                   name={name} 
                   position={position} 

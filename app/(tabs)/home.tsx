@@ -2520,7 +2520,7 @@ return (
           >
             {/* HEADER */}
         <View style={styles.header}>
-          <Image source={require('../../assets/wordlogo2.png')} style={styles.logo} />
+          <Image source={require('../../assets/homeimg.png')} style={styles.logo} />
           <View style={styles.headerRight}>
           <Pressable
             onPress={() => {

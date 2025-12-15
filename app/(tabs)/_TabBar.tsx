@@ -33,7 +33,9 @@ export default function CustomTabBar({
  const desiredOrder = ['home', 'exp1', 'profile'];
  const visibleRoutes = desiredOrder
    .map(name => state.routes.find(r => r.name === name))
-   .filter(Boolean);
+   .filter((route): route is NonNullable<typeof route> => 
+     route !== undefined && ICONS[route.name] !== undefined
+   );
 
 
   return (
@@ -45,7 +47,13 @@ export default function CustomTabBar({
           navigation.navigate(route.name);
         };
 
-        const asset   = ICONS[route.name]![focused ? 'active' : 'inactive'];
+        // Safe access with fallback - should never be undefined due to filter above
+        const iconConfig = ICONS[route.name];
+        if (!iconConfig) {
+          // This should never happen due to the filter, but adding safety check
+          return null;
+        }
+        const asset = iconConfig[focused ? 'active' : 'inactive'];
 
         return (
         <Pressable
