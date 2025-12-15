@@ -66,6 +66,10 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
 
   // Fetch card data from card_index table for preview card assignment
   useEffect(() => {
+    // Create abort controller for cleanup
+    const abortController = new AbortController();
+    let isMounted = true;
+
     const fetchCardDataFromDB = async () => {
       if (index) {
         try {
@@ -76,21 +80,37 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
             tier: tier
           });
           
-          // Cards are already sorted by opens_7d descending and limited by tier
-          setCardData(cards);
-          
-          // Check if generate button should be shown using new logic
-          const shouldShow = await CardGenerationService.shouldShowGenerateButtonForPage(parseInt(index.toString()), 'sub3');
-          setShowGenerateButton(shouldShow);
+          // Only update state if component is still mounted and not aborted
+          if (isMounted && !abortController.signal.aborted) {
+            // Cards are already sorted by opens_7d descending and limited by tier
+            setCardData(cards);
+            
+            // Check if generate button should be shown using new logic
+            const shouldShow = await CardGenerationService.shouldShowGenerateButtonForPage(parseInt(index.toString()), 'sub3');
+            
+            // Double check before setting state
+            if (isMounted && !abortController.signal.aborted) {
+              setShowGenerateButton(shouldShow);
+            }
+          }
         } catch (error) {
-          console.error('Error fetching card data:', error);
-          setCardData([]);
-          setShowGenerateButton(false);
+          // Only update state if component is still mounted and not aborted
+          if (isMounted && !abortController.signal.aborted) {
+            console.error('Error fetching card data:', error);
+            setCardData([]);
+            setShowGenerateButton(false);
+          }
         }
       }
     };
 
     fetchCardDataFromDB();
+
+    // Cleanup function to prevent state updates after unmount
+    return () => {
+      isMounted = false;
+      abortController.abort();
+    };
   }, [index, tier, cardRefreshTrigger]);
 
   // Handle cancel loading
@@ -1573,4 +1593,4 @@ const styles = StyleSheet.create({
   },
 
 
-}); 
+});  
