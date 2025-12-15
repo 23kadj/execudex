@@ -15,6 +15,9 @@ Sentry.init({
   replaysOnErrorSampleRate: 1.0,
   replaysSessionSampleRate: 0.1,
   integrations: [Sentry.mobileReplayIntegration()],
+  // Limit string value length to prevent excessively large payloads
+  // that can cause native bridge crashes when serializing large error stacks
+  maxValueLength: 1000,
 });
 
 import * as Application from 'expo-application';
