@@ -42,13 +42,13 @@ export class PoliticianProfileService {
       console.log(`Starting profile processing for politician ID: ${politicianId}`);
       logDiag('svc:handleProfileOpen:start', { politicianId }, trace);
       
-      // STEP 1: Check ppl_profiles table and weak status
+      // STEP 1: Check ppl_profiles table and indexed status
       const step1Result = await this.executeStep1_CheckProfileAndMetrics(politicianId, onProgress, trace);
       
       if (step1Result.shouldStop) {
-        console.log('Profile is marked weak - opening with lock, skipping processing');
-        logDiag('svc:weak-profile:stop', { politicianId }, trace);
-        return; // Stop - profile opens with lock (handled in UI)
+        console.log('Profile is already indexed - skipping processing');
+        logDiag('svc:already-indexed:stop-step1', { politicianId }, trace);
+        return; // Stop - profile is already indexed and can be opened
       }
       
       if (step1Result.skipToStep3) {
@@ -86,7 +86,9 @@ export class PoliticianProfileService {
   }
 
   /**
-   * STEP 1: Check ppl_profiles table, weak status, and run metrics if needed
+   * STEP 1: Check ppl_profiles table, indexed status, and ensure data exists
+   * Logic: Only skip if indexed=true. If indexed=false/null, ensure ppl_profiles data exists.
+   * Weak flag alone does not stop processing - only weak AND indexed together can skip.
    */
   private static async executeStep1_CheckProfileAndMetrics(
     politicianId: number, 
@@ -94,23 +96,32 @@ export class PoliticianProfileService {
     trace?: string
   ): Promise<{ shouldStop: boolean; skipToStep3: boolean }> {
     try {
-      console.log('STEP 1: Checking ppl_profiles and weak status');
+      console.log('STEP 1: Checking ppl_profiles and indexed status');
       logDiag('svc:step1:start', { politicianId }, trace);
       
-      // Check weak flag first (from ppl_index)
+      // Check indexed and weak flags (from ppl_index)
       const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('ppl_index')
-        .select('weak')
+        .select('indexed, weak')
         .eq('id', politicianId)
         .maybeSingle();
       
-      if (indexData?.weak === true) {
-        console.log('Profile is marked weak - stopping processing');
-        logDiag('svc:step1:weak-profile', { politicianId }, trace);
+      if (indexError) {
+        console.error('Error checking indexed status:', indexError);
+        logDiagError('svc:step1:index-error', indexError, trace);
+        // Continue processing on error
+      }
+      
+      // If indexed = true, we can skip processing (regardless of weak status)
+      // This allows weak profiles with indexed=true to be opened without processing
+      if (indexData?.indexed === true) {
+        console.log('Profile is already indexed - can skip processing');
+        logDiag('svc:step1:already-indexed', { politicianId, weak: indexData.weak }, trace);
         return { shouldStop: true, skipToStep3: false };
       }
       
+      // indexed is false/null - must ensure data exists in ppl_profiles
       // Check if profile row exists in ppl_profiles
       const { data: profileData, error: profileError } = await supabase
         .from('ppl_profiles')
@@ -118,10 +129,10 @@ export class PoliticianProfileService {
         .eq('index_id', politicianId)
         .maybeSingle();
       
-      // Scenario: Row exists
+      // Scenario: Row exists - continue processing
       if (profileData) {
-        console.log('Profile row found - skipping metrics (now manual only)');
-        logDiag('svc:step1:profile-exists', { politicianId, updated_at: profileData.updated_at }, trace);
+        console.log('Profile row found in ppl_profiles - continuing processing');
+        logDiag('svc:step1:profile-exists', { politicianId, updated_at: profileData.updated_at, weak: indexData?.weak }, trace);
         
         // Metrics are now only generated manually via UI button
         // No automatic metrics refresh during profile processing
@@ -129,13 +140,15 @@ export class PoliticianProfileService {
         return { shouldStop: false, skipToStep3: false };
       }
       
-      // Scenario: Row doesn't exist - run profile_index only, skip to Step 3
-      console.log('No profile row found - running profile_index (metrics now manual only)');
-      logDiag('svc:step1:no-profile-row', { politicianId }, trace);
+      // Scenario: Row doesn't exist - must ensure it exists before proceeding
+      // Even if weak=true, we need to ensure ppl_profiles data exists (unless indexed=true)
+      console.log('No profile row found in ppl_profiles - running profile_index to ensure data exists');
+      logDiag('svc:step1:no-profile-row', { politicianId, weak: indexData?.weak }, trace);
       
-      // Metrics are now only generated manually via UI button
+      // Run profile_index to create the profile row
       await this.executeProfileIndex(politicianId, onProgress, trace);
       
+      // After profile_index, skip to Step 3 (skip indexed check since we just ran profile_index)
       return { shouldStop: false, skipToStep3: true };
       
     } catch (error) {

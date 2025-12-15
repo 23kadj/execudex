@@ -1275,7 +1275,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   newPoliticianButtonContainer: {
-    width: '92%',
+    width: '95%',
     alignSelf: 'center',
     marginTop: 15,
     marginBottom: 10,
@@ -1285,28 +1285,31 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 20,
     width: '100%',
-    height: 80,
     alignSelf: 'center',
     shadowColor: '#000',
     shadowOpacity: 0.10,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
+    minHeight: 80,
+    borderWidth: 1,
+    borderColor: '#101010',
   },
   newPoliticianButtonContent: {
     width: '100%',
     paddingHorizontal: 0,
+    flex: 1,
   },
   newPoliticianTopRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'flex-start',
     width: '100%',
     marginBottom: 4,
   },
   newPoliticianBottomRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'flex-start',
     width: '100%',
   },
@@ -1315,15 +1318,35 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     fontSize: 20,
     flex: 1,
+    flexWrap: 'wrap',
   },
   newPoliticianSubtitle: {
     color: '#898989',
     fontWeight: '400',
     fontSize: 12,
+    flexWrap: 'wrap',
+  },
+  newPoliticianTypeBadge: {
+    backgroundColor: '#222',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginLeft: 10,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 24,
+  },
+  newPoliticianTypeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlignVertical: 'center',
   },
   // New legislation button styles (matching exp1 format)
   newLegislationButtonContainer: {
-    width: '92%',
+    width: '95%',
     alignSelf: 'center',
     marginTop: 15,
     marginBottom: 10,
@@ -1333,28 +1356,31 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 20,
     width: '100%',
-    height: 80,
     alignSelf: 'center',
     shadowColor: '#000',
     shadowOpacity: 0.10,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
+    minHeight: 80,
+    borderWidth: 1,
+    borderColor: '#101010',
   },
   newLegislationButtonContent: {
     width: '100%',
     paddingHorizontal: 0,
+    flex: 1,
   },
   newLegislationTopRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'flex-start',
     width: '100%',
     marginBottom: 4,
   },
   newLegislationBottomRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'flex-start',
     width: '100%',
   },
@@ -1364,14 +1390,30 @@ const styles = StyleSheet.create({
     fontSize: 20,
     flex: 1,
     flexWrap: 'wrap',
-    flexShrink: 1,
   },
   newLegislationSubtitle: {
     color: '#898989',
     fontWeight: '400',
     fontSize: 12,
     flexWrap: 'wrap',
-    flexShrink: 1,
+  },
+  newLegislationTypeBadge: {
+    backgroundColor: '#222',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginLeft: 10,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 24,
+  },
+  newLegislationTypeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlignVertical: 'center',
   },
 });
 function getImgKey(img: any) {
@@ -1911,19 +1953,16 @@ export default function Home() {
     try {
       const officeType = mapPositionToEnum(selectedPoliticianPosition);
       
-      const response = await fetch('https://tvvmkzoiicjrfjbmqzwc.getSupabaseClient().co/functions/v1/ppl_search', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2dm1rem9paWNqcmZqYm1xendjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQxMDY0OTUsImV4cCI6MjA2OTY4MjQ5NX0.ZlVa4YsMZVrnvSmkJ7wKBiilQ84jh_qcN1wLl7E-Kso',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+      const { data: result, error: fetchError } = await getSupabaseClient().functions.invoke('ppl_search', {
+        body: {
           text_input: profileRequestText.trim(),
           office_type: officeType
-        })
+        }
       });
 
-      const result = await response.json();
+      if (fetchError) {
+        throw fetchError;
+      }
       
       if (result.ok) {
         setSearchResult({ 
@@ -2131,19 +2170,16 @@ export default function Home() {
     setNewLegislationData(null);
 
     try {
-      const response = await fetch('https://tvvmkzoiicjrfjbmqzwc.getSupabaseClient().co/functions/v1/bill_search', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2dm1rem9paWNqcmZqYm1xendjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQxMDY0OTUsImV4cCI6MjA2OTY4MjQ5NX0.ZlVa4YsMZVrnvSmkJ7wKBiilQ84jh_qcN1wLl7E-Kso',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+      const { data: result, error: fetchError } = await getSupabaseClient().functions.invoke('bill_search', {
+        body: {
           title: profileRequestText.trim(),
           congress_session: parseInt(congressSessionText.trim())
-        })
+        }
       });
 
-      const result = await response.json();
+      if (fetchError) {
+        throw fetchError;
+      }
       
       if (result.ok) {
         setSearchResult({ 
@@ -2966,10 +3002,17 @@ return (
               >
                 <View style={styles.newPoliticianButtonContent}>
                   <View style={styles.newPoliticianTopRow}>
-                    <Text style={styles.newPoliticianTitle}>{newPoliticianData.name}</Text>
+                    <Text style={styles.newPoliticianTitle} numberOfLines={0} adjustsFontSizeToFit={false}>
+                      {newPoliticianData.name}
+                    </Text>
+                    <View style={styles.newPoliticianTypeBadge}>
+                      <Text style={styles.newPoliticianTypeText}>Politician</Text>
+                    </View>
                   </View>
                   <View style={styles.newPoliticianBottomRow}>
-                    <Text style={styles.newPoliticianSubtitle}>{newPoliticianData.sub_name}</Text>
+                    <Text style={styles.newPoliticianSubtitle} numberOfLines={0} adjustsFontSizeToFit={false}>
+                      {newPoliticianData.sub_name}
+                    </Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -3016,10 +3059,17 @@ return (
               >
                 <View style={styles.newLegislationButtonContent}>
                   <View style={styles.newLegislationTopRow}>
-                    <Text style={styles.newLegislationTitle}>{newLegislationData.name}</Text>
+                    <Text style={styles.newLegislationTitle} numberOfLines={0} adjustsFontSizeToFit={false}>
+                      {newLegislationData.name}
+                    </Text>
+                    <View style={styles.newLegislationTypeBadge}>
+                      <Text style={styles.newLegislationTypeText}>Legislation</Text>
+                    </View>
                   </View>
                   <View style={styles.newLegislationBottomRow}>
-                    <Text style={styles.newLegislationSubtitle}>{newLegislationData.sub_name}</Text>
+                    <Text style={styles.newLegislationSubtitle} numberOfLines={0} adjustsFontSizeToFit={false}>
+                      {newLegislationData.sub_name}
+                    </Text>
                   </View>
                 </View>
               </TouchableOpacity>

@@ -6,6 +6,7 @@ interface LegiIndex {
   name: string | null;
   sub_name: string | null;
   indexed: boolean | null;
+  weak?: boolean | null;
 }
 
 interface LegiProfile {
@@ -43,32 +44,31 @@ export class LegislationProfileService {
       // Step 1: Check index validation
       const checkResult = await this.checkProfileValidation(legislationId);
       
+      // If indexed=true and has required fields, can skip processing
       if (checkResult.shouldProceed) {
-        console.log('Profile validation passed - profile is indexed and complete, ending processing');
+        console.log('Profile is already indexed - skipping processing');
         return { isLowMateriality: false }; // End processing entirely - profile is ready
-      } else {
-        console.log('Profile validation failed, checking if profile_index is needed');
+      }
+      
+      // indexed is false/null - must ensure data exists
+      console.log('Profile validation: indexed is false/null, ensuring data exists in legi_profiles');
+      
+      // Step 2: Check if profile_index is needed (for storage files and required fields)
+      if (checkResult.needsIndexing) {
+        console.log('Profile index needed, executing profile_index');
         await this.executeStep1IfNeeded(legislationId, onProgress);
-        
-        // After Step 1 (if needed), re-check validation
-        const updatedCheckResult = await this.checkProfileValidation(legislationId);
-        
-        // Only continue to profile checks if storage files now exist
-        if (updatedCheckResult.shouldProceed) {
-          console.log('Profile validation passed after indexing - profile is ready');
-          return { isLowMateriality: false };
-        } else {
-          console.log('Continuing with profile checks after indexing');
-          await this.handleProfileChecks(legislationId, updatedCheckResult, onProgress);
-          
-          // Return low materiality result if detected
-          if (updatedCheckResult.isLowMateriality) {
-            return {
-              isLowMateriality: true,
-              suggestUI: updatedCheckResult.suggestUI
-            };
-          }
-        }
+      }
+      
+      // Step 3: Always check and ensure profile data exists in legi_profiles
+      // This ensures weak profiles without profile data get processed
+      await this.handleProfileChecks(legislationId, checkResult, onProgress);
+      
+      // Return low materiality result if detected
+      if (checkResult.isLowMateriality) {
+        return {
+          isLowMateriality: true,
+          suggestUI: checkResult.suggestUI
+        };
       }
       
       return { isLowMateriality: false };
@@ -80,26 +80,16 @@ export class LegislationProfileService {
 
   /**
    * Check if profile meets validation criteria
+   * Logic: Only skip if indexed=true. If indexed=false/null, ensure legi_profiles data exists.
+   * Weak flag alone does not stop processing - only weak AND indexed together can skip.
    */
   private static async checkProfileValidation(legislationId: number): Promise<ProfileCheckResult> {
     try {
-      // Step 1: Check for storage files first
-      const hasStorageFiles = await this.checkStorageFiles(legislationId);
-      if (!hasStorageFiles) {
-        console.log('No storage files found for legislation ID:', legislationId, '- profile_index required');
-        return {
-          shouldProceed: false,
-          needsIndexing: true,
-          needsOverview: false,
-          needsCards: false
-        };
-      }
-
-      // Step 2: Fetch index data
+      // Step 1: Fetch index data (including indexed and weak flags)
       const supabase = getSupabaseClient();
       const { data: indexData, error: indexError } = await supabase
         .from('legi_index')
-        .select('id, name, sub_name, bill_lvl, indexed')
+        .select('id, name, sub_name, bill_lvl, indexed, weak')
         .eq('id', legislationId)
         .single();
 
@@ -123,29 +113,69 @@ export class LegislationProfileService {
         };
       }
 
-      // Step 3: Check validation conditions
+      // Step 2: If indexed = true, we can skip processing (regardless of weak status)
+      // This allows weak profiles with indexed=true to be opened without processing
+      const isIndexed = indexData.indexed === true;
+      if (isIndexed) {
+        console.log('Profile is already indexed - can skip processing');
+        const hasRequiredFields = !!(
+          indexData.name && 
+          indexData.sub_name &&
+          indexData.bill_lvl
+        );
+        return {
+          shouldProceed: hasRequiredFields, // Only proceed if has required fields too
+          needsIndexing: false,
+          needsOverview: false,
+          needsCards: false,
+          indexData
+        };
+      }
+
+      // Step 3: indexed is false/null - must ensure data exists in legi_profiles
+      // Check if profile row exists in legi_profiles
+      const { data: profileData, error: profileError } = await supabase
+        .from('legi_profiles')
+        .select('owner_id, overview')
+        .eq('owner_id', legislationId)
+        .maybeSingle();
+
+      if (profileError && profileError.code !== 'PGRST116') {
+        console.error('Error fetching profile data:', profileError);
+        // Continue processing on error (will be handled in handleProfileChecks)
+      }
+
+      const hasProfile = !!profileData;
+      
+      // Step 4: Check for storage files (required for profile_index if needed)
+      const hasStorageFiles = await this.checkStorageFiles(legislationId);
+
+      // Step 5: Check validation conditions
       const hasRequiredFields = !!(
         indexData.name && 
         indexData.sub_name &&
         indexData.bill_lvl
       );
 
-      const isIndexed = indexData.indexed === true;
-
-      const shouldProceed = hasRequiredFields && isIndexed;
+      // If indexed is false/null, we need profile data to exist or ensure it gets created
+      // shouldProceed only if indexed=true (already handled above)
+      // Otherwise, we need to process to ensure data exists
+      const shouldProceed = false; // Always false when indexed is false/null
 
       console.log('Profile validation result:', {
         hasStorageFiles,
         hasRequiredFields,
         isIndexed,
+        hasProfile,
+        weak: indexData.weak,
         shouldProceed,
         indexData
       });
 
       return {
         shouldProceed,
-        needsIndexing: !shouldProceed,
-        needsOverview: false, // Will be determined in handleProfileChecks
+        needsIndexing: !hasRequiredFields || !hasStorageFiles,
+        needsOverview: !hasProfile, // Will be determined in handleProfileChecks
         needsCards: false,    // Will be determined in handleProfileChecks
         indexData
       };

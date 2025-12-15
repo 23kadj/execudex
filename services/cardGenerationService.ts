@@ -902,12 +902,12 @@ export class CardGenerationService {
   }
 
   /**
-   * Get categories of cards generated after a specific timestamp
-   * Returns array of objects with category and screen information
+   * Get categories and screens of newly generated cards after a timestamp
+   * Returns array of { category, screen } objects
    */
   static async getGeneratedCardCategories(
-    ownerId: number, 
-    isPpl: boolean, 
+    ownerId: number,
+    isPpl: boolean,
     afterTimestamp: string
   ): Promise<Array<{ category: string; screen: string }>> {
     try {
@@ -929,16 +929,16 @@ export class CardGenerationService {
         return [];
       }
 
-      // Extract unique category-screen pairs
+      // Get unique category-screen pairs
       const uniquePairs = new Map<string, { category: string; screen: string }>();
-      data.forEach(card => {
-        if (card.category && card.screen) {
-          const key = `${card.category}:${card.screen}`;
-          if (!uniquePairs.has(key)) {
-            uniquePairs.set(key, { category: card.category, screen: card.screen });
-          }
+      for (const card of (data as Array<{ category?: string | null; screen?: string | null }>)) {
+        const category = card.category || '';
+        const screen = card.screen || '';
+        const key = `${category}:${screen}`;
+        if (!uniquePairs.has(key)) {
+          uniquePairs.set(key, { category, screen });
         }
-      });
+      }
 
       return Array.from(uniquePairs.values());
     } catch (error) {

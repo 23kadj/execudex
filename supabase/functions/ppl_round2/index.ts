@@ -21,6 +21,18 @@ const EXTRACT_POOL_LIMIT = 10;     // Extraction can handle more concurrency
 const LLM_POOL_LIMIT     = 3;      // LLM calls should be rate-limited
 const STORAGE_POOL_LIMIT = 8;      // Storage can be parallel
 
+/** ======= agenda categories ======= */
+const AGENDA_CATEGORIES = [
+  "economy",
+  "social programs",
+  "immigration",
+  "national security",
+  "healthcare",
+  "defense",
+  "environment",
+  "education"
+] as const;
+
 /** ======= allowed domains ======= (unchanged core + additions) */
 const ALLOWED_DOMAINS = [
   "a46.asmdc.org","aaas.org","abc.net.au","abcnews.go.com","acenet.edu","aclu.org",
@@ -217,120 +229,8 @@ function _safeParseVerdict(s: string): LlmTypeVerdict | null {
   }
 }
 
-/** Batch LLM verdict function for processing multiple URLs at once */
-async function _mistralJudgeBatch(inputs: Array<{
-  meta: { url: string; host: string; title?: string; detected_date?: string | null; lang?: string | null };
-  snippet: string;
-  person?: string; topic?: string; state?: string;
-  nowIso: string;
-}>): Promise<Map<string, LlmTypeVerdict>> {
-  if (inputs.length === 0) return new Map();
-  
-  const batchSystemPrompt = `${_SYSTEM}
-You will receive multiple URLs to judge. Return a JSON object where keys are URLs and values are verdict objects with the same structure as before.`;
-  
-  const batchUserPrompt = `
-REQUEST_CONTEXT = ${JSON.stringify({ 
-  person: inputs[0]?.person || "", 
-  topic: inputs[0]?.topic || "",
-  now_iso: inputs[0]?.nowIso || ""
-})}
-
-PAGES = ${JSON.stringify(inputs.map(inp => ({
-  url: inp.meta.url,
-  host: inp.meta.host,
-  title: inp.meta.title,
-  snippet: inp.snippet.slice(0, 2000) // Reduced per-item limit for batching
-})))}
-
-Return JSON object: { "url1": {verdict, score, institution, ...}, "url2": {verdict, score, institution, ...} }
-`.trim();
-
-  const body = {
-    model: "mistral-small-latest",
-    temperature: 0,
-    max_tokens: 2048, // Increased for batch response
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: batchSystemPrompt },
-      { role: "user", content: batchUserPrompt }
-    ]
-  };
-
-  const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY")!;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000); // Single timeout for all
-
-  try {
-    const r = await fetch(
-      Deno.env.get("MISTRAL_API_URL") ?? "https://api.mistral.ai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${MISTRAL_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      }
-    );
-    
-    clearTimeout(timeout);
-    if (!r.ok) return new Map();
-    
-    const j = await r.json();
-    const txt = j?.choices?.[0]?.message?.content ?? "";
-    
-    try {
-      const jsonStart = txt.indexOf("{");
-      const jsonEnd = txt.lastIndexOf("}");
-      if (jsonStart === -1 || jsonEnd === -1) return new Map();
-      const parsed = JSON.parse(txt.slice(jsonStart, jsonEnd + 1));
-      
-      // Convert to Map
-      const results = new Map<string, LlmTypeVerdict>();
-      for (const [url, verdict] of Object.entries(parsed)) {
-        if (typeof verdict === 'object' && verdict !== null) {
-          const v = verdict as any;
-          if (typeof v?.verdict === "string" && typeof v?.score === "number") {
-            results.set(url, v as LlmTypeVerdict);
-          }
-        }
-      }
-      return results;
-    } catch {
-      return new Map();
-    }
-  } catch (e) {
-    clearTimeout(timeout);
-    return new Map();
-  }
-}
-
 /** ======= supabase client ======= */
 const supabase = createClient(SUPABASE_URL!, SERVICE_ROLE!, { global: { fetch } });
-
-/** ---------- domain classification cache ---------- */
-const domainCache = new Map<string, { category: "allowed" | "blocked" | "unknown"; timestamp: number }>();
-const CACHE_TTL = 3600000; // 1 hour
-
-function getCachedDomainCategory(url: string): "allowed" | "blocked" | "unknown" | null {
-  const host = normalizedHost(url);
-  if (!host) return null;
-  
-  const cached = domainCache.get(host);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.category;
-  }
-  return null;
-}
-
-function cacheDomainCategory(url: string, category: "allowed" | "blocked" | "unknown") {
-  const host = normalizedHost(url);
-  if (host) {
-    domainCache.set(host, { category, timestamp: Date.now() });
-  }
-}
 
 /** ---------- timing/budget helpers ---------- */
 const startTime = Date.now();
@@ -387,6 +287,12 @@ function slugifyTerm(t: string): string {
     .replace(/\s+/g, "-").replace(/[_.]+/g, "-").replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-").replace(/^-|-$/g, "");
   return dashed || "term";
+}
+
+/** Check if a term is an agenda category */
+function isAgendaCategory(term: string): boolean {
+  const normalized = term.toLowerCase().trim();
+  return (AGENDA_CATEGORIES as readonly string[]).includes(normalized);
 }
 
 /** ---------- URL/domain helpers ---------- */
@@ -509,32 +415,6 @@ async function putToStorage(path: string, content: string) {
   if (error) throw error;
 }
 
-/** Parallelize multi-part storage */
-async function storePartsConcurrent(parts: string[], keyPrefix: string): Promise<Array<{ key: string; index: number }>> {
-  const uploadTasks = parts.map((part, i) => {
-    const partSuffix = parts.length > 1 ? `.${i + 1}` : "";
-    const key = `${keyPrefix}${partSuffix}.txt`;
-    return putToStorage(key, part).then(() => ({ key, index: i })).catch(() => null);
-  });
-  
-  const results = await Promise.all(uploadTasks);
-  return results.filter((r): r is { key: string; index: number } => r !== null);
-}
-
-/** Batch database insert helper */
-async function batchInsertWebContent(
-  items: Array<{ path: string; owner_id: number; link: string }>
-): Promise<number[]> {
-  if (items.length === 0) return [];
-  const { data, error } = await supabase
-    .from("web_content")
-    .insert(items)
-    .select("id");
-  
-  if (error) throw error;
-  return (data || []).map((row: { id: number }) => row.id);
-}
-
 /** ---------- Policy/action scoring ---------- */
 const POLICY_KEYWORDS = [
   "executive order","eo ","proclamation","signed into law","enacted","implementation","implemented",
@@ -651,30 +531,29 @@ async function tavilySearchFlexible(query: string, allowlist: string[]): Promise
   return urls; // Return all URLs - filtering happens in main loop
 }
 
-/** ---------- Policy-biased search variants (optimized) ---------- */
+/** ---------- Agenda category search (simple: fullName + term + "policy") ---------- */
+async function tavilySearchAgenda(fullName: string, term: string): Promise<string[]> {
+  const query = term ? `${fullName} ${term} policy` : `${fullName} policy`;
+  return await tavilySearchFlexible(query, Array.from(ALLOWED_DOMAINS));
+}
+
+/** ---------- Policy-biased search variants (for non-agenda terms) ---------- */
 async function tavilySearchPolicyBiased(fullName: string, term: string): Promise<string[]> {
   const base = term ? `${fullName} ${term}` : fullName;
-  
-  // Start with 2 most effective queries in parallel
-  const primaryQueries = [
-    tavilySearchFlexible(base, Array.from(ALLOWED_DOMAINS)),
-    tavilySearchFlexible(`${base} policy implementation`, Array.from(ALLOWED_DOMAINS))
+  const variants = [
+    base,
+    `${base} implementation`,
+    `${base} recent policy`,
+    `${base} executive order`,
+    `${base} final rule regulation`,
   ];
-  
-  const [baseResults, policyResults] = await Promise.all(primaryQueries);
+
   const seen = new Set<string>();
-  for (const u of baseResults) if (!seen.has(u)) seen.add(u);
-  for (const u of policyResults) if (!seen.has(u)) seen.add(u);
-  
-  // Only do additional searches if we don't have enough results
-  if (seen.size < 15 && budgetOk()) {
-    const additionalResults = await tavilySearchFlexible(
-      `${base} executive order regulation`,
-      Array.from(ALLOWED_DOMAINS)
-    );
-    for (const u of additionalResults) if (!seen.has(u)) seen.add(u);
+  for (const q of variants) {
+    if (!budgetOk()) break;
+    const got = await tavilySearchFlexible(q, Array.from(ALLOWED_DOMAINS));
+    for (const u of got) if (!seen.has(u)) seen.add(u);
   }
-  
   return Array.from(seen);
 }
 
@@ -688,15 +567,7 @@ function stripHtml(html: string) {
     .trim();
 }
 
-async function resolveFinalUrlSmart(url: string, timeoutMs = 2000): Promise<string> {
-  const host = normalizedHost(url);
-  
-  // Skip resolution for trusted domains (no redirects expected)
-  if (host && (ALLOWED_DOMAINS as readonly string[]).includes(host)) {
-    return url;
-  }
-  
-  // Only resolve for unknown/suspicious domains
+async function resolveFinalUrl(url: string, timeoutMs = 4000): Promise<string> {
   try {
     const r = await fetchWithTimeout(url, { method: "HEAD", redirect: "follow" }, timeoutMs);
     return r.url || url;
@@ -705,102 +576,70 @@ async function resolveFinalUrlSmart(url: string, timeoutMs = 2000): Promise<stri
   }
 }
 
-// Keep old function for backward compatibility
-async function resolveFinalUrl(url: string, timeoutMs = 4000): Promise<string> {
-  return resolveFinalUrlSmart(url, timeoutMs);
-}
-
-// Individual extraction methods for parallel execution
-async function extractViaTavily(url: string): Promise<string> {
-  const r = await fetchWithTimeout("https://api.tavily.com/extract", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ api_key: TAVILY_API_KEY, urls: [url], format: "markdown" })
-  }, EXTRACT_TIMEOUT_MS);
-  
-  if (!r.ok) throw new Error('tavily_failed');
-  const j = await r.json();
-  const res = j?.results?.[0] ?? {};
-  const resolvedUrl = String(res.url || url);
-  if (isBlockedDomain(resolvedUrl)) {
-    throw new Error('blocked_domain');
-  }
-  const content = res.markdown || res.content || res.raw_content || "";
-  if (!content.trim()) throw new Error('empty_content');
-  return content;
-}
-
-async function extractViaDirectHTML(url: string): Promise<string> {
-  const r = await fetchWithTimeout(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      "Accept": "text/html,application/xhtml+xml"
-    }
-  }, EXTRACT_TIMEOUT_MS);
-  
-  if (!r.ok) throw new Error('html_fetch_failed');
-  const finalUrl = r.url || url;
-  if (isBlockedDomain(finalUrl)) {
-    throw new Error('blocked_domain');
-  }
-  const html = await r.text();
-  const txt = stripHtml(html);
-  if (!txt.trim()) throw new Error('empty_content');
-  return txt;
-}
-
-async function extractViaJina(url: string): Promise<string> {
-  const proxied = `https://r.jina.ai/http://${url.replace(/^https?:\/\//i, "")}`;
-  const r = await fetchWithTimeout(proxied, {}, EXTRACT_TIMEOUT_MS);
-  if (!r.ok) throw new Error('jina_failed');
-  const txt = await r.text();
-  if (!txt.trim()) throw new Error('empty_content');
-  return txt;
-}
-
-// Parallel extraction with race pattern
 async function tavilyExtractSafe(url: string): Promise<string> {
   if (!budgetOk()) return "";
 
-  // Check blocked domains once upfront
-  const resolvedForHead = await resolveFinalUrlSmart(url, 2000);
+  // Resolve redirects early and block if landing on a blocked domain.
+  const resolvedForHead = await resolveFinalUrl(url);
   if (isBlockedDomain(resolvedForHead)) {
     console.warn("blocked_by_redirect_head", { original: url, final: resolvedForHead });
     return "";
   }
 
-  // Race all extraction methods
-  const methods = [
-    extractViaTavily(url).catch(() => null),
-    extractViaDirectHTML(url).catch(() => null),
-    extractViaJina(url).catch(() => null)
-  ];
-
-  // Use first successful result
-  const results = await Promise.allSettled(methods);
-  for (const result of results) {
-    if (result.status === "fulfilled" && result.value) {
-      const text = result.value;
-      return text.length > MAX_LEN ? text.slice(0, MAX_LEN) : text;
+  // 1) Tavily extract
+  try {
+    const r = await fetchWithTimeout("https://api.tavily.com/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: TAVILY_API_KEY, urls: [url], format: "markdown" })
+    }, EXTRACT_TIMEOUT_MS);
+    if (r.ok) {
+      const j = await r.json().catch(() => ({}));
+      const res = j?.results?.[0] ?? {};
+      const resolvedUrl = String(res.url || url);
+      if (isBlockedDomain(resolvedUrl)) {
+        console.warn("blocked_by_redirect_tavily", { original: url, final: resolvedUrl });
+        return "";
+      }
+      const content =
+        (typeof res.markdown === "string" && res.markdown) ||
+        (typeof res.content === "string" && res.content) ||
+        (typeof res.raw_content === "string" && res.raw_content) || "";
+      if (content && content.trim()) return content.length > MAX_LEN ? content.slice(0, MAX_LEN) : content;
     }
-  }
+  } catch {}
+
+  // 2) Direct HTML (real UA)
+  try {
+    const r2 = await fetchWithTimeout(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      }
+    }, EXTRACT_TIMEOUT_MS);
+    if (r2.ok) {
+      const finalUrl = r2.url || url;
+      if (isBlockedDomain(finalUrl)) {
+        console.warn("blocked_by_redirect_html", { original: url, final: finalUrl });
+        return "";
+      }
+      const html = await r2.text();
+      const txt = stripHtml(html);
+      if (txt) return txt.length > MAX_LEN ? txt.slice(0, MAX_LEN) : txt;
+    }
+  } catch {}
+
+  // 3) Jina reader proxy
+  try {
+    const proxied = `https://r.jina.ai/http://${url.replace(/^https?:\/\//i, "")}`;
+    const r3 = await fetchWithTimeout(proxied, {}, EXTRACT_TIMEOUT_MS);
+    if (r3.ok) {
+      const txt = await r3.text();
+      if (txt) return txt.length > MAX_LEN ? txt.slice(0, MAX_LEN) : txt;
+    }
+  } catch {}
 
   return "";
-}
-
-/** Helper to check if LLM verdict is acceptable */
-function isVerdictAcceptable(verdict: LlmTypeVerdict): boolean {
-  const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
-  const excluded = verdict.content_flags.press_release || 
-                  verdict.content_flags.news_clip_or_blog_rollup || 
-                  verdict.content_flags.opinion_or_editorial;
-  
-  if (!verdict.recency_ok) return false;
-  if (excluded) return false;
-  if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) return false;
-  if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") return false;
-  if (verdict.verdict !== "allow" || verdict.score < 7.0) return false;
-  return true;
 }
 
 /** ---------- tiny pool to limit concurrency ---------- */
@@ -819,248 +658,8 @@ async function runPool<T>(limit: number, tasks: (() => Promise<T>)[]): Promise<T
   return out;
 }
 
-/** Process a single term and return results */
-async function processTermWithBudget(
-  rawTerm: string,
-  pplId: number,
-  fullName: string,
-  prefix: string,
-  startTime: number
-): Promise<{
-  stored: Array<{ term: string; domain: string; url: string; storageKey: string; length: number }>;
-  skipped: Array<{ term: string; domain?: string; reason: string }>;
-  createdWebIds: number[];
-  llmVerdicts: any[];
-  toInsert: Array<{ path: string; owner_id: number; link: string; text: string; domain: string; url: string; slug: string }>;
-}> {
-  const budgetOk = () => Date.now() - startTime < RUN_BUDGET_MS;
-  if (!budgetOk()) {
-    return { stored: [], skipped: [], createdWebIds: [], llmVerdicts: [], toInsert: [] };
-  }
-
-  const slug = slugifyTerm(rawTerm);
-  const stored: Array<{ term: string; domain: string; url: string; storageKey: string; length: number }> = [];
-  const skipped: Array<{ term: string; domain?: string; reason: string }> = [];
-  const createdWebIds: number[] = [];
-  const llmVerdicts: any[] = [];
-  const toInsert: Array<{ path: string; owner_id: number; link: string; text: string; domain: string; url: string; slug: string }> = [];
-
-  // Search
-  let urls: string[] = [];
-  try {
-    urls = await tavilySearchPolicyBiased(fullName, rawTerm);
-  } catch (e) {
-    skipped.push({ term: slug, reason: `search failed: ${String(e)}` });
-    return { stored, skipped, createdWebIds, llmVerdicts, toInsert };
-  }
-  if (!urls.length) {
-    skipped.push({ term: slug, reason: "no eligible results for allowed domains" });
-    return { stored, skipped, createdWebIds, llmVerdicts, toInsert };
-  }
-
-  // Dedupe + rank
-  const seenUrls = new Set<string>();
-  const deduped = urls.filter((u) => (seenUrls.has(u) ? false : (seenUrls.add(u), true)));
-  const ranked = rankUrlsByFreshness(deduped);
-
-  // Categorize: blocked, allowed, unknown (with cache)
-  const categorized: Array<{ url: string; domain: string; category: "allowed" | "unknown" }> = [];
-  
-  for (const u of ranked) {
-    if (!budgetOk()) break;
-    // Check cache first
-    const cachedCategory = getCachedDomainCategory(u);
-    if (cachedCategory === "blocked") continue;
-    
-    // Skip blocked (and cache result)
-    if (isBlockedDomain(u)) {
-      cacheDomainCategory(u, "blocked");
-      continue;
-    }
-    
-    // Check if allowed (with cache)
-    if (cachedCategory === "allowed") {
-      const d = matchAllowedDomain(u);
-      if (d) {
-        categorized.push({ url: u, domain: d, category: "allowed" });
-        continue;
-      }
-    }
-    
-    const d = matchAllowedDomain(u);
-    if (d) {
-      cacheDomainCategory(u, "allowed");
-      categorized.push({ url: u, domain: d, category: "allowed" });
-    } else {
-      const host = (() => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return "unknown"; } })();
-      if (cachedCategory !== "unknown") {
-        cacheDomainCategory(u, "unknown");
-      }
-      categorized.push({ url: u, domain: host, category: "unknown" });
-    }
-  }
-
-  // Selection: prioritize allowed domains, then unknowns
-  const selected: Array<{ domain: string; url: string; category: "allowed" | "unknown" }> = [];
-  const usedDomains = new Set<string>();
-  
-  // First add allowed domains (diversify)
-  for (const item of categorized.filter(x => x.category === "allowed")) {
-    if (!usedDomains.has(item.domain)) {
-      selected.push(item);
-      usedDomains.add(item.domain);
-      if (selected.length >= PER_TERM_TARGET) break;
-    }
-  }
-  
-  // Then fill with unknowns
-  if (selected.length < PER_TERM_TARGET) {
-    for (const item of categorized.filter(x => x.category === "unknown")) {
-      selected.push(item);
-      if (selected.length >= PER_TERM_TARGET) break;
-    }
-  }
-  
-  // Finally fill remaining with more from allowed
-  if (selected.length < PER_TERM_TARGET) {
-    for (const item of categorized.filter(x => x.category === "allowed")) {
-      if (selected.some(s => s.url === item.url)) continue;
-      selected.push(item);
-      if (selected.length >= PER_TERM_TARGET) break;
-    }
-  }
-  
-  if (!selected.length) {
-    skipped.push({ term: slug, reason: "no post-filtered results" });
-    return { stored, skipped, createdWebIds, llmVerdicts, toInsert };
-  }
-
-  // Extract all URLs first, collect unknowns for batch LLM processing
-  const nowIsoStr = new Date().toISOString();
-  const extractionTasks = selected.map(({ domain, url, category }) => async (): Promise<{ url: string; domain: string; category: "allowed" | "unknown"; text: string } | null> => {
-    if (!budgetOk()) return null;
-    try {
-      const text = await tavilyExtractSafe(url);
-      if (!text) {
-        skipped.push({ term: slug, domain, reason: "extract empty" });
-        return null;
-      }
-      return { url, domain, category, text };
-    } catch (e) {
-      skipped.push({ term: slug, domain, reason: "extract failed" });
-      return null;
-    }
-  });
-
-  const extractionResults = await runPool(EXTRACT_POOL_LIMIT, extractionTasks);
-  const extracted = extractionResults.filter((r): r is { url: string; domain: string; category: "allowed" | "unknown"; text: string } => r !== null);
-
-  // Separate allowed and unknown
-  const allowedItems: Array<{ url: string; domain: string; text: string }> = [];
-  const unknownItems: Array<{ url: string; domain: string; text: string }> = [];
-
-  for (const item of extracted) {
-    if (item.category === "allowed") {
-      allowedItems.push({ url: item.url, domain: item.domain, text: item.text });
-    } else {
-      unknownItems.push({ url: item.url, domain: item.domain, text: item.text });
-    }
-  }
-
-  // Batch process unknowns with LLM
-  if (unknownItems.length > 0 && budgetOk()) {
-    const batchInputs = unknownItems.map(u => ({
-      meta: { url: u.url, host: u.domain, title: undefined, detected_date: null, lang: null },
-      snippet: u.text.slice(0, 4000),
-      person: fullName,
-      topic: rawTerm,
-      nowIso: nowIsoStr
-    }));
-    
-    const verdicts = await _mistralJudgeBatch(batchInputs);
-    
-    // Process LLM results
-    for (const u of unknownItems) {
-      const verdict = verdicts.get(u.url);
-      if (!verdict) {
-        llmVerdicts.push({ url: u.url, host: u.domain, status: "llm_error" });
-        skipped.push({ term: slug, domain: u.domain, reason: "llm_error" });
-        continue;
-      }
-      
-      if (!isVerdictAcceptable(verdict)) {
-        const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
-        const excluded = verdict.content_flags.press_release || 
-                        verdict.content_flags.news_clip_or_blog_rollup || 
-                        verdict.content_flags.opinion_or_editorial;
-        
-        let rejectReason = "";
-        if (!verdict.recency_ok) {
-          rejectReason = "stale (>12 months)";
-        } else if (excluded) {
-          const flags = [];
-          if (verdict.content_flags.press_release) flags.push("press_release");
-          if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
-          if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
-          rejectReason = `excluded_content: ${flags.join(", ")}`;
-        } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
-          rejectReason = "affiliation_fail";
-        } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
-          rejectReason = `partisan (${verdict.institution})`;
-        } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
-          rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
-        }
-        
-        llmVerdicts.push({
-          url: u.url,
-          host: u.domain,
-          status: "rejected",
-          reason: rejectReason,
-          verdict: verdict.verdict,
-          score: verdict.score,
-          institution: verdict.institution,
-          partisanship: verdict.partisanship,
-          recency_ok: verdict.recency_ok,
-          content_flags: verdict.content_flags,
-          llm_reasons: verdict.reasons
-        });
-        skipped.push({ term: slug, domain: u.domain, reason: `llm_rejected: ${rejectReason}` });
-        continue;
-      }
-      
-      llmVerdicts.push({
-        url: u.url,
-        host: u.domain,
-        status: "accepted",
-        score: verdict.score,
-        institution: verdict.institution
-      });
-      
-      // Add to allowed items for processing
-      allowedItems.push({ url: u.url, domain: u.domain, text: u.text });
-    }
-  }
-
-  // Prepare all items for batch insert
-  for (const item of allowedItems) {
-    if (!budgetOk()) break;
-    
-    toInsert.push({
-      path: "", // Will be set after storage
-      owner_id: pplId,
-      link: item.url,
-      text: item.text,
-      domain: item.domain,
-      url: item.url,
-      slug
-    });
-  }
-
-  return { stored, skipped, createdWebIds, llmVerdicts, toInsert };
-}
-
 /** ======= main handler ======= */
-Deno.serve(async (req: Request) => {
+Deno.serve(async (req) => {
   try {
     if (req.method !== "POST") {
       return new Response(JSON.stringify({ error: "use_post" }), {
@@ -1095,104 +694,209 @@ Deno.serve(async (req: Request) => {
       });
     }
     const fullName: string = person.name;
+
     const prefix = `ppl/${pplId}/`;
-
-    // Performance metrics
-    const metrics = {
-      search_ms: 0,
-      extraction_ms: 0,
-      llm_ms: 0,
-      storage_ms: 0,
-      db_ms: 0
-    };
-
-    // Process all terms in parallel
-    const termResults = await Promise.all(
-      terms.map(rawTerm => processTermWithBudget(rawTerm, pplId, fullName, prefix, startTime))
-    );
-
-    // Merge results from all terms
     const stored: Array<{ term: string; domain: string; url: string; storageKey: string; length: number }> = [];
     const skipped: Array<{ term: string; domain?: string; reason: string }> = [];
     const createdWebIds: number[] = [];
     const llmVerdicts: any[] = [];
-    const allToInsert: Array<{ path: string; owner_id: number; link: string; text: string; domain: string; url: string; slug: string }> = [];
 
-    for (const result of termResults) {
-      stored.push(...result.stored);
-      skipped.push(...result.skipped);
-      createdWebIds.push(...result.createdWebIds);
-      llmVerdicts.push(...result.llmVerdicts);
-      allToInsert.push(...result.toInsert);
-    }
+    // For each term
+    for (const rawTerm of terms) {
+      if (!budgetOk()) break;
+      const slug = slugifyTerm(rawTerm);
 
-    // Batch insert all web_content records
-    if (allToInsert.length > 0 && budgetOk()) {
-      const dbStart = Date.now();
-      const insertItems = allToInsert.map(item => ({
-        path: "",
-        owner_id: item.owner_id,
-        is_ppl: true,
-        link: item.link,
-        used: false
-      }));
-      
+      // Search (agenda categories use simple "policy" suffix, others use policy-biased variants)
+      let urls: string[] = [];
       try {
-        const webIds = await batchInsertWebContent(insertItems.map(i => ({ path: i.path, owner_id: i.owner_id, link: i.link })));
-        metrics.db_ms = Date.now() - dbStart;
-        
-        // Now store content and update paths
-        const storageStart = Date.now();
-        const storageTasks = allToInsert.map((item, idx) => async () => {
-          if (!budgetOk()) return null;
-          try {
-            const wcId = webIds[idx];
-            if (!wcId) return null;
-            
-            const label = bareDomainLabelFromUrl(item.url);
-            const parts = item.text.length > PART_LEN ? splitIntoParts(item.text, PART_LEN) : [item.text];
-            
-            // Store parts in parallel
-            const keyPrefix = `${prefix}${item.slug}.${wcId}.${label}`;
-            const storedParts = await storePartsConcurrent(parts, keyPrefix);
-            
-            // Update path on first part
-            if (storedParts.length > 0) {
-              const firstKey = storedParts[0].key;
-              const { error: updErr } = await supabase.from("web_content").update({ path: firstKey }).eq("id", wcId);
-              if (updErr) console.warn("web_content path update failed:", wcId, updErr);
-              
-              // Add to stored array
-              for (let i = 0; i < storedParts.length; i++) {
-                const part = parts[i];
-                stored.push({
-                  term: item.slug,
-                  domain: item.domain,
-                  url: item.url,
-                  storageKey: storedParts[i].key,
-                  length: part.length
-                });
-              }
-              
-              createdWebIds.push(wcId);
-            }
-            
-            return true;
-          } catch (e) {
-            console.warn("storage failed:", item.url, e);
-            skipped.push({ term: item.slug, domain: item.domain, reason: "storage failed" });
-            return null;
-          }
-        });
-        
-        await runPool(STORAGE_POOL_LIMIT, storageTasks);
-        metrics.storage_ms = Date.now() - storageStart;
+        if (isAgendaCategory(rawTerm)) {
+          urls = await tavilySearchAgenda(fullName, rawTerm);
+        } else {
+          urls = await tavilySearchPolicyBiased(fullName, rawTerm);
+        }
       } catch (e) {
-        console.error("batch insert failed:", e);
-        for (const item of allToInsert) {
-          skipped.push({ term: item.slug, domain: item.domain, reason: "db_insert_failed" });
+        skipped.push({ term: slug, reason: `search failed: ${String(e)}` });
+        continue;
+      }
+      if (!urls.length) {
+        skipped.push({ term: slug, reason: "no eligible results for allowed domains" });
+        continue;
+      }
+
+      // Dedupe + rank
+      const seenUrls = new Set<string>();
+      const deduped = urls.filter((u) => (seenUrls.has(u) ? false : (seenUrls.add(u), true)));
+      const ranked = rankUrlsByFreshness(deduped);
+
+      // Categorize: blocked, allowed, unknown
+      const categorized: Array<{ url: string; domain: string; category: "allowed" | "unknown" }> = [];
+      
+      for (const u of ranked) {
+        // Skip blocked
+        if (isBlockedDomain(u)) continue;
+        
+        const d = matchAllowedDomain(u);
+        if (d) {
+          categorized.push({ url: u, domain: d, category: "allowed" });
+        } else {
+          const host = (() => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return "unknown"; } })();
+          categorized.push({ url: u, domain: host, category: "unknown" });
         }
       }
+
+      // Selection: prioritize allowed domains, then unknowns
+      const selected: Array<{ domain: string; url: string; category: "allowed" | "unknown" }> = [];
+      const usedDomains = new Set<string>();
+      
+      // First add allowed domains (diversify)
+      for (const item of categorized.filter(x => x.category === "allowed")) {
+        if (!usedDomains.has(item.domain)) {
+          selected.push(item);
+          usedDomains.add(item.domain);
+          if (selected.length >= PER_TERM_TARGET) break;
+        }
+      }
+      
+      // Then fill with unknowns
+      if (selected.length < PER_TERM_TARGET) {
+        for (const item of categorized.filter(x => x.category === "unknown")) {
+          selected.push(item);
+          if (selected.length >= PER_TERM_TARGET) break;
+        }
+      }
+      
+      // Finally fill remaining with more from allowed
+      if (selected.length < PER_TERM_TARGET) {
+        for (const item of categorized.filter(x => x.category === "allowed")) {
+          if (selected.some(s => s.url === item.url)) continue;
+          selected.push(item);
+          if (selected.length >= PER_TERM_TARGET) break;
+        }
+      }
+      
+      if (!selected.length) {
+        skipped.push({ term: slug, reason: "no post-filtered results" });
+        continue;
+      }
+
+      // Build limited concurrency tasks for extraction + storage
+      const nowIsoStr = new Date().toISOString();
+      const tasks = selected.map(({ domain, url, category }) => async () => {
+        if (!budgetOk()) return null as any;
+        try {
+          const text = await tavilyExtractSafe(url);
+          if (!text) {
+            skipped.push({ term: slug, domain, reason: "extract empty" });
+            return null as any;
+          }
+
+          // If allowed, pass through. If unknown, run LLM judge
+          if (category === "unknown") {
+            const snippet = text.slice(0, 4000);
+            const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return domain; } })();
+            const verdict = await _mistralJudgeSmall({
+              meta: { url, host, title: undefined, detected_date: null, lang: null },
+              snippet,
+              person: fullName,
+              topic: rawTerm,
+              nowIso: nowIsoStr
+            });
+            
+            if (!verdict) {
+              llmVerdicts.push({ url, host, status: "llm_error" });
+              skipped.push({ term: slug, domain, reason: "llm_error" });
+              return null as any;
+            }
+            
+            const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
+            const excluded = verdict.content_flags.press_release || 
+                            verdict.content_flags.news_clip_or_blog_rollup || 
+                            verdict.content_flags.opinion_or_editorial;
+            
+            let rejectReason = "";
+            
+            // Policy checks
+            if (!verdict.recency_ok) {
+              rejectReason = "stale (>12 months)";
+            } else if (excluded) {
+              const flags = [];
+              if (verdict.content_flags.press_release) flags.push("press_release");
+              if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
+              if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
+              rejectReason = `excluded_content: ${flags.join(", ")}`;
+            } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
+              rejectReason = "affiliation_fail";
+            } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
+              rejectReason = `partisan (${verdict.institution})`;
+            } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
+              rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
+            }
+            
+            if (rejectReason) {
+              llmVerdicts.push({
+                url,
+                host,
+                status: "rejected",
+                reason: rejectReason,
+                verdict: verdict.verdict,
+                score: verdict.score,
+                institution: verdict.institution,
+                partisanship: verdict.partisanship,
+                recency_ok: verdict.recency_ok,
+                content_flags: verdict.content_flags,
+                llm_reasons: verdict.reasons
+              });
+              skipped.push({ term: slug, domain, reason: `llm_rejected: ${rejectReason}` });
+              return null as any;
+            }
+            
+            llmVerdicts.push({
+              url,
+              host,
+              status: "accepted",
+              score: verdict.score,
+              institution: verdict.institution
+            });
+          }
+
+          const label = bareDomainLabelFromUrl(url);
+          const parts = text.length > PART_LEN ? splitIntoParts(text, PART_LEN) : [text];
+
+          // insert web_content (unused/false so later steps can mark used)
+          const { data: ins, error: insErr } = await supabase
+            .from("web_content")
+            .insert({ path: "", owner_id: pplId, is_ppl: true, link: url, used: false })
+            .select("id")
+            .single();
+          if (insErr || !ins) throw insErr || new Error("web_content insert failed");
+          const wcId = ins.id as number;
+          createdWebIds.push(wcId);
+
+          // Store parts
+          for (let i = 0; i < parts.length; i++) {
+            if (!budgetOk()) break;
+            const partSuffix = parts.length > 1 ? `.${i + 1}` : "";
+            const key = `${prefix}${slug}.${wcId}.${label}${partSuffix}.txt`;
+            await putToStorage(key, parts[i]);
+
+            // update path on first part
+            if (i === 0) {
+              const { error: updErr } = await supabase.from("web_content").update({ path: key }).eq("id", wcId);
+              if (updErr) console.warn("web_content path update failed:", wcId, updErr);
+            }
+
+            stored.push({ term: slug, domain, url, storageKey: key, length: parts[i].length });
+          }
+
+          return true as any;
+        } catch (e) {
+          console.warn("extract/store skipped:", slug, domain, url, e);
+          skipped.push({ term: slug, domain, reason: "extract/store failed" });
+          return null as any;
+        }
+      });
+
+      await runPool(POOL_LIMIT, tasks);
     }
 
     // Soft-fail: return 200 even if nothing stored (with stop_reason)
@@ -1219,10 +923,8 @@ Deno.serve(async (req: Request) => {
       llm_verdicts: llmVerdicts,
       stop_reason: budgetOk() ? "completed_within_budget" : "budget_exhausted",
       time_ms: Date.now() - startTime,
-      performance_metrics: metrics,
-      optimization_version: "v2.0",
       notes:
-        "Round-2 Optimized: Parallel term processing, batch LLM verdicts, parallel extraction with race pattern, domain cache, batch DB operations. LLM enforces recency≤12mo, excludes press releases/opinions/news clips, blocks partisan content. Score threshold ≥7.0."
+        "Round-2: Open Tavily search; post-filtered (blocked→reject, allowed→accept, unknown→LLM judge). LLM enforces recency≤12mo, excludes press releases/opinions/news clips, blocks partisan content. Score threshold ≥7.0. Policy-biased queries; freshness ranking enabled."
     }), { headers: { "Content-Type": "application/json" } });
 
   } catch (err: any) {

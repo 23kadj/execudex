@@ -23,7 +23,8 @@ import * as Device from 'expo-device';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, StyleSheet } from 'react-native';
 import { AuthProvider } from '../components/AuthProvider';
 import { ErrorOverlayManager } from '../components/ErrorOverlay';
 import { initDebugFlags } from '../utils/debugFlags';
@@ -65,21 +66,58 @@ initGlobalErrorHandler();
 })();
 
 export default Sentry.wrap(function Layout() {
-  // Hide splash screen when component mounts
+  const [appIsReady, setAppIsReady] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
-    SplashScreen.hideAsync();
+    // Wait a brief moment to ensure the app is fully mounted and ready
+    // This prevents the white flash between native splash and app content
+    const prepare = async () => {
+      try {
+        // Small delay to ensure smooth transition
+        await new Promise(resolve => setTimeout(resolve, 100));
+        setAppIsReady(true);
+        // Hide splash screen after app is ready
+        await SplashScreen.hideAsync();
+        
+        // Start fade-in animation after splash screen is hidden
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 300, // Quick fade-in for smooth transition
+          useNativeDriver: true,
+        }).start();
+      } catch (e) {
+        console.warn('Error preparing app:', e);
+        setAppIsReady(true);
+        await SplashScreen.hideAsync();
+        // Start fade-in even on error
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }).start();
+      }
+    };
+
+    prepare();
   }, []);
 
-  // Stack layout wrapped in AuthProvider for auth context
+  if (!appIsReady) {
+    return null; // Keep native splash visible
+  }
+
+  // Stack layout wrapped in AuthProvider for auth context with fade-in animation
   return (
-    <AuthProvider>
-      <ErrorOverlayManager />
-      <Stack
-        screenOptions={{
-          animation: 'slide_from_right',
-          headerShown: false,
-        }}
-      >
+    <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+      <AuthProvider>
+        <ErrorOverlayManager />
+        <Stack
+          screenOptions={{
+            animation: 'slide_from_right',
+            headerShown: false,
+            contentStyle: { backgroundColor: '#000000' },
+          }}
+        >
         <Stack.Screen 
           name="index" 
           options={{
@@ -110,6 +148,14 @@ export default Sentry.wrap(function Layout() {
         <Stack.Screen name="z2" />
         <Stack.Screen name="z3" />
       </Stack>
-    </AuthProvider>
+      </AuthProvider>
+    </Animated.View>
   );
+});
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
 });
