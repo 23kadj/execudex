@@ -33,12 +33,22 @@ export default function Profile() {
               // 1. Sign out from Supabase
               await getSupabaseClient().auth.signOut();
               
-              // 2. FORCE CLEAR all local storage (The fix from Account Deletion logic)
-              // This ensures InitialRouteHandler finds NO session data
+              // 2. Clear all local storage (Hygiene + Safety)
               await AsyncStorage.clear();
               
-              // 3. Navigate to onboarding with logout flag
-              router.replace({ pathname: '/', params: { logout: 'true' } });
+              // 3. ESSENTIAL: Wait for session to be strictly null
+              // This loop acts as a delay to let React Context update before we navigate
+              let attempts = 0;
+              while (attempts < 10) {
+                const { data: { session } } = await getSupabaseClient().auth.getSession();
+                if (!session) break; // Session is gone, safe to proceed
+                
+                await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
+                attempts++;
+              }
+              
+              // 4. Navigate to sign in page with parameter to trigger left slide animation
+              router.replace({ pathname: '/signin', params: { fromSignOut: 'true' } });
             } catch (e: any) {
               Alert.alert('Error', e?.message ?? 'Failed to sign out.');
             }

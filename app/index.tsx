@@ -371,10 +371,10 @@ const reasonOptions = [
 const alignmentOptions = [
   'Democrat',
   'Republican',
-  'Authoritarian Left',
-  'Authoritarian Right',
-  'Libertarian Left',
-  'Libertarian Right',
+  'Centrist',
+  'Left Leaning',
+  'Right Leaning',
+  'Other',
 ];
 const alignmentScaleAnims = useRef(
   alignmentOptions.map(() => new Animated.Value(1))
@@ -1312,9 +1312,9 @@ if (step === 'unsatisfiedReason') {
               }).start();
             }}
             style={[
-              styles.choice5,
+              styles.choice6,
+              { transform: [{ scale: anim }], paddingLeft: 24 },
               reason === opt && styles.choiceSelected,
-              { transform: [{ scale: anim }] },
             ]}
           >
             <Text
@@ -1411,7 +1411,7 @@ if (step === 'unsatisfiedReason') {
             }}
             style={[
               styles.choice6,
-              { transform: [{ scale: anim }] },
+              { transform: [{ scale: anim }], paddingLeft: 24 },
               alignment === opt && styles.choiceSelected,
             ]}
           >

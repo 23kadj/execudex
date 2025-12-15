@@ -1,11 +1,12 @@
 import { Alert } from 'react-native';
+import Constants from 'expo-constants';
 import {
     SUBSCRIPTION_PRODUCTS,
     type PurchaseError,
     type SubscriptionProductId,
     type SubscriptionUpdateData
 } from '../types/iapTypes';
-import { isIAPAvailable } from '../utils/iapAvailability';
+import { isIAPAvailable, markIAPModuleLoaded } from '../utils/iapAvailability';
 import { getSupabaseClient } from '../utils/supabase';
 
 // Lazy-load IAP module to avoid top-level require() that can crash release builds
@@ -25,6 +26,7 @@ type SubscriptionPurchase = any;
 /**
  * Lazy-load IAP module only when needed
  * This prevents crashes in release builds from top-level require()
+ * Now tries to load the module first, only failing if the actual load fails
  */
 function lazyLoadIAPModule() {
   if (initConnection !== undefined) {
@@ -32,7 +34,10 @@ function lazyLoadIAPModule() {
     return;
   }
 
-  if (!isIAPAvailable()) {
+  // Check if we're in Expo Go first (definitely won't work)
+  const isExpoGo = Constants.executionEnvironment === 'storeClient';
+  if (isExpoGo) {
+    console.log('ℹ️ Expo Go detected - IAP not available');
     RNIap = null;
     endConnection = null;
     finishTransaction = null;
@@ -41,9 +46,11 @@ function lazyLoadIAPModule() {
     initConnection = null;
     purchaseErrorListener = null;
     purchaseUpdatedListener = null;
+    markIAPModuleLoaded(false);
     return;
   }
 
+  // For standalone builds (including TestFlight), try to actually load the module
   try {
     const iapModule = require('react-native-iap');
     RNIap = iapModule.default;
@@ -54,8 +61,10 @@ function lazyLoadIAPModule() {
     initConnection = iapModule.initConnection;
     purchaseErrorListener = iapModule.purchaseErrorListener;
     purchaseUpdatedListener = iapModule.purchaseUpdatedListener;
+    markIAPModuleLoaded(true);
+    console.log('✅ IAP module loaded successfully');
   } catch (error) {
-    console.warn('⚠️ IAP module not available (likely Expo Go):', error);
+    console.warn('⚠️ IAP module not available:', error);
     RNIap = null;
     endConnection = null;
     finishTransaction = null;
@@ -64,6 +73,7 @@ function lazyLoadIAPModule() {
     initConnection = null;
     purchaseErrorListener = null;
     purchaseUpdatedListener = null;
+    markIAPModuleLoaded(false);
   }
 }
 
@@ -137,8 +147,15 @@ class IAPService {
     // Lazy-load IAP module only when this function is called
     lazyLoadIAPModule();
     
-    if (!isIAPAvailable() || !RNIap) {
-      throw new Error('In-app purchases are not available on this build. Please use a TestFlight/App Store build.');
+    // Check if the module was actually loaded - this is the definitive check
+    if (!RNIap || !initConnection) {
+      // Check if we're in Expo Go for a more specific error message
+      const isExpoGo = Constants.executionEnvironment === 'storeClient';
+      if (isExpoGo) {
+        throw new Error('In-app purchases are not available in Expo Go. Please use a TestFlight or App Store build.');
+      } else {
+        throw new Error('In-app purchases module failed to load. Please ensure you are using a TestFlight or App Store build with react-native-iap properly configured.');
+      }
     }
 
     try {

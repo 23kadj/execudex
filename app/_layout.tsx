@@ -247,7 +247,16 @@ export default Sentry.wrap(function Layout() {
               gestureEnabled: false,
             }}
           /> {/* Onboarding screen */}
-          <Stack.Screen name="signin" />
+          <Stack.Screen 
+            name="signin" 
+            options={({ route }) => {
+              const params = route.params as { fromSignOut?: string } | undefined;
+              // Slide from left when coming from sign out, otherwise default (right)
+              return {
+                animation: params?.fromSignOut === 'true' ? 'slide_from_left' : 'slide_from_right',
+              };
+            }}
+          />
           <Stack.Screen name="auth/callback" />
           <Stack.Screen name="(tabs)" options={{ gestureEnabled: false }} />
           <Stack.Screen name="index1" />
