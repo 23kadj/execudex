@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Session, User } from '@supabase/supabase-js';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { logStartup } from '../utils/startupLogger';
@@ -238,8 +239,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
+      // Immediately clear local auth state to avoid stale session during navigation
+      setSession(null);
+      setUser(null);
+
+      // Then sign out from Supabase (clears persisted session)
       const { error } = await getSupabaseClient().auth.signOut();
       if (error) throw error;
+
+      // Clear any locally cached data so onboarding starts fresh (matches deletion flow)
+      try {
+        await AsyncStorage.clear();
+      } catch (storageError) {
+        console.warn('[AuthProvider] Failed to clear AsyncStorage on sign out:', storageError);
+      }
     } catch (error) {
       console.error('Error signing out:', error);
       throw error;

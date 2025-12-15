@@ -35,8 +35,8 @@ export default function AccountDeletion() {
       setIsDeleting(true);
       await deleteAccountOnServer();
       
-      // Navigate to sign-in screen after successful deletion
-      router.replace('/signin');
+      // Send the user to onboarding as a fresh app state; replace prevents back navigation
+      router.replace({ pathname: '/', params: { logout: 'true' } });
     } catch (e: any) {
       Alert.alert("Delete failed", e?.message ?? "Please try again.");
     } finally {

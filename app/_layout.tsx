@@ -20,7 +20,7 @@ Sentry.init({
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import { Stack, usePathname, useRouter } from 'expo-router';
+import { Stack, useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import React, { useEffect, useRef, useState } from 'react';
@@ -72,19 +72,55 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
   const { session, loading: authLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const params = useGlobalSearchParams();
   const [hasCheckedRoute, setHasCheckedRoute] = useState(false);
   const hasRedirectedRef = useRef(false);
   const onRouteCheckedRef = useRef(onRouteChecked);
   const hasCalledCallbackRef = useRef(false);
+  const lastSessionIdRef = useRef<string | null>(null);
 
   // Update ref when callback changes
   useEffect(() => {
     onRouteCheckedRef.current = onRouteChecked;
   }, [onRouteChecked]);
 
+  // Reset route check flags whenever the auth session changes (login or logout)
+  useEffect(() => {
+    const currentSessionId = session?.user?.id ?? null;
+    if (currentSessionId !== lastSessionIdRef.current) {
+      lastSessionIdRef.current = currentSessionId;
+      setHasCheckedRoute(false);
+      hasRedirectedRef.current = false;
+    }
+  }, [session?.user?.id]);
+
+  // Helper to ensure we notify once when route check is done
+  const markRouteChecked = () => {
+    setHasCheckedRoute(true);
+    if (!hasCalledCallbackRef.current) {
+      hasCalledCallbackRef.current = true;
+      onRouteCheckedRef.current();
+    }
+  };
+
   useEffect(() => {
     // Wait for auth to finish loading before checking route
     if (authLoading) {
+      return;
+    }
+
+    const isLogoutFlow = params.logout === 'true';
+
+    // If we're explicitly in logout flow, skip any redirects and just mark as checked
+    if (isLogoutFlow) {
+      // Also ensure any lingering session is cleared to prevent bounce-back
+      try {
+        const supabase = getSupabaseClient();
+        supabase.auth.signOut().catch(() => {});
+      } catch (e) {
+        // ignore
+      }
+      markRouteChecked();
       return;
     }
 
@@ -97,6 +133,14 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
       try {
         // Check if user is logged in
         const hasSession = !!session?.user?.id;
+
+        // If user is logged out but somehow on a tabs route, force them back to onboarding
+        if (!hasSession && pathname?.startsWith('/(tabs)')) {
+          console.log('[InitialRouteHandler] Logged out on tabs route - redirecting to onboarding');
+          router.replace('/?logout=true');
+          markRouteChecked();
+          return;
+        }
 
         if (hasSession) {
           // Check if user has completed onboarding (has a plan)
@@ -139,23 +183,15 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
           console.log('[InitialRouteHandler] No session - staying on onboarding');
         }
 
-        setHasCheckedRoute(true);
-        if (!hasCalledCallbackRef.current) {
-          hasCalledCallbackRef.current = true;
-          onRouteCheckedRef.current();
-        }
+        markRouteChecked();
       } catch (error) {
         console.error('[InitialRouteHandler] Error in checkInitialRoute:', error);
-        setHasCheckedRoute(true);
-        if (!hasCalledCallbackRef.current) {
-          hasCalledCallbackRef.current = true;
-          onRouteCheckedRef.current();
-        }
+        markRouteChecked();
       }
     };
 
     checkInitialRoute();
-  }, [authLoading, session, router, pathname, hasCheckedRoute]);
+  }, [authLoading, session, router, pathname, hasCheckedRoute, params.logout]);
 
   // Don't render children until we've checked the route (prevents flash)
   // But only wait if we're on the index route and haven't redirected yet
@@ -199,21 +235,21 @@ export default Sentry.wrap(function Layout() {
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
       <AuthProvider>
         <InitialRouteHandler onRouteChecked={() => {
-          // Hide splash screen and start fade-in after route is checked
-          SplashScreen.hideAsync().then(() => {
-            Animated.timing(fadeAnim, {
-              toValue: 1,
-              duration: 300,
-              useNativeDriver: true,
-            }).start();
-          }).catch((e) => {
-            console.warn('Error hiding splash screen:', e);
-            Animated.timing(fadeAnim, {
-              toValue: 1,
-              duration: 300,
-              useNativeDriver: true,
-            }).start();
-          });
+          // Start fade-in animation first so it overlaps with splash screen
+          // This prevents the black gap between splash and app content
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }).start();
+          
+          // Hide splash screen after fade-in has partially started
+          // This ensures app content is visible when splash disappears, eliminating black gap
+          setTimeout(() => {
+            SplashScreen.hideAsync().catch((e) => {
+              console.warn('Error hiding splash screen:', e);
+            });
+          }, 150); // Hide splash when app is ~50% visible for smooth transition
         }}>
           <ErrorOverlayManager />
           <Stack
@@ -226,7 +262,9 @@ export default Sentry.wrap(function Layout() {
           <Stack.Screen 
             name="index" 
             options={{
-              animation: 'slide_from_left', // Backward animation for onboarding
+              // Onboarding should slide in from the left and block back-swipe
+              animation: 'slide_from_left',
+              gestureEnabled: false,
             }}
           /> {/* Onboarding screen */}
           <Stack.Screen name="signin" />

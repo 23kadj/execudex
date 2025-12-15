@@ -37,12 +37,27 @@ export default function Rankings() {
   // Load persisted data when component mounts and when screen comes into focus
   useFocusEffect(
     useCallback(() => {
+      let isCancelled = false;
+      
       const loadStoredData = async () => {
         try {
           // Lazy-load AsyncStorage
           const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
+          
+          // Validate politicianIndex before proceeding
+          if (!politicianIndex || isNaN(parseInt(politicianIndex))) {
+            if (!isCancelled) {
+              setSubmittedRanking('No Data');
+              setIsSubmitted(false);
+              setFilledStars(0);
+            }
+            return;
+          }
+          
           const storedRanking = await AsyncStorage.getItem(STORAGE_KEYS.SUBMITTED_RANKING);
           const storedStars = await AsyncStorage.getItem(STORAGE_KEYS.SUBMITTED_STARS);
+          
+          if (isCancelled) return;
           
           if (storedRanking && storedRanking !== 'No Data') {
             setSubmittedRanking(storedRanking);
@@ -50,101 +65,192 @@ export default function Rankings() {
           }
           
           if (storedStars) {
-            const starsCount = parseInt(storedStars);
-            setFilledStars(starsCount);
+            const starsCount = parseInt(storedStars, 10);
+            if (!isNaN(starsCount) && starsCount >= 0 && starsCount <= 5) {
+              setFilledStars(starsCount);
+            }
           }
 
           // Load user's submitted stars from database if authenticated
-          if (user?.id && politicianIndex) {
+          if (user?.id && politicianIndex && !isCancelled) {
             try {
+              const parsedIndex = parseInt(politicianIndex, 10);
+              if (isNaN(parsedIndex) || parsedIndex <= 0) {
+                if (!isCancelled) {
+                  setSubmittedRanking('No Data');
+                  setIsSubmitted(false);
+                  setFilledStars(0);
+                }
+                return;
+              }
+              
               const supabase = getSupabaseClient();
               const { data: userScore, error } = await supabase
                 .from('ppl_scores')
                 .select('score')
                 .eq('user_id', user.id)
-                .eq('index_id', parseInt(politicianIndex))
-                .single();
+                .eq('index_id', parsedIndex)
+                .maybeSingle();
 
-              if (!error && userScore) {
-                setFilledStars(userScore.score);
-                setSubmittedRanking(userScore.score.toString());
-                setIsSubmitted(true);
+              if (isCancelled) return;
+
+              if (!error && userScore && userScore.score != null) {
+                const score = Number(userScore.score);
+                if (!isNaN(score) && score >= 0 && score <= 5) {
+                  setFilledStars(score);
+                  setSubmittedRanking(score.toString());
+                  setIsSubmitted(true);
+                } else {
+                  setSubmittedRanking('No Data');
+                  setIsSubmitted(false);
+                  setFilledStars(0);
+                }
               } else {
                 // No matching row found - reset to default values
+                if (!isCancelled) {
+                  setSubmittedRanking('No Data');
+                  setIsSubmitted(false);
+                  setFilledStars(0);
+                }
+              }
+            } catch (error) {
+              if (!isCancelled) {
+                console.error('Error loading user score from database:', error);
+                // Reset to default values on error
                 setSubmittedRanking('No Data');
                 setIsSubmitted(false);
                 setFilledStars(0);
               }
-            } catch (error) {
-              console.error('Error loading user score from database:', error);
-              // Reset to default values on error
+            }
+          } else {
+            // User not authenticated or no politician index - reset to default values
+            if (!isCancelled) {
               setSubmittedRanking('No Data');
               setIsSubmitted(false);
               setFilledStars(0);
             }
-          } else {
-            // User not authenticated or no politician index - reset to default values
-            setSubmittedRanking('No Data');
-            setIsSubmitted(false);
-            setFilledStars(0);
           }
         } catch (error) {
-          console.error('Failed to load ranking data:', error);
+          if (!isCancelled) {
+            console.error('Failed to load ranking data:', error);
+          }
         }
       };
 
       loadStoredData();
+      
+      // Cleanup function
+      return () => {
+        isCancelled = true;
+      };
     }, [user, politicianIndex])
   );
 
   // Fetch average ranking when component mounts or politician index changes
   useEffect(() => {
+    let isCancelled = false;
+    
     if (politicianIndex) {
-      fetchAverageRanking();
+      fetchAverageRanking().catch(error => {
+        if (!isCancelled) {
+          console.error('Error in fetchAverageRanking:', error);
+        }
+      });
+    } else {
+      if (!isCancelled) {
+        setAverageRanking('No Data');
+      }
     }
+    
+    return () => {
+      isCancelled = true;
+    };
   }, [politicianIndex]);
 
   // Refresh user's ranking when user or politician index changes
   useEffect(() => {
+    let isCancelled = false;
+    
     const refreshUserRanking = async () => {
-      if (user?.id && politicianIndex) {
-        try {
-          const supabase = getSupabaseClient();
-          const { data: userScore, error } = await supabase
-            .from('ppl_scores')
-            .select('score')
-            .eq('user_id', user.id)
-            .eq('index_id', parseInt(politicianIndex))
-            .single();
-
-          if (!error && userScore) {
-            setSubmittedRanking(userScore.score.toString());
-            setIsSubmitted(true);
-            setFilledStars(userScore.score);
-          } else {
+      if (!user?.id || !politicianIndex) {
+        if (!isCancelled) {
+          setSubmittedRanking('No Data');
+          setIsSubmitted(false);
+          setFilledStars(0);
+        }
+        return;
+      }
+      
+      try {
+        const parsedIndex = parseInt(politicianIndex, 10);
+        if (isNaN(parsedIndex) || parsedIndex <= 0) {
+          if (!isCancelled) {
             setSubmittedRanking('No Data');
             setIsSubmitted(false);
             setFilledStars(0);
           }
-        } catch (error) {
+          return;
+        }
+        
+        const supabase = getSupabaseClient();
+        const { data: userScore, error } = await supabase
+          .from('ppl_scores')
+          .select('score')
+          .eq('user_id', user.id)
+          .eq('index_id', parsedIndex)
+          .maybeSingle();
+
+        if (isCancelled) return;
+
+        if (!error && userScore && userScore.score != null) {
+          const score = Number(userScore.score);
+          if (!isNaN(score) && score >= 0 && score <= 5) {
+            setSubmittedRanking(score.toString());
+            setIsSubmitted(true);
+            setFilledStars(score);
+          } else {
+            if (!isCancelled) {
+              setSubmittedRanking('No Data');
+              setIsSubmitted(false);
+              setFilledStars(0);
+            }
+          }
+        } else {
+          if (!isCancelled) {
+            setSubmittedRanking('No Data');
+            setIsSubmitted(false);
+            setFilledStars(0);
+          }
+        }
+      } catch (error) {
+        if (!isCancelled) {
           console.error('Error refreshing user ranking:', error);
           setSubmittedRanking('No Data');
           setIsSubmitted(false);
           setFilledStars(0);
         }
-      } else {
-        setSubmittedRanking('No Data');
-        setIsSubmitted(false);
-        setFilledStars(0);
       }
     };
 
     refreshUserRanking();
+    
+    return () => {
+      isCancelled = true;
+    };
   }, [user, politicianIndex]);
 
   // Function to fetch and calculate average ranking
   const fetchAverageRanking = async () => {
-    if (!politicianIndex) return;
+    if (!politicianIndex) {
+      setAverageRanking('No Data');
+      return;
+    }
+    
+    const parsedIndex = parseInt(politicianIndex, 10);
+    if (isNaN(parsedIndex) || parsedIndex <= 0) {
+      setAverageRanking('No Data');
+      return;
+    }
     
     try {
       // Query all scores for the current politician
@@ -152,7 +258,7 @@ export default function Rankings() {
       const { data: scores, error } = await supabase
         .from('ppl_scores')
         .select('score')
-        .eq('index_id', parseInt(politicianIndex));
+        .eq('index_id', parsedIndex);
       
       if (error) {
         console.error('Error fetching scores:', error);
@@ -161,13 +267,21 @@ export default function Rankings() {
       }
       
       if (scores && scores.length > 0) {
-        // Calculate average
-        const totalScore = scores.reduce((sum, item) => sum + item.score, 0);
-        const average = totalScore / scores.length;
-        setAverageRanking(average.toFixed(1));
+        // Calculate average with validation
+        const validScores = scores
+          .map(item => Number(item.score))
+          .filter(score => !isNaN(score) && score >= 0 && score <= 5);
         
-        // Update ppl_profiles with the new average
-        await updateProfileScore(parseInt(politicianIndex), average);
+        if (validScores.length > 0) {
+          const totalScore = validScores.reduce((sum, score) => sum + score, 0);
+          const average = totalScore / validScores.length;
+          setAverageRanking(average.toFixed(1));
+          
+          // Update ppl_profiles with the new average
+          await updateProfileScore(parsedIndex, average);
+        } else {
+          setAverageRanking('No Data');
+        }
       } else {
         setAverageRanking('No Data');
       }

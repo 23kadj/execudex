@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { useGlobalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { safeNativeCall } from '../../utils/nativeCallDebugger';
@@ -35,7 +35,7 @@ export default function SeeMore({
   pollLink = ''
 }: SeeMoreProps) {
   const router = useRouter();
-  const params = useGlobalSearchParams();
+  const params = useLocalSearchParams();
   
   // Use passed params directly (reverted to previous system - no fetching)
   const politicianName = params.name as string || name || 'No Data Available';

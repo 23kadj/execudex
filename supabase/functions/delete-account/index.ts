@@ -16,6 +16,7 @@ Deno.serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!; // keep secret
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -24,7 +25,12 @@ Deno.serve(async (req) => {
     const accessToken = authHeader.replace("Bearer ", "");
 
     // Client for reading caller's session
-    const userClient = createClient(SUPABASE_URL, accessToken);
+    // Use anon key + bearer token so supabase-js sends the caller's session
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    });
     const { data: userData, error: userErr } = await userClient.auth.getUser();
     if (userErr || !userData?.user) {
       return new Response("Unauthorized", { status: 401, headers: cors });

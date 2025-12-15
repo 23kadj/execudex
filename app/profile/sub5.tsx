@@ -181,26 +181,50 @@ export default function Sub5() {
   // Check bookmark status when component mounts
   useEffect(() => {
     const checkBookmarkStatus = async () => {
-      if (cardId) {
-        try {
-          // For now, check if any bookmark exists (without user restriction)
-          const supabase = getSupabaseClient();
-          const { data: bookmarkData, error: bookmarkError } = await supabase
-            .from('bookmarks')
-            .select('*')
-            .eq('owner_id', cardId)
-            .eq('bookmark_type', 'card')
-            .maybeSingle();
-          
-          // Handle errors gracefully - PGRST116 = no rows (expected)
-          if (!bookmarkError && bookmarkData) {
-            setIsBookmarked(true);
-          } else if (bookmarkError && bookmarkError.code !== 'PGRST116') {
-            console.error('[SUB5] Bookmark query error:', bookmarkError);
+      if (!cardId) {
+        console.log('[SUB5] Skipping bookmark check - no cardId');
+        return;
+      }
+      
+      console.log('[SUB5] Checkpoint: Starting bookmark status check');
+      
+      try {
+        const result = await safeNativeCall(
+          'supabase',
+          'bookmarks.select',
+          { owner_id: cardId, bookmark_type: 'card' },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { data: bookmarkData, error: bookmarkError } = await supabase
+              .from('bookmarks')
+              .select('*')
+              .eq('owner_id', cardId)
+              .eq('bookmark_type', 'card')
+              .maybeSingle();
+            
+            // Handle errors gracefully - don't throw to prevent TurboModule crash
+            if (bookmarkError) {
+              // PGRST116 = no rows returned (expected, not an error)
+              if (bookmarkError.code === 'PGRST116') {
+                return null;
+              }
+              // For other errors, log but return null instead of throwing
+              console.error('[SUB5] Bookmark query error:', bookmarkError);
+              return null;
+            }
+            
+            return bookmarkData;
           }
-        } catch (error) {
-          console.error('Error checking bookmark status:', error);
+        );
+        
+        if (result) {
+          console.log('[SUB5] Bookmark found, setting isBookmarked=true');
+          setIsBookmarked(true);
+        } else {
+          console.log('[SUB5] No bookmark found');
         }
+      } catch (error) {
+        console.error('[SUB5] Error checking bookmark status:', error);
       }
     };
     
@@ -616,7 +640,12 @@ const BookmarkButton = ({ isBookmarked, setIsBookmarked, cardId }: {
   const { user } = useAuth();
   
   const handleBookmarkToggle = async () => {
-    if (!cardId) return;
+    if (!cardId) {
+      console.log('[SUB5] Bookmark toggle skipped - no cardId');
+      return;
+    }
+    
+    console.log('[SUB5] Checkpoint: Bookmark toggle', { currentState: isBookmarked });
     
     const newBookmarkState = !isBookmarked;
     setIsBookmarked(newBookmarkState);
@@ -624,6 +653,7 @@ const BookmarkButton = ({ isBookmarked, setIsBookmarked, cardId }: {
     try {
       if (newBookmarkState) {
         // Bookmarking - insert into database
+        console.log('[SUB5] Checkpoint: Inserting bookmark');
         const bookmarkData: any = {
           owner_id: cardId,
           bookmark_type: 'card'
@@ -634,33 +664,48 @@ const BookmarkButton = ({ isBookmarked, setIsBookmarked, cardId }: {
           bookmarkData.user_id = user.id;
         }
         
-        const supabase = getSupabaseClient();
-        const { error: insertError } = await supabase
-          .from('bookmarks')
-          .insert(bookmarkData);
+        await safeNativeCall(
+          'supabase',
+          'bookmarks.insert',
+          bookmarkData,
+          async () => {
+            const supabase = getSupabaseClient();
+            const { error: insertError } = await supabase
+              .from('bookmarks')
+              .insert(bookmarkData);
+            
+            if (insertError) {
+              throw insertError;
+            }
+          }
+        );
         
-        if (insertError) {
-          console.error('Error inserting bookmark:', insertError);
-          // Revert state if insert failed
-          setIsBookmarked(false);
-        }
+        console.log('[SUB5] Bookmark inserted successfully');
       } else {
         // Unbookmarking - delete from database
-        const supabase = getSupabaseClient();
-        const { error: deleteError } = await supabase
-          .from('bookmarks')
-          .delete()
-          .eq('owner_id', cardId)
-          .eq('bookmark_type', 'card');
+        console.log('[SUB5] Checkpoint: Deleting bookmark');
+        await safeNativeCall(
+          'supabase',
+          'bookmarks.delete',
+          { owner_id: cardId, bookmark_type: 'card' },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { error: deleteError } = await supabase
+              .from('bookmarks')
+              .delete()
+              .eq('owner_id', cardId)
+              .eq('bookmark_type', 'card');
+            
+            if (deleteError) {
+              throw deleteError;
+            }
+          }
+        );
         
-        if (deleteError) {
-          console.error('Error deleting bookmark:', deleteError);
-          // Revert state if delete failed
-          setIsBookmarked(true);
-        }
+        console.log('[SUB5] Bookmark deleted successfully');
       }
     } catch (error) {
-      console.error('Error handling bookmark:', error);
+      console.error('[SUB5] Error handling bookmark:', error);
       // Revert state on error
       setIsBookmarked(!newBookmarkState);
     }

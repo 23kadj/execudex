@@ -205,11 +205,32 @@ export default function Sub4() {
   
   const screenName = getScreenName(originalPage);
 
-  // Create one Animated.Value per row; recompute when dataset changes.
-  const scalesRef = useRef<Animated.Value[]>([]);
+  // Create stable Animated.Value map keyed by card ID to prevent memory leaks
+  const scalesRef = useRef<Map<number, Animated.Value>>(new Map());
+  
+  // Get or create animated value for a card ID
+  const getScale = useCallback((cardId: number) => {
+    if (!scalesRef.current.has(cardId)) {
+      scalesRef.current.set(cardId, new Animated.Value(1));
+    }
+    return scalesRef.current.get(cardId)!;
+  }, []);
+  
+  // Clean up animated values for cards that no longer exist
   useEffect(() => {
-    scalesRef.current = (cardData ?? []).map(() => new Animated.Value(1));
-  }, [cardData]);
+    const currentCardIds = new Set(filteredCardData.map(card => card.id));
+    const keysToDelete: number[] = [];
+    
+    scalesRef.current.forEach((_, cardId) => {
+      if (!currentCardIds.has(cardId)) {
+        keysToDelete.push(cardId);
+      }
+    });
+    
+    keysToDelete.forEach(cardId => {
+      scalesRef.current.delete(cardId);
+    });
+  }, [filteredCardData]);
 
   // Fetch profile tier from ppl_index
   useEffect(() => {
@@ -567,29 +588,29 @@ export default function Sub4() {
   };
 
   // Animation handlers for FlatList items
-  const onPressIn = (index: number) => {
-    const v = scalesRef.current[index];
+  const onPressIn = useCallback((cardId: number) => {
+    const v = getScale(cardId);
     if (!v) return;
     Haptics.selectionAsync();
     Animated.spring(v, { toValue: 0.95, friction: 6, useNativeDriver: true }).start();
-  };
+  }, [getScale]);
   
-  const onPressOut = (index: number) => {
-    const v = scalesRef.current[index];
+  const onPressOut = useCallback((cardId: number) => {
+    const v = getScale(cardId);
     if (!v) return;
     Animated.spring(v, { toValue: 1, friction: 6, useNativeDriver: true }).start();
-  };
+  }, [getScale]);
 
   // FlatList render item function
   const renderItem = ({ item: card, index }: { item: any; index: number }) => {
     const n = styleIndex(index); // 1..15 cycled
-    const scale = scalesRef.current[index] ?? new Animated.Value(1);
+    const scale = getScale(card.id);
 
     return (
       <AnimatedPressable
         key={card.id}
-        onPressIn={() => onPressIn(index)}
-        onPressOut={() => onPressOut(index)}
+        onPressIn={() => onPressIn(card.id)}
+        onPressOut={() => onPressOut(card.id)}
           onPress={async () => {
             const cardId = String(card.id || '');
             if (cardId) {

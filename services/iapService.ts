@@ -138,13 +138,35 @@ class IAPService {
     lazyLoadIAPModule();
     
     if (!isIAPAvailable() || !RNIap) {
-      return;
+      throw new Error('In-app purchases are not available on this build. Please use a TestFlight/App Store build.');
     }
 
     try {
       console.log('Starting purchase for product:', productId);
       
-      const result = await RNIap.requestSubscription({ sku: productId });
+      // Ensure initialization before requesting a subscription
+      if (!this.isInitialized && initConnection) {
+        await this.initialize();
+      }
+
+      if (!getSubscriptions) {
+        throw new Error('Unable to load subscription catalog. Please try again in a production build.');
+      }
+
+      // Fetch the specific product to verify it exists (helps surface App Store Connect config issues)
+      const products = await getSubscriptions({ skus: [productId] });
+      const product = products?.[0];
+      if (!product) {
+        throw new Error(`Product ${productId} is not available from the App Store. Verify it is "Ready to Submit" with metadata/localization.`);
+      }
+
+      // Use offer token if available (required for some subscription pricing setups)
+      const offerToken = product?.subscriptionOfferDetails?.[0]?.offerToken;
+      const requestPayload: any = offerToken
+        ? { sku: productId, subscriptionOffers: [{ sku: productId, offerToken }] }
+        : { sku: productId };
+
+      const result = await RNIap.requestSubscription(requestPayload);
       console.log('Purchase result:', result);
       
     } catch (error: any) {
