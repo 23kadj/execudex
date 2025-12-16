@@ -15,7 +15,7 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
   const router = useRouter();
   
   // State for profile data
-  const [tier, setTier] = useState<string>('');
+  const [tier, setTier] = useState<string>('base');
   const [officeType, setOfficeType] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   

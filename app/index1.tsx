@@ -14,6 +14,10 @@ import {
 
 // Dummy pages
 import { useLocalSearchParams } from 'expo-router';
+
+// #region agent log - module level imports
+fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index1.tsx:MODULE',message:'Index1 module loading',data:{Sentry:typeof Sentry,React:typeof React,Animated:typeof Animated},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F'})}).catch(()=>{});
+// #endregion
 import { useAuth } from '../components/AuthProvider';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { checkBookmarkStatus, toggleBookmark } from '../utils/bookmarkUtils';
@@ -116,10 +120,16 @@ let ValidatedSub2: React.ComponentType<any>;
 let ValidatedSub3: React.ComponentType<any>;
 
 try {
+  // #region agent log - validation start
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index1.tsx:VALIDATE_START',message:'Starting component validation',data:{Synop:typeof Synop,Sub1:typeof Sub1,Sub2:typeof Sub2,Sub3:typeof Sub3},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F'})}).catch(()=>{});
+  // #endregion
   ValidatedSynop = validateComponent(Synop, 'Synop');
   ValidatedSub1 = validateComponent(Sub1, 'Sub1');
   ValidatedSub2 = validateComponent(Sub2, 'Sub2');
   ValidatedSub3 = validateComponent(Sub3, 'Sub3');
+  // #region agent log - validation complete
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index1.tsx:VALIDATE_COMPLETE',message:'Component validation complete',data:{ValidatedSynop:typeof ValidatedSynop,ValidatedSub1:typeof ValidatedSub1},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F'})}).catch(()=>{});
+  // #endregion
 } catch (error) {
   // If validation itself fails, log and use ErrorComponent for all
   console.error('[Component Validation] Critical error during validation:', error);
@@ -233,11 +243,19 @@ const ComponentRenderer = memo(function ComponentRenderer({
 });
 
 export default function Index1({ navigation }: { navigation?: any }) {
+  // #region agent log - Index1 entry
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index1.tsx:COMPONENT_ENTRY',message:'Index1 component entered',data:{hasNavigation:!!navigation},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F'})}).catch(()=>{});
+  // #endregion
   const params = useLocalSearchParams();
+  // #region agent log - params
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index1.tsx:PARAMS',message:'Index1 params',data:{paramsKeys:Object.keys(params),index:params.index,title:params.title?.toString().substring(0,20)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
   const { user } = useAuth();
   const router = useRouter();
-  const [name, setName] = useState(typeof params.title === 'string' ? params.title : 'No Data Available');
-  const [position, setPosition] = useState(typeof params.subtitle === 'string' ? params.subtitle : 'No Data Available');
+  // Align with Index2: treat navigation params as the primary source of display text.
+  // We still fetch the same DB rows as before; we just avoid mutating `name/position` from that fetch to reduce churn.
+  const name = typeof params.title === 'string' ? params.title : 'No Data Available';
+  const position = typeof params.subtitle === 'string' ? params.subtitle : 'No Data Available';
   const [profileData, setProfileData] = useState<any>(null);
   const submittedStars = typeof params.submittedStars === 'string' ? parseInt(params.submittedStars) : 0;
   
@@ -326,9 +344,8 @@ export default function Index1({ navigation }: { navigation?: any }) {
           
           if (indexData) {
             console.log('Successfully fetched index data:', indexData);
-            const index = indexData as { name?: string; sub_name?: string };
-            setName(index.name || 'No Data Available');
-            setPosition(index.sub_name || 'No Data Available');
+            // NOTE: crash-isolation test: do not update name/position state here.
+            // We still fetch indexData (same as before) but keep UI driven by params.
           }
           
           // Fetch profile data from ppl_profiles
@@ -387,6 +404,9 @@ export default function Index1({ navigation }: { navigation?: any }) {
   // Refresh trigger for card data - increments when cards are generated from synopsis
   const [cardRefreshTrigger, setCardRefreshTrigger] = useState(0);
   const triggerCardRefresh = () => {
+    // #region agent log - cardRefreshTrigger change
+    fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index1.tsx:CARD_REFRESH',message:'triggerCardRefresh called',data:{currentValue:cardRefreshTrigger},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'G'})}).catch(()=>{});
+    // #endregion
     setCardRefreshTrigger(prev => prev + 1);
   };
 

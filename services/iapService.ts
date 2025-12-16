@@ -1,5 +1,5 @@
-import { Alert } from 'react-native';
 import Constants from 'expo-constants';
+import { Alert } from 'react-native';
 import {
     SUBSCRIPTION_PRODUCTS,
     type PurchaseError,
@@ -15,8 +15,9 @@ let RNIap: any = undefined;
 let endConnection: any = undefined;
 let finishTransaction: any = undefined;
 let getAvailablePurchases: any = undefined;
-let getSubscriptions: any = undefined;
+let fetchProducts: any = undefined;
 let initConnection: any = undefined;
+let requestPurchase: any = undefined;
 let purchaseErrorListener: any = undefined;
 let purchaseUpdatedListener: any = undefined;
 type Product = any;
@@ -42,8 +43,9 @@ function lazyLoadIAPModule() {
     endConnection = null;
     finishTransaction = null;
     getAvailablePurchases = null;
-    getSubscriptions = null;
+    fetchProducts = null;
     initConnection = null;
+    requestPurchase = null;
     purchaseErrorListener = null;
     purchaseUpdatedListener = null;
     markIAPModuleLoaded(false);
@@ -53,12 +55,14 @@ function lazyLoadIAPModule() {
   // For standalone builds (including TestFlight), try to actually load the module
   try {
     const iapModule = require('react-native-iap');
-    RNIap = iapModule.default;
+    // react-native-iap v14+ exports functions (no default export)
+    RNIap = iapModule;
     endConnection = iapModule.endConnection;
     finishTransaction = iapModule.finishTransaction;
     getAvailablePurchases = iapModule.getAvailablePurchases;
-    getSubscriptions = iapModule.getSubscriptions;
+    fetchProducts = iapModule.fetchProducts;
     initConnection = iapModule.initConnection;
+    requestPurchase = iapModule.requestPurchase;
     purchaseErrorListener = iapModule.purchaseErrorListener;
     purchaseUpdatedListener = iapModule.purchaseUpdatedListener;
     markIAPModuleLoaded(true);
@@ -69,8 +73,9 @@ function lazyLoadIAPModule() {
     endConnection = null;
     finishTransaction = null;
     getAvailablePurchases = null;
-    getSubscriptions = null;
+    fetchProducts = null;
     initConnection = null;
+    requestPurchase = null;
     purchaseErrorListener = null;
     purchaseUpdatedListener = null;
     markIAPModuleLoaded(false);
@@ -119,7 +124,7 @@ class IAPService {
     // Lazy-load IAP module only when this function is called
     lazyLoadIAPModule();
     
-    if (!isIAPAvailable() || !getSubscriptions) {
+    if (!isIAPAvailable() || !fetchProducts) {
       console.log('ℹ️ IAP not available (Expo Go mode) - returning empty subscriptions');
       return [];
     }
@@ -128,7 +133,8 @@ class IAPService {
       const productIds = Object.values(SUBSCRIPTION_PRODUCTS);
       console.log('Fetching subscriptions for product IDs:', productIds);
       
-      const subscriptions = await getSubscriptions({ skus: productIds });
+      // react-native-iap v14+ uses fetchProducts with type: 'subs'
+      const subscriptions = await fetchProducts({ skus: productIds, type: 'subs' });
       console.log('Available subscriptions:', subscriptions);
       
       return subscriptions;
@@ -166,25 +172,32 @@ class IAPService {
         await this.initialize();
       }
 
-      if (!getSubscriptions) {
-        throw new Error('Unable to load subscription catalog. Please try again in a production build.');
+      if (!requestPurchase) {
+        throw new Error('In-app purchase request API is unavailable. Please ensure react-native-iap is configured correctly.');
       }
 
-      // Fetch the specific product to verify it exists (helps surface App Store Connect config issues)
-      const products = await getSubscriptions({ skus: [productId] });
-      const product = products?.[0];
-      if (!product) {
-        throw new Error(`Product ${productId} is not available from the App Store. Verify it is "Ready to Submit" with metadata/localization.`);
+      // Optional: fetch product to surface misconfigured SKUs early
+      if (fetchProducts) {
+        const products = await fetchProducts({ skus: [productId], type: 'subs' });
+        const found =
+          products?.find((p: any) => p?.id === productId || p?.productId === productId) ??
+          products?.[0];
+        if (!found) {
+          throw new Error(
+            `Product ${productId} is not available from the App Store. Verify it exists in App Store Connect and is approved for sale.`
+          );
+        }
       }
 
-      // Use offer token if available (required for some subscription pricing setups)
-      const offerToken = product?.subscriptionOfferDetails?.[0]?.offerToken;
-      const requestPayload: any = offerToken
-        ? { sku: productId, subscriptionOffers: [{ sku: productId, offerToken }] }
-        : { sku: productId };
-
-      const result = await RNIap.requestSubscription(requestPayload);
-      console.log('Purchase result:', result);
+      // v14+ uses requestPurchase for both in-app products and subscriptions
+      await requestPurchase({
+        type: 'subs',
+        request: {
+          ios: { sku: productId },
+          // Android is ignored on iOS; keep here for parity if you later ship Android IAP
+          android: { skus: [productId], subscriptionOffers: [] },
+        },
+      });
       
     } catch (error: any) {
       console.error('❌ Purchase failed:', error);

@@ -2,19 +2,19 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Alert,
-    Animated,
-    FlatList,
-    Image,
-    Keyboard,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View
+  Alert,
+  Animated,
+  Image,
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View
 } from 'react-native';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { SearchFilterButton } from '../../components/SearchFilterButton';
@@ -26,7 +26,7 @@ import { filterCardsByWords, getMostCommonWords, shouldShowSearchAssistance } fr
 import { getSupabaseClient } from '../../utils/supabase';
 
 // #region agent log - module level
-fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub4.tsx:MODULE',message:'Module loaded',data:{CardLoadingIndicator:typeof CardLoadingIndicator,SearchFilterButton:typeof SearchFilterButton,Pressable:typeof Pressable,FlatList:typeof FlatList},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub4.tsx:MODULE',message:'Module loaded',data:{CardLoadingIndicator:typeof CardLoadingIndicator,SearchFilterButton:typeof SearchFilterButton,Pressable:typeof Pressable,ScrollView:typeof ScrollView},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
 // #endregion
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -246,39 +246,14 @@ export default function Sub4() {
     });
   }, [filteredCardData]);
 
-  // Fetch profile tier from ppl_index
+  // NOTE: for crash isolation testing, we are intentionally NOT fetching tier here.
+  // The legislative equivalent (`legi4`) does not tier-fetch on page open.
+  // If needed later, restore the ppl_index tier fetch.
   useEffect(() => {
-    const fetchProfileTier = async () => {
-      if (profileIndex) {
-        try {
-          const supabase = getSupabaseClient();
-          const { data, error } = await supabase
-            .from('ppl_index')
-            .select('tier')
-            .eq('id', parseInt(profileIndex))
-            .maybeSingle();
-          
-          if (error) {
-            console.error('Error fetching profile tier:', error);
-            setTier('base');
-          } else if (data && data.tier) {
-            setTier(data.tier.trim().toLowerCase());
-          } else {
-            setTier('base');
-          }
-        } catch (err) {
-          console.error('Error in fetchProfileTier:', err);
-          setTier('base');
-        }
-      } else {
-        setTier('base');
-      }
-    };
-
-    fetchProfileTier();
+    setTier('base');
   }, [profileIndex]);
 
-    // Fetch card data from card_index table based on screen value and category
+  // Fetch card data from card_index table based on screen value and category
   useEffect(() => {
     const fetchAllCards = async () => {
       if (!profileIndex) {
@@ -312,43 +287,28 @@ export default function Sub4() {
           default: targetScreen = 'agenda_ppl'; // fallback
         }
 
-        // Page through Supabase in chunks to avoid implicit server-side caps
-        const pageSize = 100; // adjust if you expect > 1k
-        let from = 0;
-        let to = pageSize - 1;
-        let allRows: any[] = [];
+        // NOTE: for crash isolation testing, we are intentionally using a single query (like `legi4`)
+        // instead of paging with `range()` in a loop.
+        const supabase = getSupabaseClient();
+        const { data, error } = await supabase
+          .from('card_index')
+          .select('id, title, subtext, screen, category, opens_7d, score')
+          .eq('owner_id', ownerId)
+          .eq('is_ppl', true)
+          .eq('is_active', true)
+          .eq('screen', targetScreen)
+          .eq('category', category)
+          .order('opens_7d', { ascending: false });
 
-        while (true) {
-          const supabase = getSupabaseClient();
-          const { data, error } = await supabase
-            .from('card_index')
-            .select('id, title, subtext, screen, category, opens_7d, score')
-            .eq('owner_id', ownerId)
-            .eq('is_ppl', true)
-            .eq('is_active', true)
-            .eq('screen', targetScreen) // Filter by screen first
-            .eq('category', category) // Then filter by category
-            .order('opens_7d', { ascending: false, nullsFirst: false }) // server-side primary order
-            .range(from, to);
-
-          if (error) {
-            console.error('sub4: card_index fetch error', error);
-            break;
-          }
-
-          const batch = data ?? [];
-          allRows = allRows.concat(batch);
-
-          if (batch.length < pageSize) {
-            // last page
-            break;
-          }
-          from += pageSize;
-          to += pageSize;
+        if (error) {
+          console.error('sub4: card_index fetch error', error);
+          setCardData([]);
+          setShowGenerateButton(false);
+          return;
         }
 
-        // Client-side stable sort with fallback to `score`
-        const sorted = allRows.sort((a, b) => {
+        // Client-side stable sort with fallback to `score` (kept consistent with prior behavior)
+        const sorted = (data ?? []).sort((a: any, b: any) => {
           const ao = a?.opens_7d ?? -Infinity;
           const bo = b?.opens_7d ?? -Infinity;
           if (ao !== bo) return bo - ao;
@@ -357,7 +317,6 @@ export default function Sub4() {
           const bs = b?.score ?? -Infinity;
           if (as !== bs) return bs - as;
 
-          // Stable-ish fallback by id if needed
           return (b?.id ?? 0) - (a?.id ?? 0);
         });
 
@@ -615,14 +574,14 @@ export default function Sub4() {
     Animated.spring(v, { toValue: 1, friction: 6, useNativeDriver: true }).start();
   }, [getScale]);
 
-  // FlatList render item function
-  const renderItem = ({ item: card, index }: { item: any; index: number }) => {
+  // Card renderer (used by ScrollView mapping)
+  const renderCard = (card: any, index: number) => {
     const n = styleIndex(index); // 1..15 cycled
     const scale = getScale(card.id);
 
     return (
       <AnimatedPressable
-        key={card.id}
+        key={String(card?.id ?? `card-${index}`)}
         onPressIn={() => onPressIn(card.id)}
         onPressOut={() => onPressOut(card.id)}
           onPress={async () => {
@@ -734,101 +693,91 @@ export default function Sub4() {
           <Text style={styles.subtitleText}>{profileName}: {screenName}</Text>
         </View>
 
-        {/* Use FlatList to efficiently render N cards (no upper limit) */}
-        <FlatList
-          data={filteredCardData}
-          keyExtractor={(item) => String(item?.id ?? `card-${item?.title ?? 'unknown'}`)}
-          renderItem={renderItem}
+        {/* Crash-isolation test: use ScrollView (like legi4) instead of FlatList */}
+        <ScrollView
+          style={{ flex: 1 }}
           contentContainerStyle={styles.cardsContainer}
           showsVerticalScrollIndicator={false}
-          removeClippedSubviews={false}
-          initialNumToRender={5}
-          maxToRenderPerBatch={5}
-          windowSize={5}
-          updateCellsBatchingPeriod={50}
+          keyboardShouldPersistTaps="handled"
           onScrollBeginDrag={dismissKeyboard}
-          ListHeaderComponent={() => (
-            <>
-              <View style={styles.searchBarContainer}>
-                <Image source={require('../../assets/search.png')} style={styles.searchIcon} />
-                <TextInput
-                  ref={searchInputRef}
-                  style={styles.searchBarInput}
-                  placeholder={String(`Search ${buttonText ?? ''} Cards`)}
-                  placeholderTextColor="#666"
-                  value={String(searchQuery ?? '')}
-                  onChangeText={(text) => setSearchQuery(String(text ?? ''))}
-                  keyboardAppearance={Platform.OS === 'ios' ? 'dark' : 'default'}
-                  blurOnSubmit={true}
-                />
-                {searchQuery.length > 0 && (
-                  <Pressable onPress={() => {
-                    setSearchQuery('');
-                    dismissKeyboard();
-                  }} style={styles.clearButton}>
-                    <Text style={styles.clearButtonText}>✕</Text>
-                  </Pressable>
-                )}
+        >
+          <View style={styles.searchBarContainer}>
+            <Image source={require('../../assets/search.png')} style={styles.searchIcon} />
+            <TextInput
+              ref={searchInputRef}
+              style={styles.searchBarInput}
+              placeholder={String(`Search ${buttonText ?? ''} Cards`)}
+              placeholderTextColor="#666"
+              value={String(searchQuery ?? '')}
+              onChangeText={(text) => setSearchQuery(String(text ?? ''))}
+              keyboardAppearance={Platform.OS === 'ios' ? 'dark' : 'default'}
+              blurOnSubmit={true}
+            />
+            {searchQuery.length > 0 && (
+              <Pressable onPress={() => {
+                setSearchQuery('');
+                dismissKeyboard();
+              }} style={styles.clearButton}>
+                <Text style={styles.clearButtonText}>✕</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {showSearchAssistance && commonWords.length > 0 && (
+            <View style={styles.searchAssistanceContainer}>
+              <View style={styles.filterButtonsContainer}>
+                {commonWords.map((word, index) => (
+                  <SearchFilterButton
+                    key={`${word}-${index}`}
+                    word={word}
+                    isSelected={selectedFilterWords.includes(word)}
+                    onPress={handleFilterWordPress}
+                  />
+                ))}
               </View>
-              
-              {showSearchAssistance && commonWords.length > 0 && (
-                <View style={styles.searchAssistanceContainer}>
-                  <View style={styles.filterButtonsContainer}>
-                    {commonWords.map((word, index) => (
-                      <SearchFilterButton
-                        key={`${word}-${index}`}
-                        word={word}
-                        isSelected={selectedFilterWords.includes(word)}
-                        onPress={handleFilterWordPress}
-                      />
-                    ))}
-                  </View>
-                </View>
-              )}
-            </>
+            </View>
           )}
-          ListFooterComponent={() => (
-            <>
-              {/* Generate New Cards Button */}
-              {showGenerateButton && buttonText !== 'More Selections' && (
-                <View style={styles.generateButtonContainer}>
-                  <Animated.View style={{ transform: [{ scale: generateButtonScale }] }}>
-                    <Pressable
-                      onPressIn={() => {
-                        Haptics.selectionAsync();
-                        Animated.spring(generateButtonScale, {
-                          toValue: 0.95,
-                          friction: 6,
-                          useNativeDriver: true,
-                        }).start();
-                      }}
-                      onPressOut={() => {
-                        Animated.spring(generateButtonScale, {
-                          toValue: 1,
-                          friction: 6,
-                          useNativeDriver: true,
-                        }).start();
-                      }}
-                      onPress={handleGenerateCards}
-                      disabled={isGeneratingCards}
-                      style={[
-                        styles.generateButton,
-                        isGeneratingCards && styles.generateButtonDisabled
-                      ]}
-                    >
-                      <Text style={[
-                        styles.generateButtonText,
-                        isGeneratingCards && styles.generateButtonTextDisabled
-                      ]}>
-                        {isGeneratingCards ? 'Generating...' : 'Generate New Cards'}
-                      </Text>
-                    </Pressable>
-                  </Animated.View>
-                </View>
-              )}
-            </>
+
+          {filteredCardData.map((card, index) => renderCard(card, index))}
+
+          {/* Generate New Cards Button */}
+          {showGenerateButton && buttonText !== 'More Selections' && (
+            <View style={styles.generateButtonContainer}>
+              <Animated.View style={{ transform: [{ scale: generateButtonScale }] }}>
+                <Pressable
+                  onPressIn={() => {
+                    Haptics.selectionAsync();
+                    Animated.spring(generateButtonScale, {
+                      toValue: 0.95,
+                      friction: 6,
+                      useNativeDriver: true,
+                    }).start();
+                  }}
+                  onPressOut={() => {
+                    Animated.spring(generateButtonScale, {
+                      toValue: 1,
+                      friction: 6,
+                      useNativeDriver: true,
+                    }).start();
+                  }}
+                  onPress={handleGenerateCards}
+                  disabled={isGeneratingCards}
+                  style={[
+                    styles.generateButton,
+                    isGeneratingCards && styles.generateButtonDisabled
+                  ]}
+                >
+                  <Text style={[
+                    styles.generateButtonText,
+                    isGeneratingCards && styles.generateButtonTextDisabled
+                  ]}>
+                    {isGeneratingCards ? 'Generating...' : 'Generate New Cards'}
+                  </Text>
+                </Pressable>
+              </Animated.View>
+            </View>
           )}
-        />
+        </ScrollView>
         </View>
         
         <CardLoadingIndicator 

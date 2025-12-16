@@ -2,9 +2,11 @@ import { isIAPAvailable } from './utils/iapAvailability';
 
 // Lazy-load IAP module to avoid top-level require() that can crash release builds
 // Only load when actually needed, not at module import time
-let initConnection: any = null;
-let getAvailablePurchases: any = null;
-let endConnection: any = null;
+// NOTE: these start as `undefined` so the first call will attempt to load the module.
+// After that, they will be either a function (success) or `null` (failed/not available).
+let initConnection: any = undefined;
+let getAvailablePurchases: any = undefined;
+let endConnection: any = undefined;
 type SubscriptionPurchase = any;
 
 /**
