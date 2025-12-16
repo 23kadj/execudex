@@ -29,11 +29,18 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
   const generateButtonScale = useRef(new Animated.Value(1)).current;
   const abortControllerRef = useRef<AbortController | null>(null);
   const currentLoadingCardId = useRef<number | null>(null);
+  const profileDataAbortControllerRef = useRef<AbortController | null>(null);
+  const cardDataAbortControllerRef = useRef<AbortController | null>(null);
 
 
   
   // Fetch profile data from ppl_index
   useEffect(() => {
+    // Create abort controller for this effect
+    const abortController = new AbortController();
+    profileDataAbortControllerRef.current = abortController;
+    let isMounted = true;
+
     const fetchProfileData = async () => {
       if (index) {
         try {
@@ -44,28 +51,55 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
             .eq('id', parseInt(index.toString()))
             .single();
           
+          // Check if component is still mounted and request wasn't aborted
+          if (abortController.signal.aborted || !isMounted) {
+            return;
+          }
+          
           if (error) {
             console.error('Error fetching profile data:', error);
-            setTier('base');
-            setOfficeType('');
-          } else if (data) {
+            if (isMounted) {
+              setTier('base');
+              setOfficeType('');
+            }
+          } else if (data && isMounted) {
             setTier((data as any).tier || '');
             setOfficeType((data as any).office_type || '');
           }
         } catch (err) {
+          // Don't log error if it was an abort
+          if (err instanceof Error && err.name === 'AbortError') {
+            return;
+          }
           console.error('Error in fetchProfileData:', err);
-          setTier('base');
-          setOfficeType('');
+          if (isMounted) {
+            setTier('base');
+            setOfficeType('');
+          }
         }
       }
-      setIsLoading(false);
+      if (isMounted) {
+        setIsLoading(false);
+      }
     };
 
     fetchProfileData();
+
+    // Cleanup function
+    return () => {
+      isMounted = false;
+      abortController.abort();
+      profileDataAbortControllerRef.current = null;
+    };
   }, [index]);
 
   // Fetch card data from card_index table for preview card assignment
   useEffect(() => {
+    // Create abort controller for this effect
+    const abortController = new AbortController();
+    cardDataAbortControllerRef.current = abortController;
+    let isMounted = true;
+
     const fetchCardDataFromDB = async () => {
       if (index) {
         try {
@@ -76,21 +110,45 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
             tier: tier
           });
           
+          // Check if component is still mounted and request wasn't aborted
+          if (abortController.signal.aborted || !isMounted) {
+            return;
+          }
+          
           // Cards are already sorted by opens_7d descending and limited by tier
           setCardData(cards);
           
           // Check if generate button should be shown using new logic
           const shouldShow = await CardGenerationService.shouldShowGenerateButtonForPage(parseInt(index.toString()), 'sub1');
+          
+          // Check again before setting state
+          if (abortController.signal.aborted || !isMounted) {
+            return;
+          }
+          
           setShowGenerateButton(shouldShow);
         } catch (error) {
+          // Don't log error if it was an abort
+          if (error instanceof Error && error.name === 'AbortError') {
+            return;
+          }
           console.error('Error fetching card data:', error);
-          setCardData([]);
-          setShowGenerateButton(false);
+          if (isMounted) {
+            setCardData([]);
+            setShowGenerateButton(false);
+          }
         }
       }
     };
 
     fetchCardDataFromDB();
+
+    // Cleanup function
+    return () => {
+      isMounted = false;
+      abortController.abort();
+      cardDataAbortControllerRef.current = null;
+    };
   }, [index, tier, cardRefreshTrigger]);
 
   // Handle cancel loading

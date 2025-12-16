@@ -1,5 +1,6 @@
+import * as Sentry from '@sentry/react-native';
 import { useRouter } from 'expo-router';
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -22,33 +23,214 @@ import Sub2 from './profile/sub2';
 import Sub3 from './profile/sub3';
 import Synop from './profile/synop';
 
-// Defensive validation: ensure all components are valid before using them
-const validateComponent = (component: any, name: string): React.ComponentType<any> | null => {
+// Fallback ErrorComponent that displays a user-friendly error message
+const ErrorComponent: React.ComponentType<{ componentName?: string }> = ({ componentName = 'Unknown' }) => {
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8, textAlign: 'center' }}>
+        Unable to load {componentName}
+      </Text>
+      <Text style={{ color: '#888', fontSize: 14, textAlign: 'center' }}>
+        Please try refreshing the page or contact support if the issue persists.
+      </Text>
+    </View>
+  );
+};
+
+// Comprehensive validation: ensure all components are valid before using them
+const validateComponent = (component: any, name: string): React.ComponentType<any> => {
+  // Log detailed information about the component state
   if (!component) {
-    console.error(`Component ${name} is null or undefined`);
-    return null;
+    const errorMessage = `[Component Validation] Component '${name}' is null or undefined. This will cause a crash if used.`;
+    console.error(errorMessage);
+    console.error(`[Component Validation] Stack trace for ${name}:`, new Error().stack);
+    
+    // Report to Sentry with context
+    Sentry.captureMessage(errorMessage, {
+      level: 'error',
+      tags: {
+        componentName: name,
+        validationStage: 'module_load',
+      },
+      extra: {
+        componentType: typeof component,
+        componentValue: component,
+        stackTrace: new Error().stack,
+      },
+    });
+    
+    return ErrorComponent;
   }
+  
   if (typeof component !== 'function' && typeof component !== 'object') {
-    console.error(`Component ${name} is not a valid React component`);
-    return null;
+    const errorMessage = `[Component Validation] Component '${name}' is not a valid React component. Type: ${typeof component}`;
+    console.error(errorMessage, 'Value:', component);
+    
+    // Report to Sentry
+    Sentry.captureMessage(errorMessage, {
+      level: 'error',
+      tags: {
+        componentName: name,
+        validationStage: 'type_check',
+      },
+      extra: {
+        componentType: typeof component,
+        componentValue: String(component).substring(0, 200), // Limit length
+      },
+    });
+    
+    return ErrorComponent;
   }
+  
+  // Additional check: ensure it's a valid React component (has render or is a function component)
+  if (typeof component === 'object' && !component.render && typeof component !== 'function') {
+    const errorMessage = `[Component Validation] Component '${name}' appears to be an object but lacks a render method.`;
+    console.error(errorMessage);
+    
+    // Report to Sentry
+    Sentry.captureMessage(errorMessage, {
+      level: 'error',
+      tags: {
+        componentName: name,
+        validationStage: 'render_check',
+      },
+      extra: {
+        componentType: typeof component,
+        hasRender: 'render' in component,
+        componentKeys: Object.keys(component).slice(0, 10),
+      },
+    });
+    
+    return ErrorComponent;
+  }
+  
+  console.log(`[Component Validation] Component '${name}' validated successfully.`);
   return component as React.ComponentType<any>;
 };
 
-// Validate all imported components
-const ValidatedSynop = validateComponent(Synop, 'Synop');
-const ValidatedSub1 = validateComponent(Sub1, 'Sub1');
-const ValidatedSub2 = validateComponent(Sub2, 'Sub2');
-const ValidatedSub3 = validateComponent(Sub3, 'Sub3');
+// Validate all imported components immediately after import
+// This ensures we catch any import failures before they reach the TABS array
+let ValidatedSynop: React.ComponentType<any>;
+let ValidatedSub1: React.ComponentType<any>;
+let ValidatedSub2: React.ComponentType<any>;
+let ValidatedSub3: React.ComponentType<any>;
 
+try {
+  ValidatedSynop = validateComponent(Synop, 'Synop');
+  ValidatedSub1 = validateComponent(Sub1, 'Sub1');
+  ValidatedSub2 = validateComponent(Sub2, 'Sub2');
+  ValidatedSub3 = validateComponent(Sub3, 'Sub3');
+} catch (error) {
+  // If validation itself fails, log and use ErrorComponent for all
+  console.error('[Component Validation] Critical error during validation:', error);
+  Sentry.captureException(error, {
+    tags: {
+      validationStage: 'validation_execution',
+    },
+    extra: {
+      errorMessage: error instanceof Error ? error.message : String(error),
+    },
+  });
+  
+  ValidatedSynop = ErrorComponent;
+  ValidatedSub1 = ErrorComponent;
+  ValidatedSub2 = ErrorComponent;
+  ValidatedSub3 = ErrorComponent;
+}
+
+// Log validation results for debugging
+const validationResults = {
+  Synop: ValidatedSynop !== ErrorComponent ? '✓' : '✗',
+  Sub1: ValidatedSub1 !== ErrorComponent ? '✓' : '✗',
+  Sub2: ValidatedSub2 !== ErrorComponent ? '✓' : '✗',
+  Sub3: ValidatedSub3 !== ErrorComponent ? '✓' : '✗',
+};
+
+console.log('[Component Validation] All components validated:', validationResults);
+
+// Report validation summary to Sentry if any components failed
+if (Object.values(validationResults).some(result => result === '✗')) {
+  Sentry.captureMessage('Component validation failures detected', {
+    level: 'warning',
+    tags: {
+      validationStage: 'summary',
+    },
+    extra: {
+      validationResults,
+      failedComponents: Object.entries(validationResults)
+        .filter(([_, result]) => result === '✗')
+        .map(([name]) => name),
+    },
+  });
+}
+
+// Create TABS array with validated components (all components are guaranteed to be valid React components)
 const TABS = [
-  { label: 'Synopsis',  key: 'synop',   component: ValidatedSynop  },
-  { label: 'Agenda',    key: 'sub1a',   component: ValidatedSub1   },
-  { label: 'Identity',  key: 'sub2',    component: ValidatedSub2   },
-  { label: 'Affiliates',key: 'sub3',    component: ValidatedSub3   },
+  { label: 'Synopsis',  key: 'synop',   component: ValidatedSynop,  componentName: 'Synop'  },
+  { label: 'Agenda',    key: 'sub1a',   component: ValidatedSub1,   componentName: 'Sub1'   },
+  { label: 'Identity',  key: 'sub2',    component: ValidatedSub2,   componentName: 'Sub2'   },
+  { label: 'Affiliates',key: 'sub3',    component: ValidatedSub3,   componentName: 'Sub3'   },
 ];
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
+
+// Safe component renderer with error boundary
+const ComponentRenderer = memo(function ComponentRenderer({
+  Component,
+  props,
+  componentName,
+}: {
+  Component: React.ComponentType<any>;
+  props: any;
+  componentName: string;
+}) {
+  try {
+    // Final runtime check before rendering
+    if (!Component || Component === null || Component === undefined) {
+      console.error(`[ComponentRenderer] Component is null/undefined for ${componentName}`);
+      Sentry.captureMessage(`Component is null/undefined at render time: ${componentName}`, {
+        level: 'error',
+        tags: {
+          componentName,
+          validationStage: 'render_time_check',
+        },
+      });
+      return <ErrorComponent componentName={componentName} />;
+    }
+
+    if (typeof Component !== 'function' && typeof Component !== 'object') {
+      console.error(`[ComponentRenderer] Component is not valid React component for ${componentName}, type=${typeof Component}`);
+      Sentry.captureMessage(`Component is not valid React component at render time: ${componentName}`, {
+        level: 'error',
+        tags: {
+          componentName,
+          validationStage: 'render_time_type_check',
+        },
+        extra: {
+          componentType: typeof Component,
+        },
+      });
+      return <ErrorComponent componentName={componentName} />;
+    }
+
+    // Render the component
+    return <Component {...props} />;
+  } catch (error) {
+    // Catch any rendering errors and report to Sentry
+    console.error(`[ComponentRenderer] Error rendering component ${componentName}:`, error);
+    Sentry.captureException(error, {
+      tags: {
+        componentName,
+        validationStage: 'component_render',
+      },
+      extra: {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+      },
+    });
+    return <ErrorComponent componentName={componentName} />;
+  }
+});
 
 export default function Index1({ navigation }: { navigation?: any }) {
   const params = useLocalSearchParams();
@@ -302,55 +484,6 @@ export default function Index1({ navigation }: { navigation?: any }) {
     }
   };
 
-  // Footer with animated pill
-  const Footer = useCallback(() => {
-    // If profile is locked, don't show the tab bar
-    if (lockStatus?.isLocked) {
-      return null;
-    }
-
-    return (
-      <View style={styles.bottomBarWrapper}>
-        <View style={styles.bottomBarPill}>
-          <View style={styles.bottomBar}>
-            {/* Animated white pill indicator */}
-            <Animated.View
-              style={[
-                styles.animatedPill,
-                {
-                  transform: [{ translateX }],
-                  width: pillWidth,
-                },
-              ]}
-            />
-            {TABS.map((tab, idx) => (
-              <TouchableOpacity
-                key={tab.key}
-                style={styles.tabButton}
-                activeOpacity={0.85}
-                onPress={() => goToTab(idx)}
-                onLayout={e => {
-                  const { x, width } = e.nativeEvent.layout;
-                  tabLayouts.current[idx] = { x, width };
-                  // Set initial pill position/width on first render
-                  if (idx === tabIndex && !pillInitialized.current) {
-                    translateX.setValue(x);
-                    pillWidth.setValue(width);
-                    pillInitialized.current = true;
-                  }
-                }}
-              >
-                <Text style={[styles.tabText, tabIndex === idx && styles.tabTextActive]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      </View>
-    );
-  }, [tabIndex, translateX, pillWidth, lockStatus]);
-
   // Note: Access check now happens in NavigationService BEFORE navigation
   // This component only loads if access is granted
 
@@ -381,7 +514,16 @@ export default function Index1({ navigation }: { navigation?: any }) {
         {TABS.map((tab, idx) => {
           // Defensive validation: ensure tab exists and has valid component
           if (!tab || !tab.component) {
-            console.error(`Tab missing or invalid for index=${idx}, key=${tab?.key || 'unknown'}`);
+            const errorMessage = `Tab missing or invalid for index=${idx}, key=${tab?.key || 'unknown'}`;
+            console.error(`[Component Render] ${errorMessage}`);
+            Sentry.captureMessage(errorMessage, {
+              level: 'error',
+              tags: {
+                tabIndex: idx,
+                tabKey: tab?.key || 'unknown',
+                validationStage: 'tab_existence_check',
+              },
+            });
             return (
               <Animated.View
                 key={`error-${idx}`}
@@ -394,15 +536,58 @@ export default function Index1({ navigation }: { navigation?: any }) {
                   paddingBottom: bottomPadding,
                 }}
               >
-                <Text style={{ color: '#fff' }}>Component not available</Text>
+                <ErrorComponent componentName={tab?.componentName || 'Unknown Tab'} />
+              </Animated.View>
+            );
+          }
+
+          // Runtime validation: ensure component is still valid (double-check)
+          const Component = tab.component;
+          if (!Component || Component === null || Component === undefined) {
+            const errorMessage = `Tab component is null/undefined at runtime for key=${tab.key}`;
+            console.error(`[Component Render] ${errorMessage}`);
+            Sentry.captureMessage(errorMessage, {
+              level: 'error',
+              tags: {
+                tabIndex: idx,
+                tabKey: tab.key,
+                componentName: tab.componentName,
+                validationStage: 'runtime_null_check',
+              },
+            });
+            return (
+              <Animated.View
+                key={tab.key}
+                style={{
+                  width: SCREEN_WIDTH,
+                  flex: 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingTop: 100,
+                  paddingBottom: bottomPadding,
+                }}
+              >
+                <ErrorComponent componentName={tab.componentName} />
               </Animated.View>
             );
           }
 
           // Validate component is a valid React component (function or class)
-          const Component = tab.component;
           if (typeof Component !== 'function' && typeof Component !== 'object') {
-            console.error(`Tab component is not a valid React component for key=${tab.key}`);
+            const errorMessage = `Tab component is not a valid React component for key=${tab.key}, type=${typeof Component}`;
+            console.error(`[Component Render] ${errorMessage}`);
+            Sentry.captureMessage(errorMessage, {
+              level: 'error',
+              tags: {
+                tabIndex: idx,
+                tabKey: tab.key,
+                componentName: tab.componentName,
+                validationStage: 'runtime_type_check',
+              },
+              extra: {
+                componentType: typeof Component,
+              },
+            });
             return (
               <Animated.View
                 key={tab.key}
@@ -415,34 +600,69 @@ export default function Index1({ navigation }: { navigation?: any }) {
                   paddingBottom: bottomPadding,
                 }}
               >
-                <Text style={{ color: '#fff' }}>Component not available</Text>
+                <ErrorComponent componentName={tab.componentName} />
               </Animated.View>
             );
           }
 
-          // Additional safety check: ensure component is not null/undefined
-          if (Component === null || Component === undefined) {
-            console.error(`Tab component is null/undefined for key=${tab.key}`);
-            return (
-              <Animated.View
-                key={tab.key}
-                style={{
-                  width: SCREEN_WIDTH,
-                  flex: 1,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingTop: 100,
-                  paddingBottom: bottomPadding,
-                }}
-              >
-                <Text style={{ color: '#fff' }}>Component not available</Text>
-              </Animated.View>
-            );
+          // Prepare component and props based on tab key
+          let ComponentToRender: React.ComponentType<any> | null = null;
+          let componentProps: any = null;
+
+          try {
+            if (tab.key === 'synop') {
+              // Double-check ValidatedSynop is still valid
+              if (ValidatedSynop && ValidatedSynop !== ErrorComponent && typeof ValidatedSynop !== 'undefined') {
+                ComponentToRender = ValidatedSynop;
+                componentProps = {
+                  scrollY,
+                  goToTab,
+                  name,
+                  position,
+                  submittedStars,
+                  approvalPercentage,
+                  disapprovalPercentage,
+                  profileData,
+                  index: params.index as string | undefined,
+                  scrollRef: synopScrollRef,
+                  refetchLockStatus,
+                  triggerCardRefresh,
+                };
+              } else {
+                console.warn(`[Component Render] ValidatedSynop is invalid or ErrorComponent for tab=${tab.key}`);
+              }
+            } else {
+              // For other tabs, use the validated component from TABS array
+              if (Component && Component !== ErrorComponent && typeof Component !== 'undefined') {
+                ComponentToRender = Component as React.ComponentType<any>;
+                componentProps = {
+                  scrollY,
+                  name,
+                  position,
+                  goToTab,
+                  ...(params.index ? { index: parseInt(params.index as string) } : {}),
+                  scrollRef: tab.key === 'sub1a' ? sub1ScrollRef : tab.key === 'sub2' ? sub2ScrollRef : sub3ScrollRef,
+                  cardRefreshTrigger,
+                };
+              } else {
+                console.warn(`[Component Render] Component is invalid or ErrorComponent for tab=${tab.key}`);
+              }
+            }
+          } catch (error) {
+            // Catch any errors during component/props preparation
+            console.error(`[Component Render] Error preparing component for tab=${tab.key}:`, error);
+            Sentry.captureException(error, {
+              tags: {
+                tabIndex: idx,
+                tabKey: tab.key,
+                componentName: tab.componentName,
+                validationStage: 'props_preparation',
+              },
+            });
+            ComponentToRender = null; // Will fall back to ErrorComponent
           }
 
-          // Type assertion for TypeScript - safer than 'as any' as it ensures React component type
-          const ValidatedComponent = Component as React.ComponentType<any>;
-
+          // Render component with error boundary
           return (
             <Animated.View
               key={tab.key}
@@ -455,35 +675,15 @@ export default function Index1({ navigation }: { navigation?: any }) {
                 paddingBottom: bottomPadding, // animated padding for footer
               }}
             >
-              {tab.key === 'synop' && ValidatedSynop ? (
-                <ValidatedSynop 
-                  scrollY={scrollY} 
-                  goToTab={goToTab} 
-                  name={name} 
-                  position={position} 
-                  submittedStars={submittedStars}
-                  approvalPercentage={approvalPercentage}
-                  disapprovalPercentage={disapprovalPercentage}
-                  profileData={profileData}
-                  index={params.index as string | undefined}
-                  scrollRef={synopScrollRef}
-                  refetchLockStatus={refetchLockStatus}
-                  triggerCardRefresh={triggerCardRefresh}
-                />
-              ) : ValidatedComponent ? (
-                <ValidatedComponent 
-                  scrollY={scrollY} 
-                  name={name} 
-                  position={position} 
-                  goToTab={goToTab} 
-                  {...(params.index ? { index: parseInt(params.index as string) } : {})}
-                  scrollRef={tab.key === 'sub1a' ? sub1ScrollRef : tab.key === 'sub2' ? sub2ScrollRef : sub3ScrollRef}
-                  cardRefreshTrigger={cardRefreshTrigger}
+              {ComponentToRender ? (
+                <ComponentRenderer
+                  Component={ComponentToRender}
+                  props={componentProps}
+                  componentName={tab.componentName}
                 />
               ) : (
-                <Text style={{ color: '#fff' }}>Component not available</Text>
+                <ErrorComponent componentName={tab.componentName} />
               )}
-
             </Animated.View>
           );
         })}
