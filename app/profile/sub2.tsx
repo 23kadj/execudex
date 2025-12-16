@@ -2,6 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import * as Sentry from '@sentry/react-native';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
@@ -10,6 +11,18 @@ import { incrementOpens } from '../../utils/incrementOpens7d';
 import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+// #region agent log - crash isolation: disable haptics
+const __DISABLE_HAPTICS_FOR_CRASH_TEST = true;
+if (__DISABLE_HAPTICS_FOR_CRASH_TEST) {
+  try {
+    (Haptics as any).selectionAsync = async () => {};
+    (Haptics as any).impactAsync = async () => {};
+    (Haptics as any).notificationAsync = async () => {};
+    Sentry.addBreadcrumb({ category: 'crash-test', message: 'Haptics disabled in sub2', level: 'info' });
+  } catch {}
+}
+// #endregion
 
 export default function Sub2({ scrollY, name, position, goToTab, index, scrollRef, cardRefreshTrigger }: { scrollY: Animated.Value; name: string; position: string; goToTab?: (idx: number) => void; index?: number; scrollRef?: React.RefObject<ScrollView>; cardRefreshTrigger?: number }) {
   const router = useRouter();
@@ -353,6 +366,7 @@ export default function Sub2({ scrollY, name, position, goToTab, index, scrollRe
 
 
   const handleGridButtonPress = (buttonText: string) => {
+    Sentry.addBreadcrumb({ category: 'nav', message: `Sub2 -> sub4 (${String(buttonText).slice(0, 30)})`, level: 'info' });
     router.push({
       pathname: '/profile/sub4',
       params: { 

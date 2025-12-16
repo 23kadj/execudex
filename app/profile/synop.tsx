@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import * as Sentry from '@sentry/react-native';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { PoliticianProfileService } from '../../services/politicianProfileService';
 import { CardData } from '../../utils/cardData';
@@ -10,6 +11,20 @@ import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const STAR_COUNT = 5;
+
+// #region agent log - crash isolation: disable haptics
+// Apple crash logs show turbomodule exception conversion + hapticd involvement; isolate by disabling haptics.
+const __DISABLE_HAPTICS_FOR_CRASH_TEST = true;
+if (__DISABLE_HAPTICS_FOR_CRASH_TEST) {
+  try {
+    // Avoid calling into the Haptics TurboModule at all.
+    (Haptics as any).selectionAsync = async () => {};
+    (Haptics as any).impactAsync = async () => {};
+    (Haptics as any).notificationAsync = async () => {};
+    Sentry.addBreadcrumb({ category: 'crash-test', message: 'Haptics disabled in synop', level: 'info' });
+  } catch {}
+}
+// #endregion
 interface SynopProps {
   scrollY: Animated.Value;
   goToTab: (idx: number) => void;
@@ -334,7 +349,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
 
   // Handler for see more button
   const handleSeeMore = () => {
-    Haptics.selectionAsync();
+    Sentry.addBreadcrumb({ category: 'nav', message: 'Synop -> see-more (tap)', level: 'info' });
     router.push({
       pathname: '/profile/see-more',
       params: { 
@@ -352,7 +367,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
 
   // Handler for star press - only navigate to rankings, don't fill stars
   const handleStarPress = (starIndex: number) => {
-    Haptics.selectionAsync();
+    Sentry.addBreadcrumb({ category: 'nav', message: 'Synop -> rankings (star tap)', level: 'info' });
     // Navigate to rankings page with current filled stars count and original params
     router.push({
       pathname: '/profile/rankings',
@@ -370,7 +385,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
 
   // Handler for see rankings button
   const handleSeeRankings = () => {
-    Haptics.selectionAsync();
+    Sentry.addBreadcrumb({ category: 'nav', message: 'Synop -> rankings (button tap)', level: 'info' });
     router.push({
       pathname: '/profile/rankings',
       params: { 
