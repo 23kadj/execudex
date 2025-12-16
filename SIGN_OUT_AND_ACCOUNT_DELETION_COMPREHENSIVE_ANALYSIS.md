@@ -870,3 +870,10 @@ The sign-out and account deletion processes are now correctly implemented and wo
 
 Both processes now reliably redirect users to the onboarding screen after logout/deletion, with the account deletion process providing additional robustness through database deletion and complete storage clearing.
 
+
+
+
+
+
+
+

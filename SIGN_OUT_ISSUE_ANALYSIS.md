@@ -495,3 +495,10 @@ To verify the fix works:
 4. Is there a way to synchronously clear the session before navigation?
 5. Would adding a sign-out flag help prevent the redirect?
 
+
+
+
+
+
+
+

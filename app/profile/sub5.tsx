@@ -17,7 +17,15 @@ import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { safeHapticsSelection } from '../../utils/safeHaptics';
 import { getSupabaseClient } from '../../utils/supabase';
 
+// #region agent log - module level
+fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub5.tsx:MODULE',message:'Module loaded',data:{useAuth:typeof useAuth,safeNativeCall:typeof safeNativeCall,safeHapticsSelection:typeof safeHapticsSelection,Pressable:typeof Pressable},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,E'})}).catch(()=>{});
+// #endregion
+
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+// #region agent log - animated component check
+fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub5.tsx:ANIMATED',message:'AnimatedPressable created',data:{AnimatedPressable:typeof AnimatedPressable},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+// #endregion
 
 const STAR_COUNT = 5;
 
@@ -122,9 +130,18 @@ export default function Sub5() {
   // ============================================
   // VERY EARLY LOGGING - FIRST THING IN COMPONENT
   // ============================================
+  // #region agent log - component entry
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub5.tsx:ENTRY',message:'Sub5 component entered',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
   const router = useRouter();
   const params = useLocalSearchParams();
+  // #region agent log - params
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub5.tsx:PARAMS',message:'Params received',data:{paramsKeys:Object.keys(params),cardId:params.cardId,cardTitle:params.cardTitle},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
   const { user } = useAuth();
+  // #region agent log - useAuth result
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub5.tsx:AUTH',message:'useAuth result',data:{userExists:!!user,userId:user?.id?.substring(0,8)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
   
   // Log screen entry immediately with all params
   console.log('========================================');

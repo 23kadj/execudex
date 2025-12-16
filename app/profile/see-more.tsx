@@ -5,6 +5,10 @@ import { ActivityIndicator, Animated, Image, Linking, ScrollView, StyleSheet, Te
 import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { persistentLogger } from '../../utils/persistentLogger';
 
+// #region agent log - module level
+fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'see-more.tsx:MODULE',message:'Module loaded',data:{safeNativeCall:typeof safeNativeCall,persistentLogger:typeof persistentLogger,Animated:typeof Animated},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
+// #endregion
+
 interface SeeMoreProps {
   name?: string;
   position?: string;
@@ -34,8 +38,14 @@ export default function SeeMore({
   pollSummary = '',
   pollLink = ''
 }: SeeMoreProps) {
+  // #region agent log - component entry
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'see-more.tsx:ENTRY',message:'SeeMore component entered',data:{name,position,approvalPercentage,disapprovalPercentage},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
   const router = useRouter();
   const params = useLocalSearchParams();
+  // #region agent log - params
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'see-more.tsx:PARAMS',message:'Params received',data:{paramsKeys:Object.keys(params),name:params.name,approval:params.approval},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
   
   // Use passed params directly (reverted to previous system - no fetching)
   const politicianName = params.name as string || name || 'No Data Available';

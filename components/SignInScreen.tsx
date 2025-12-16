@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -29,6 +29,7 @@ export default function SignInScreen() {
   const [busy, setBusy] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const router = useRouter();
+  const params = useLocalSearchParams<{ fromSignOut?: string }>();
 
   // Removed early IAP initialization - IAP will only initialize when user clicks "Restore Purchase"
   // This prevents crashes in release builds from initializing IAP too early
@@ -195,7 +196,11 @@ export default function SignInScreen() {
       {/* Back Button */}
       <Pressable
         style={styles.backButton}
-        onPress={() => router.back()}
+        onPress={() => {
+          // Always navigate to onboarding screen when back button is pressed
+          // This ensures consistent behavior whether coming from sign out or regular navigation
+          router.replace('/');
+        }}
       >
         <Text style={styles.backButtonText}>←</Text>
       </Pressable>

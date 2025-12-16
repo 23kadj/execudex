@@ -158,3 +158,10 @@ Each log entry contains:
 4. **Card Screens** (`app/legislation/legi5.tsx`, `app/profile/sub5.tsx`)
    - Early logging with all params
    - Checkpoints before native calls
+
+
+
+
+
+
+

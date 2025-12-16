@@ -6,7 +6,14 @@ import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from 'react
 import { useAuth } from '../../components/AuthProvider';
 import { getSupabaseClient } from '../../utils/supabase';
 
+// #region agent log - module level
+fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rankings.tsx:MODULE',message:'Module loaded',data:{TouchableOpacity:typeof TouchableOpacity,Animated:typeof Animated,useAuth:typeof useAuth},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+// #endregion
+
 const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
+
+// #region agent log - animated component check
+fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rankings.tsx:ANIMATED',message:'AnimatedTouchableOpacity created',data:{AnimatedTouchableOpacity:typeof AnimatedTouchableOpacity},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
 const STAR_COUNT = 5;
 
 // Storage keys for persistence
@@ -16,9 +23,18 @@ const STORAGE_KEYS = {
 };
 
 export default function Rankings() {
+  // #region agent log - component entry
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rankings.tsx:ENTRY',message:'Rankings component entered',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
   const router = useRouter();
   const { user } = useAuth();
+  // #region agent log - useAuth result
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rankings.tsx:AUTH',message:'useAuth result',data:{userExists:!!user,userId:user?.id?.substring(0,8)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
   const params = useLocalSearchParams();
+  // #region agent log - params
+  fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rankings.tsx:PARAMS',message:'Params received',data:{params:JSON.stringify(params)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
   // Get current stars from params, default to 0
   const currentStars = typeof params.currentStars === 'string' ? parseInt(params.currentStars) : 0;
   // Get the politician index from params
@@ -308,41 +324,6 @@ export default function Rankings() {
     }
   };
 
-  // Function to get the next available ID for ppl_scores
-  const getNextAvailableId = async (): Promise<number> => {
-    try {
-      const supabase = getSupabaseClient();
-      const { data: scores, error } = await supabase
-        .from('ppl_scores')
-        .select('id')
-        .order('id', { ascending: true });
-      
-      if (error) {
-        console.error('Error fetching scores for ID calculation:', error);
-        return 1; // Fallback to 1
-      }
-      
-      if (!scores || scores.length === 0) {
-        return 1; // No scores exist, start with 1
-      }
-      
-      // Find the first missing ID
-      let expectedId = 1;
-      for (const score of scores) {
-        if (score.id !== expectedId) {
-          return expectedId; // Found a gap
-        }
-        expectedId++;
-      }
-      
-      // No gaps found, return max + 1
-      return scores[scores.length - 1].id + 1;
-    } catch (error) {
-      console.error('Error calculating next available ID:', error);
-      return 1; // Fallback to 1
-    }
-  };
-
   // Reset submission state when stars change (only if not already submitted)
   useEffect(() => {
     if (!isSubmitted) {
@@ -396,42 +377,40 @@ export default function Rankings() {
     }
 
     try {
-      // Check if a score already exists for this user and politician
       const supabase = getSupabaseClient();
+      
+      // Check if score already exists for this user and politician
       const { data: existingScore, error: checkError } = await supabase
         .from('ppl_scores')
         .select('id')
         .eq('user_id', user.id)
         .eq('index_id', indexId)
-        .single();
+        .maybeSingle();
       
-      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = no rows returned
+      if (checkError) {
         console.error('Error checking existing score:', checkError);
         return;
       }
       
       if (existingScore) {
         // Update existing score
-        const supabase = getSupabaseClient();
         const { error: updateError } = await supabase
           .from('ppl_scores')
           .update({ 
             score: score,
             created_at: new Date().toISOString()
           })
-          .eq('id', existingScore.id);
+          .eq('user_id', user.id)
+          .eq('index_id', indexId);
         
         if (updateError) {
           console.error('Error updating score:', updateError);
         }
       } else {
-        // Insert new score
-        const nextId = await getNextAvailableId();
-        const supabase = getSupabaseClient();
+        // Insert new score (let database auto-generate the ID)
         const { error: insertError } = await supabase
           .from('ppl_scores')
           .insert({
-            id: nextId,
             user_id: user.id,
             index_id: indexId,
             score: score,
