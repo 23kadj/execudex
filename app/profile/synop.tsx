@@ -1,9 +1,9 @@
 // AsyncStorage is lazy-loaded to prevent crashes in preview/release builds
+import * as Sentry from '@sentry/react-native';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import * as Sentry from '@sentry/react-native';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { PoliticianProfileService } from '../../services/politicianProfileService';
 import { CardData } from '../../utils/cardData';
@@ -125,11 +125,11 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
           console.log('Fetching profile data for index:', index);
           
           const supabase = getSupabaseClient();
-          const { data: profileData, error } = await supabase
+          const { data: profileRow, error } = (await supabase
             .from('ppl_profiles')
-            .select('approval, disapproval, votes, poll_summary, poll_link')
+            .select('approval, disapproval, votes, poll_summary, poll_link, score')
             .eq('index_id', parseInt(index))
-            .maybeSingle();
+            .maybeSingle()) as any;
           
           if (error) {
             console.error('Error fetching profile data:', error);
@@ -137,26 +137,34 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
             return;
           }
           
-          if (profileData) {
-            console.log('Successfully fetched profile data:', profileData);
+          if (profileRow) {
+            console.log('Successfully fetched profile data:', profileRow);
             
             // Update local state with fetched data
-            if (profileData.approval !== null && profileData.disapproval !== null) {
-              setLocalApproval(Number(profileData.approval));
-              setLocalDisapproval(Number(profileData.disapproval));
+            if (profileRow.approval !== null && profileRow.disapproval !== null) {
+              setLocalApproval(Number(profileRow.approval));
+              setLocalDisapproval(Number(profileRow.disapproval));
             }
             
             // Set votes data if available
-            if (profileData.votes !== null && profileData.votes !== undefined) {
-              setVotes(Number(profileData.votes));
+            if (profileRow.votes !== null && profileRow.votes !== undefined) {
+              setVotes(Number(profileRow.votes));
             }
 
             // Set poll summary and link if available
-            if (profileData.poll_summary) {
-              setPollSummary(profileData.poll_summary);
+            if (profileRow.poll_summary) {
+              setPollSummary(profileRow.poll_summary);
             }
-            if (profileData.poll_link) {
-              setPollLink(profileData.poll_link);
+            if (profileRow.poll_link) {
+              setPollLink(profileRow.poll_link);
+            }
+
+            // Set average score from ppl_profiles.score (kept in sync by DB trigger)
+            if (profileRow.score !== null && profileRow.score !== undefined) {
+              const scoreNum = Number(profileRow.score);
+              setAverageScore(!isNaN(scoreNum) ? scoreNum : null);
+            } else {
+              setAverageScore(null);
             }
           }
         } catch (err) {
@@ -168,42 +176,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
     fetchProfileData();
   }, [index]);
 
-  // Fetch and calculate average score from ppl_scores table when component mounts
-  useEffect(() => {
-    const fetchAverageScore = async () => {
-      if (index) {
-        try {
-          console.log('Fetching scores from ppl_scores for index:', index);
-          
-          const supabase = getSupabaseClient();
-          const { data: scores, error } = await supabase
-            .from('ppl_scores')
-            .select('score')
-            .eq('index_id', parseInt(index));
-          
-          if (error) {
-            console.error('Error fetching scores:', error);
-            return;
-          }
-          
-          if (scores && scores.length > 0) {
-            // Calculate average of all scores
-            const sum = scores.reduce((acc, curr) => acc + (curr.score || 0), 0);
-            const average = sum / scores.length;
-            console.log(`Calculated average score: ${average} from ${scores.length} scores`);
-            setAverageScore(average);
-          } else {
-            console.log('No scores found in ppl_scores for this politician');
-            setAverageScore(null);
-          }
-        } catch (err) {
-          console.error('Error in fetchAverageScore:', err);
-        }
-      }
-    };
-
-    fetchAverageScore();
-  }, [index]);
+  // Average score is sourced from ppl_profiles.score above (no client-side averaging from ppl_scores)
 
   // Check if Generate New Cards button should be shown
   useEffect(() => {
@@ -230,17 +203,17 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         try {
           // Fetch current metrics data
           const supabase = getSupabaseClient();
-          const { data: profileData } = await supabase
+          const { data: profileRow } = (await supabase
             .from('ppl_profiles')
             .select('approval, disapproval, votes')
             .eq('index_id', parseInt(index))
-            .maybeSingle();
+            .maybeSingle()) as any;
           
           // Show button if ALL three metrics are null/undefined/0
           const hasNoMetrics = 
-            (!profileData?.approval || profileData?.approval === 0) &&
-            (!profileData?.disapproval || profileData?.disapproval === 0) &&
-            (!profileData?.votes || profileData?.votes === 0);
+            (!profileRow?.approval || profileRow?.approval === 0) &&
+            (!profileRow?.disapproval || profileRow?.disapproval === 0) &&
+            (!profileRow?.votes || profileRow?.votes === 0);
           
           setShowGenerateMetricsButton(hasNoMetrics);
         } catch (error) {
@@ -288,16 +261,15 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         if (index) {
           try {
             const supabase = getSupabaseClient();
-            const { data: scores, error } = await supabase
-              .from('ppl_scores')
+            const { data: profileRow, error } = (await supabase
+              .from('ppl_profiles')
               .select('score')
-              .eq('index_id', parseInt(index));
-            
-            if (!error && scores && scores.length > 0) {
-              const sum = scores.reduce((acc, curr) => acc + (curr.score || 0), 0);
-              const average = sum / scores.length;
-              console.log(`Refetched average score: ${average} from ${scores.length} scores`);
-              setAverageScore(average);
+              .eq('index_id', parseInt(index))
+              .maybeSingle()) as any;
+
+            if (!error) {
+              const scoreNum = profileRow?.score != null ? Number(profileRow.score) : NaN;
+              setAverageScore(!isNaN(scoreNum) ? scoreNum : null);
             }
           } catch (err) {
             console.error('Error refetching average score:', err);
@@ -349,7 +321,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
 
   // Handler for see more button
   const handleSeeMore = () => {
-    Sentry.addBreadcrumb({ category: 'nav', message: 'Synop -> see-more (tap)', level: 'info' });
+    Haptics.selectionAsync();
     router.push({
       pathname: '/profile/see-more',
       params: { 
@@ -367,7 +339,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
 
   // Handler for star press - only navigate to rankings, don't fill stars
   const handleStarPress = (starIndex: number) => {
-    Sentry.addBreadcrumb({ category: 'nav', message: 'Synop -> rankings (star tap)', level: 'info' });
+    Haptics.selectionAsync();
     // Navigate to rankings page with current filled stars count and original params
     router.push({
       pathname: '/profile/rankings',
@@ -385,7 +357,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
 
   // Handler for see rankings button
   const handleSeeRankings = () => {
-    Sentry.addBreadcrumb({ category: 'nav', message: 'Synop -> rankings (button tap)', level: 'info' });
+    Haptics.selectionAsync();
     router.push({
       pathname: '/profile/rankings',
       params: { 
@@ -548,32 +520,32 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         // Success - refetch profile data to update UI
         // Re-run the fetchProfileData logic - NOW INCLUDING poll_summary and poll_link
         const supabase = getSupabaseClient();
-        const { data: profileData, error } = await supabase
+        const { data: profileRow, error } = (await supabase
           .from('ppl_profiles')
           .select('approval, disapproval, votes, poll_summary, poll_link')
           .eq('index_id', parseInt(index))
-          .maybeSingle();
+          .maybeSingle()) as any;
 
-        if (profileData && !error) {
+        if (profileRow && !error) {
           // Update state with new metrics
-          setLocalApproval(Number(profileData.approval ?? 0));
-          setLocalDisapproval(Number(profileData.disapproval ?? 0));
-          setVotes(profileData.votes);
+          setLocalApproval(Number(profileRow.approval ?? 0));
+          setLocalDisapproval(Number(profileRow.disapproval ?? 0));
+          setVotes(profileRow.votes);
           
           // Update poll summary and link for see-more page
-          if (profileData.poll_summary) {
-            setPollSummary(profileData.poll_summary);
+          if (profileRow.poll_summary) {
+            setPollSummary(profileRow.poll_summary);
           }
-          if (profileData.poll_link) {
-            setPollLink(profileData.poll_link);
+          if (profileRow.poll_link) {
+            setPollLink(profileRow.poll_link);
           }
           
           console.log('Metrics updated successfully:', {
-            approval: profileData.approval,
-            disapproval: profileData.disapproval,
-            votes: profileData.votes,
-            poll_summary: profileData.poll_summary,
-            poll_link: profileData.poll_link
+            approval: profileRow.approval,
+            disapproval: profileRow.disapproval,
+            votes: profileRow.votes,
+            poll_summary: profileRow.poll_summary,
+            poll_link: profileRow.poll_link
           });
         }
         

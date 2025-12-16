@@ -77,12 +77,13 @@ export async function getWeeklyProfileUsage(userId: string): Promise<{
   profilesUsed: number;
   profileIds: string[];
   plan: string;
+  cycle?: string;
 }> {
   try {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('users')
-      .select('plan, week_profiles')
+      .select('plan, cycle, week_profiles')
       .eq('uuid', userId)
       .maybeSingle();
 
@@ -92,11 +93,16 @@ export async function getWeeklyProfileUsage(userId: string): Promise<{
         profilesUsed: 0,
         profileIds: [],
         plan: 'basic',
+        cycle: 'monthly',
       };
     }
 
     // Type assertion for data
-    const userData = data as { plan?: string; week_profiles?: string | string[] | null };
+    const userData = data as {
+      plan?: string;
+      cycle?: string;
+      week_profiles?: string | string[] | null;
+    };
     
     console.log('Weekly profile usage data:', userData);
     console.log('Array type:', typeof userData.week_profiles);
@@ -145,6 +151,7 @@ export async function getWeeklyProfileUsage(userId: string): Promise<{
       profilesUsed: weekProfiles.length,
       profileIds: weekProfiles,
       plan: userData.plan || 'basic',
+      cycle: userData.cycle || 'monthly',
     };
   } catch (error) {
     console.error('Exception in getWeeklyProfileUsage:', error);
@@ -152,6 +159,7 @@ export async function getWeeklyProfileUsage(userId: string): Promise<{
       profilesUsed: 0,
       profileIds: [],
       plan: 'basic',
+      cycle: 'monthly',
     };
   }
 }

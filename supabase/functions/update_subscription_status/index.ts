@@ -96,7 +96,9 @@ serve(async (req) => {
     // Prepare update data
     const updateData: any = {
       plan: plan,
-      updated_at: new Date().toISOString()
+      // NOTE: don't write `updated_at` unless your `users` table has that column.
+      // The current schema (per production error PGRST204) does not, so including it
+      // makes PostgREST reject the update with "schema cache" errors.
     };
 
     // Add cycle if provided

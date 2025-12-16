@@ -3,6 +3,7 @@
 // LAZY-LOADED: AsyncStorage and client creation happen only when getSupabaseClient() is called
 
 import { createClient, processLock } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import 'react-native-url-polyfill/auto'
 
 // Validate required environment variables (safe - no native modules)
@@ -12,7 +13,7 @@ const SUPABASE_KEY = process.env.EXPO_PUBLIC_SUPABASE_KEY
 export const hasValidSupabaseConfig = !!(SUPABASE_URL && SUPABASE_KEY)
 
 // Lazy-loaded client instance
-let supabaseClient: ReturnType<typeof createClient> | null = null
+let supabaseClient: SupabaseClient<any, 'public', any> | null = null
 
 /**
  * Get Supabase client instance (lazy-loaded)
@@ -28,7 +29,7 @@ export function getSupabaseClient() {
 
   // Create client with lazy-loaded AsyncStorage
   supabaseClient = hasValidSupabaseConfig
-    ? createClient(SUPABASE_URL!, SUPABASE_KEY!, {
+    ? createClient<any>(SUPABASE_URL!, SUPABASE_KEY!, {
         auth: {
           storage: AsyncStorage, // Persists session to AsyncStorage
           autoRefreshToken: true, // Automatically refreshes expired tokens
@@ -37,7 +38,7 @@ export function getSupabaseClient() {
           lock: processLock, // Prevents concurrent auth operations
         },
       })
-    : createClient('https://placeholder.supabase.co', 'placeholder-key', {
+    : createClient<any>('https://placeholder.supabase.co', 'placeholder-key', {
         auth: {
           storage: AsyncStorage,
           autoRefreshToken: false,

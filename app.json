@@ -24,14 +24,16 @@
     ],
     "ios": {
       "supportsTablet": true,
+      "icon": "./assets/icon.png",
       "backgroundColor": "#000000",
       "bundleIdentifier": "com.execudex.app",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
+      "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#000000"

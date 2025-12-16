@@ -5,7 +5,6 @@ import { useAuth } from '../components/AuthProvider';
 import { initIap, restorePurchases } from '../iap.apple';
 import { iapService } from '../services/iapService';
 import { getWeeklyProfileUsage } from '../services/profileAccessService';
-import { SUBSCRIPTION_PRODUCTS } from '../types/iapTypes';
 import { isIAPAvailable } from '../utils/iapAvailability';
 import { getSupabaseClient } from '../utils/supabase';
 
@@ -40,6 +39,7 @@ export default function Subscription() {
   const [profileUsage, setProfileUsage] = useState<{
     profilesUsed: number;
     plan: string;
+    cycle?: string;
   } | null>(null);
   const [loadingUsage, setLoadingUsage] = useState(true);
   const [isPurchasing, setIsPurchasing] = useState(false);
@@ -69,6 +69,7 @@ export default function Subscription() {
           setProfileUsage({
             profilesUsed: usage.profilesUsed,
             plan: usage.plan,
+            cycle: usage.cycle,
           });
         } catch (error) {
           console.error('Error fetching profile usage:', error);
@@ -156,17 +157,39 @@ export default function Subscription() {
     setIsRestoring(true);
     try {
       const purchases = await restorePurchases();
-      // MVP logic: if we see ANY Execudex sub productId, treat as premium.
-      const hasExecudexSub = purchases?.some(p =>
-        ['execudex.plus.monthly', 'execudex.plus.quarterly'].includes(p.productId)
+      // If we see ANY Execudex Plus purchase, restore Plus (and derive the billing cycle from the SKU).
+      const matchingPurchases = (purchases ?? []).filter((p: any) =>
+        ['execudex.plus.monthly', 'execudex.plus.quarterly'].includes(p?.productId)
       );
 
-       if (hasExecudexSub) {
-         // Update user subscription using the existing Edge Function
-         await iapService.updateUserSubscription(user.id, {
-           plan: 'plus',
-           cycle: 'monthly' // Default to monthly, can be refined later
-         });
+      const parseTs = (p: any): number => {
+        const raw =
+          p?.transactionDate ??
+          p?.originalTransactionDate ??
+          p?.purchaseDate ??
+          p?.purchaseTime ??
+          0;
+        const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      const bestPurchase =
+        matchingPurchases
+          .slice()
+          .sort((a: any, b: any) => parseTs(b) - parseTs(a))[0] ?? null;
+
+      if (bestPurchase) {
+        const cycle = String(bestPurchase.productId).includes('quarterly') ? 'quarterly' : 'monthly';
+
+        // Update user subscription using the Edge Function (Supabase is the source of truth)
+        await iapService.updateUserSubscription(user.id, {
+          plan: 'plus',
+          cycle,
+          transactionId: bestPurchase?.transactionId,
+          purchaseDate: bestPurchase?.transactionDate
+            ? new Date(parseTs(bestPurchase)).toISOString()
+            : undefined,
+        });
         
         Alert.alert('Restored', 'Your subscription has been restored.');
         
@@ -175,6 +198,7 @@ export default function Subscription() {
         setProfileUsage({
           profilesUsed: usage.profilesUsed,
           plan: usage.plan,
+          cycle: usage.cycle,
         });
       } else {
         Alert.alert('No purchases found', 'We couldn\'t find prior subscriptions for this Apple ID.');
@@ -265,7 +289,7 @@ export default function Subscription() {
                       />
                     </View>
                     <Text style={styles.usageSubtext}>
-                      Access unlimited profiles with Execudex Plus
+                      {`Execudex Plus${profileUsage.cycle ? ` (${profileUsage.cycle})` : ''} — unlimited profiles`}
                     </Text>
                   </>
                 )}

@@ -269,58 +269,29 @@ export default function Rankings() {
     }
     
     try {
-      // Query all scores for the current politician
+      // Pull the precomputed average from ppl_profiles.score (kept in sync by DB trigger)
       const supabase = getSupabaseClient();
-      const { data: scores, error } = await supabase
-        .from('ppl_scores')
+      const { data: profile, error } = await supabase
+        .from('ppl_profiles')
         .select('score')
-        .eq('index_id', parsedIndex);
+        .eq('index_id', parsedIndex)
+        .maybeSingle();
       
       if (error) {
-        console.error('Error fetching scores:', error);
+        console.error('Error fetching profile score:', error);
         setAverageRanking('No Data');
         return;
       }
       
-      if (scores && scores.length > 0) {
-        // Calculate average with validation
-        const validScores = scores
-          .map(item => Number(item.score))
-          .filter(score => !isNaN(score) && score >= 0 && score <= 5);
-        
-        if (validScores.length > 0) {
-          const totalScore = validScores.reduce((sum, score) => sum + score, 0);
-          const average = totalScore / validScores.length;
-          setAverageRanking(average.toFixed(1));
-          
-          // Update ppl_profiles with the new average
-          await updateProfileScore(parsedIndex, average);
-        } else {
-          setAverageRanking('No Data');
-        }
+      const scoreNum = profile?.score != null ? Number(profile.score) : NaN;
+      if (!isNaN(scoreNum)) {
+        setAverageRanking(scoreNum.toFixed(1));
       } else {
         setAverageRanking('No Data');
       }
     } catch (error) {
       console.error('Error calculating average ranking:', error);
       setAverageRanking('No Data');
-    }
-  };
-
-  // Function to update profile score in ppl_profiles
-  const updateProfileScore = async (indexId: number, score: number) => {
-    try {
-      const supabase = getSupabaseClient();
-      const { error } = await supabase
-        .from('ppl_profiles')
-        .update({ score: score })
-        .eq('index_id', indexId);
-      
-      if (error) {
-        console.error('Error updating profile score:', error);
-      }
-    } catch (error) {
-      console.error('Error updating profile score:', error);
     }
   };
 
@@ -358,71 +329,72 @@ export default function Rankings() {
         await AsyncStorage.setItem(STORAGE_KEYS.SUBMITTED_RANKING, newSubmittedRanking);
         await AsyncStorage.setItem(STORAGE_KEYS.SUBMITTED_STARS, filledStars.toString());
         
-        // Submit score to database
+        // Submit score to database (Edge Function handles everything and updates averageRanking)
         await submitScoreToDatabase(parseInt(politicianIndex), filledStars);
-        
-        // Refresh average ranking after submission
-        await fetchAverageRanking();
       } catch (error) {
         console.error('Failed to save ranking data:', error);
       }
     }
   };
 
-  // Function to submit score to database
+  // Function to submit score via Edge Function
   const submitScoreToDatabase = async (indexId: number, score: number) => {
     if (!user?.id) {
       console.error('User not authenticated, cannot submit score');
+      setAverageRanking('No Data');
       return;
     }
 
     try {
       const supabase = getSupabaseClient();
       
-      // Check if score already exists for this user and politician
-      const { data: existingScore, error: checkError } = await supabase
-        .from('ppl_scores')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('index_id', indexId)
-        .maybeSingle();
+      // Get the current session to get auth token
+      const { data: { session } } = await supabase.auth.getSession();
       
-      if (checkError) {
-        console.error('Error checking existing score:', checkError);
+      if (!session?.access_token) {
+        console.error('No active session, cannot submit score');
+        setAverageRanking('No Data');
         return;
       }
-      
-      if (existingScore) {
-        // Update existing score
-        const { error: updateError } = await supabase
-          .from('ppl_scores')
-          .update({ 
-            score: score,
-            created_at: new Date().toISOString()
-          })
-          .eq('user_id', user.id)
-          .eq('index_id', indexId);
-        
-        if (updateError) {
-          console.error('Error updating score:', updateError);
+
+      console.log('Calling ppl_scoring function with:', { user_id: user.id, index_id: indexId, score });
+
+      // Call the ppl_scoring Edge Function
+      const { data, error } = await supabase.functions.invoke('ppl_scoring', {
+        body: {
+          user_id: user.id,
+          index_id: indexId,
+          score: score,
+        },
+      });
+
+      if (error) {
+        console.error('Error calling ppl_scoring function:', error);
+        console.error('Error details:', JSON.stringify(error));
+        setAverageRanking('No Data');
+        return;
+      }
+
+      console.log('ppl_scoring response:', data);
+
+      if (data?.success && data?.data?.average_score != null) {
+        // Update the UI immediately with the new average from the function
+        const newAverage = Number(data.data.average_score);
+        if (!isNaN(newAverage)) {
+          setAverageRanking(newAverage.toFixed(1));
+          console.log(`✅ Score submitted successfully. New average: ${newAverage.toFixed(1)}`);
         }
+      } else if (data?.error) {
+        console.error('Function returned error:', data.error);
+        setAverageRanking('No Data');
       } else {
-        // Insert new score (let database auto-generate the ID)
-        const { error: insertError } = await supabase
-          .from('ppl_scores')
-          .insert({
-            user_id: user.id,
-            index_id: indexId,
-            score: score,
-            created_at: new Date().toISOString()
-          });
-        
-        if (insertError) {
-          console.error('Error inserting score:', insertError);
-        }
+        console.warn('Score submission succeeded but no average returned');
+        // Try to fetch the average manually as fallback
+        await fetchAverageRanking();
       }
     } catch (error) {
       console.error('Error submitting score to database:', error);
+      setAverageRanking('No Data');
     }
   };
 
