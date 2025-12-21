@@ -266,7 +266,6 @@ export default Sentry.wrap(function Layout() {
           <Stack.Screen name="results" />
           <Stack.Screen name="bookmarks" />
           <Stack.Screen name="feedback" />
-          <Stack.Screen name="legislation" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="debug-supabase" />
           <Stack.Screen name="debug-crash-log" />

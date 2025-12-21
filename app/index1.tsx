@@ -21,6 +21,8 @@ fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{metho
 import { useAuth } from '../components/AuthProvider';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { checkBookmarkStatus, toggleBookmark } from '../utils/bookmarkUtils';
+import { showPoliticianAlertIfNeeded, showPoliticianAlertForTesting, showWeakPoliticianAlertIfNeeded, showWeakPoliticianAlertForInfoButton } from '../utils/profileAlerts';
+import { safeHapticsSelection } from '../utils/safeHaptics';
 import { getSupabaseClient } from '../utils/supabase';
 import Sub1 from './profile/sub1';
 import Sub2 from './profile/sub2';
@@ -256,7 +258,24 @@ export default function Index1({ navigation }: { navigation?: any }) {
   // We still fetch the same DB rows as before; we just avoid mutating `name/position` from that fetch to reduce churn.
   const name = typeof params.title === 'string' ? params.title : 'No Data Available';
   const position = typeof params.subtitle === 'string' ? params.subtitle : 'No Data Available';
-  const [profileData, setProfileData] = useState<any>(null);
+  
+  // Initialize profileData with prefetched data if available
+  const [profileData, setProfileData] = useState<any>(() => {
+    if (typeof params.prefetchedProfileData === 'string') {
+      try {
+        return JSON.parse(params.prefetchedProfileData);
+      } catch (e) {
+        console.error('Failed to parse prefetched profile data:', e);
+        return null;
+      }
+    }
+    return null;
+  });
+  
+  // State for profile slug and weak status
+  const [profileSlug, setProfileSlug] = useState<string | null>(null);
+  const [isWeakProfile, setIsWeakProfile] = useState<boolean>(false);
+  
   const submittedStars = typeof params.submittedStars === 'string' ? parseInt(params.submittedStars) : 0;
   
   // Profile lock status
@@ -264,6 +283,25 @@ export default function Index1({ navigation }: { navigation?: any }) {
     typeof params.index === 'string' ? params.index : undefined, 
     true
   );
+
+  // Show first-time politician profile alert (normal or weak based on profile status)
+  useEffect(() => {
+    const showAlert = async () => {
+      const profileId = typeof params.index === 'string' ? params.index : undefined;
+      
+      if (profileId) {
+        if (isWeakProfile) {
+          // Show weak profile alert for this specific profile
+          await showWeakPoliticianAlertIfNeeded(user?.id, profileId);
+        } else {
+          // Show normal first-time alert
+          await showPoliticianAlertIfNeeded();
+        }
+      }
+    };
+    
+    showAlert();
+  }, [isWeakProfile, params.index, user?.id]);
 
   // Force tab index to 0 (synopsis) when profile is locked
   useEffect(() => {
@@ -319,12 +357,47 @@ export default function Index1({ navigation }: { navigation?: any }) {
     checkBookmarkStatus();
   }, [params.index]);
 
-  // Fetch data from Supabase if index is provided
+  // Fetch profile slug and weak status from ppl_index
+  useEffect(() => {
+    const fetchProfileMetadata = async () => {
+      const index = params.index;
+      if (index) {
+        try {
+          const supabase = getSupabaseClient();
+          const { data, error } = await supabase
+            .from('ppl_index')
+            .select('slug, weak')
+            .eq('id', index)
+            .single();
+          
+          if (!error && data) {
+            if (data.slug) {
+              setProfileSlug(data.slug);
+            }
+            // Set weak status (default to false if not present)
+            setIsWeakProfile(data.weak === true);
+          }
+        } catch (error) {
+          console.error('Error fetching profile metadata:', error);
+        }
+      }
+    };
+    
+    fetchProfileMetadata();
+  }, [params.index]);
+
+  // Fetch data from Supabase if index is provided and not already prefetched
   // Note: Access check now happens in NavigationService BEFORE navigation
   useEffect(() => {
     const fetchProfileData = async () => {
       const index = params.index;
       if (index && typeof index === 'string') {
+        // Skip fetch if we already have prefetched data
+        if (profileData) {
+          console.log('Using prefetched profile data, skipping fetch');
+          return;
+        }
+        
         try {
           console.log('Fetching data for index:', index);
           const politicianId = parseInt(index);
@@ -350,7 +423,7 @@ export default function Index1({ navigation }: { navigation?: any }) {
           
           // Fetch profile data from ppl_profiles
           // Use maybeSingle() to handle cases where profile doesn't exist yet
-          const { data: profileData, error: profileError } = await supabase
+          const { data: fetchedProfileData, error: profileError } = await supabase
             .from('ppl_profiles')
             .select('index_id, approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, score')
             .eq('index_id', politicianId)
@@ -358,9 +431,9 @@ export default function Index1({ navigation }: { navigation?: any }) {
           
           if (profileError) {
             console.error('Error fetching profile data for index', politicianId, ':', profileError);
-          } else if (profileData) {
-            console.log('Successfully fetched profile data:', profileData);
-            const profile = profileData as { approval?: number | null; disapproval?: number | null; score?: number | null; [key: string]: any };
+          } else if (fetchedProfileData) {
+            console.log('Successfully fetched profile data:', fetchedProfileData);
+            const profile = fetchedProfileData as { approval?: number | null; disapproval?: number | null; score?: number | null; [key: string]: any };
             console.log('Score from database:', profile.score);
             
             // Update approval/disapproval percentages
@@ -370,7 +443,7 @@ export default function Index1({ navigation }: { navigation?: any }) {
             }
             
             // Store profile data for use in child components
-            setProfileData(profileData);
+            setProfileData(fetchedProfileData);
           }
         } catch (err) {
           console.error('Error in fetchProfileData:', err);
@@ -515,6 +588,8 @@ export default function Index1({ navigation }: { navigation?: any }) {
         isBookmarked={isBookmarked}
         setIsBookmarked={setIsBookmarked}
         profileId={params.index as string}
+        profileSlug={profileSlug}
+        isWeakProfile={isWeakProfile}
       />
 
       <Animated.ScrollView
@@ -731,14 +806,43 @@ const Header = memo(function Header({
   router, 
   isBookmarked, 
   setIsBookmarked, 
-  profileId 
+  profileId,
+  profileSlug,
+  isWeakProfile
 }: { 
   navigation?: any; 
   router: any; 
   isBookmarked: boolean; 
   setIsBookmarked: (value: boolean | ((prev: boolean) => boolean)) => void; 
   profileId: string | undefined;
+  profileSlug: string | null;
+  isWeakProfile: boolean;
 }) {
+  const handleContactPress = () => {
+    safeHapticsSelection();
+    try {
+      // Pass source as {slug}/{profileId} for politician profiles
+      if (profileSlug && profileId) {
+        const source = `${profileSlug}/${profileId}`;
+        router.push(`/feedback?source=${source}`);
+      } else {
+        router.push('/feedback');
+      }
+    } catch (error) {
+      console.error('[INDEX1] Error navigating to feedback:', error);
+    }
+  };
+
+  // Info button - Shows politician profile information alert (weak or normal)
+  const handleInfoPress = () => {
+    safeHapticsSelection();
+    if (isWeakProfile) {
+      showWeakPoliticianAlertForInfoButton();
+    } else {
+      showPoliticianAlertForTesting();
+    }
+  };
+
   return (
     <View style={styles.headerContainer}>
       <TouchableOpacity
@@ -751,6 +855,20 @@ const Header = memo(function Header({
         <Image source={require('../assets/back1.png')} style={styles.headerIcon} />
       </TouchableOpacity>
       <View style={{ flex: 1 }} />
+      <TouchableOpacity
+        style={styles.headerIconBtn}
+        onPress={handleInfoPress}
+        hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+      >
+        <Image source={require('../assets/Info.png')} style={styles.headerIcon} />
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.headerIconBtn}
+        onPress={handleContactPress}
+        hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+      >
+        <Image source={require('../assets/contact.png')} style={styles.headerIcon} />
+      </TouchableOpacity>
       <BookmarkButton isBookmarked={isBookmarked} setIsBookmarked={setIsBookmarked} profileId={profileId} />
     </View>
   );

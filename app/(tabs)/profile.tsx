@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import React, { useRef } from 'react';
 import { Alert, Animated, Image, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
+import { PERSISTENT_ALERT_KEYS } from '../../utils/profileAlerts';
 import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -33,10 +34,23 @@ export default function Profile() {
               // 1. Sign out from Supabase
               await getSupabaseClient().auth.signOut();
               
-              // 2. Clear all local storage (Hygiene + Safety)
+              // 2. Save persistent data (like first-time alerts) before clearing storage
+              const persistentData: Record<string, string | null> = {};
+              for (const key of PERSISTENT_ALERT_KEYS) {
+                persistentData[key] = await AsyncStorage.getItem(key);
+              }
+              
+              // 3. Clear all local storage (Hygiene + Safety)
               await AsyncStorage.clear();
               
-              // 3. ESSENTIAL: Wait for session to be strictly null
+              // 4. Restore persistent data after clearing
+              for (const [key, value] of Object.entries(persistentData)) {
+                if (value !== null) {
+                  await AsyncStorage.setItem(key, value);
+                }
+              }
+              
+              // 5. ESSENTIAL: Wait for session to be strictly null
               // This loop acts as a delay to let React Context update before we navigate
               let attempts = 0;
               while (attempts < 10) {
@@ -47,7 +61,7 @@ export default function Profile() {
                 attempts++;
               }
               
-              // 4. Navigate to sign in page with parameter to trigger left slide animation
+              // 6. Navigate to sign in page with parameter to trigger left slide animation
               router.replace({ pathname: '/signin', params: { fromSignOut: 'true' } });
             } catch (e: any) {
               Alert.alert('Error', e?.message ?? 'Failed to sign out.');

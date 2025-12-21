@@ -15,12 +15,63 @@ import {
 import { CardGenerationService } from '../services/cardGenerationService';
 import { getSupabaseClient } from '../utils/supabase';
 
+// Simple skeleton loader component
+const SkeletonLoader = ({ width = '100%', height = 60 }: { width?: string | number, height?: number }) => {
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
+  
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmerAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shimmerAnim, {
+          toValue: 0,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+  
+  const opacity = shimmerAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.3, 0.6],
+  });
+  
+  return (
+    <Animated.View
+      style={{
+        width,
+        height,
+        backgroundColor: '#2a2a2a',
+        borderRadius: 8,
+        opacity,
+      }}
+    />
+  );
+};
+
 // Overview component with profile header
-const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }: { name: string; position: string; billStatus?: string; isLowMateriality?: boolean; congressLink?: string }) => {
+const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, prefetchedProfileData }: { name: string; position: string; billStatus?: string; isLowMateriality?: boolean; congressLink?: string; prefetchedProfileData?: any }) => {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [congressData, setCongressData] = useState<{congress: string, bill_status: string} | null>(null);
-  const [profileData, setProfileData] = useState<{overview: string, agenda: string, impact: string} | null>(null);
+  
+  // Initialize profileData with prefetched data if available
+  const [profileData, setProfileData] = useState<{overview: string, agenda: string, impact: string} | null>(() => {
+    if (prefetchedProfileData) {
+      return {
+        overview: prefetchedProfileData.overview || '',
+        agenda: prefetchedProfileData.agenda || '',
+        impact: prefetchedProfileData.impact || ''
+      };
+    }
+    return null;
+  });
+  
   const [fetchedCongressLink, setFetchedCongressLink] = useState<string | null>(null);
   const [isWeak, setIsWeak] = useState(false);
   
@@ -94,10 +145,16 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }
     checkGenerateButtonVisibility();
   }, [legislationId]);
 
-  // Fetch profile data from legi_profiles
+  // Fetch profile data from legi_profiles if not already prefetched
   useEffect(() => {
     const fetchProfileData = async () => {
       if (legislationId) {
+        // Skip fetch if we already have prefetched data
+        if (profileData) {
+          console.log('Using prefetched profile data for legislation');
+          return;
+        }
+        
         try {
           const supabase = getSupabaseClient();
           const { data, error } = await supabase
@@ -259,9 +316,11 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }
       <View style={styles.boxRow}>
         <View style={[styles.overviewBox, { flex: 1, marginBottom: 0 }]}> 
           <Text style={styles.boxTitle}>Overview</Text>
-          <Text style={styles.boxContent}>
-            {profileData?.overview || 'No Data Available'}
-          </Text>
+          {profileData?.overview ? (
+            <Text style={styles.boxContent}>{profileData.overview}</Text>
+          ) : (
+            <SkeletonLoader height={80} />
+          )}
         </View>
       </View>
 
@@ -269,9 +328,11 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }
       <View style={styles.boxRow}>
         <View style={[styles.agendaBox, { flex: 1, marginBottom: 0 }]}> 
           <Text style={styles.boxTitle}>Agenda</Text>
-          <Text style={styles.boxContent}>
-            {profileData?.agenda || 'No Data Available'}
-          </Text>
+          {profileData?.agenda ? (
+            <Text style={styles.boxContent}>{profileData.agenda}</Text>
+          ) : (
+            <SkeletonLoader height={80} />
+          )}
         </View>
       </View>
 
@@ -279,9 +340,11 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink }
       <View style={styles.boxRow}>
         <View style={[styles.impactBox, { flex: 1, marginBottom: 0 }]}> 
           <Text style={styles.boxTitle}>Impact</Text>
-          <Text style={styles.boxContent}>
-            {profileData?.impact || 'No Data Available'}
-          </Text>
+          {profileData?.impact ? (
+            <Text style={styles.boxContent}>{profileData.impact}</Text>
+          ) : (
+            <SkeletonLoader height={80} />
+          )}
         </View>
       </View>
 

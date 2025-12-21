@@ -109,14 +109,19 @@ export default function Results() {
 
         // Apply filters relevant to ppl_index
         if (filters.influence) {
-          let tierValue = '';
           switch (filters.influence) {
-            case 'Low': tierValue = 'base'; break;
-            case 'Moderate': tierValue = 'soft'; break;
-            case 'High': tierValue = 'hard'; break;
-          }
-          if (tierValue) {
-            pplQuery = pplQuery.eq('tier', tierValue);
+            case 'Low':
+              // Low influence: 0 to 0.44
+              pplQuery = pplQuery.gte('limit_score', 0).lte('limit_score', 0.44);
+              break;
+            case 'Moderate':
+              // Moderate influence: 0.45 to 0.64
+              pplQuery = pplQuery.gte('limit_score', 0.45).lte('limit_score', 0.64);
+              break;
+            case 'High':
+              // High influence: 0.65 to 1
+              pplQuery = pplQuery.gte('limit_score', 0.65).lte('limit_score', 1);
+              break;
           }
         }
 
@@ -687,6 +692,8 @@ export default function Results() {
         visible={isProcessingProfile} 
         error={profileError}
         onCancel={handleCancelProfileLoading}
+        title="Loading Profile"
+        subtitle="Please keep the app open while we prepare your profile..."
       />
     </View>
   );

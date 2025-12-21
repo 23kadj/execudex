@@ -40,6 +40,15 @@ const exp1 = React.memo(() => {
   const [category5Label, setCategory5Label] = useState('Bill Status');
   const [category6Label, setCategory6Label] = useState('Congress');
 
+  // State for politician data from ppl_index
+  const [politicianData, setPoliticianData] = useState([
+    { id: 11, name: 'Loading...', sub_name: 'Loading...', approval: '50.0%', disapproval: '50.0%' },
+    { id: 12, name: 'Loading...', sub_name: 'Loading...', approval: '50.0%', disapproval: '50.0%' },
+    { id: 13, name: 'Loading...', sub_name: 'Loading...', approval: '50.0%', disapproval: '50.0%' },
+    { id: 14, name: 'Loading...', sub_name: 'Loading...', approval: '50.0%', disapproval: '50.0%' },
+    { id: 15, name: 'Loading...', sub_name: 'Loading...', approval: '50.0%', disapproval: '50.0%' },
+  ]);
+
   // State for legislation data from legi_index
   const [legislationData, setLegislationData] = useState([
     { id: 13, title: 'Loading...', subtitle: 'Loading...' },
@@ -51,6 +60,63 @@ const exp1 = React.memo(() => {
     { id: 19, title: 'Loading...', subtitle: 'Loading...' },
     { id: 20, title: 'Loading...', subtitle: 'Loading...' },
   ]);
+
+  // Fetch politician data from ppl_index when component mounts
+  useEffect(() => {
+    const fetchPoliticianData = async () => {
+      try {
+        console.log('Fetching politician data for exp1 page...');
+        
+        // Fetch politician data for IDs 11-15 from ppl_index
+        const supabase = getSupabaseClient();
+        const { data: allData, error } = await supabase
+          .from('ppl_index')
+          .select('id, name, sub_name')
+          .in('id', [11, 12, 13, 14, 15])
+          .order('id', { ascending: true });
+        
+        if (error) {
+          console.error('Error fetching politician data:', error);
+          return;
+        }
+        
+        // Fetch approval/disapproval data from ppl_profiles
+        const { data: profileData, error: profileError } = await supabase
+          .from('ppl_profiles')
+          .select('index_id, approval, disapproval')
+          .in('index_id', [11, 12, 13, 14, 15]);
+        
+        if (profileError) {
+          console.error('Error fetching profile data:', profileError);
+        }
+        
+        if (allData && allData.length > 0) {
+          console.log('Successfully fetched politician data from ppl_index:', allData);
+          
+          // Update politician data
+          const newPoliticianData = [...politicianData];
+          allData.forEach((politician) => {
+            const index = politician.id - 11; // Convert ID to array index (11->0, 12->1, etc.)
+            const profile = profileData?.find(p => p.index_id === politician.id);
+            if (index >= 0 && index < newPoliticianData.length) {
+              newPoliticianData[index] = {
+                id: politician.id,
+                name: politician.name || 'No Data Available',
+                sub_name: politician.sub_name || 'No Data Available',
+                approval: profile?.approval ? `${parseFloat(profile.approval.toString()).toFixed(1)}%` : '50.0%',
+                disapproval: profile?.disapproval ? `${parseFloat(profile.disapproval.toString()).toFixed(1)}%` : '50.0%',
+              };
+            }
+          });
+          setPoliticianData(newPoliticianData);
+        }
+      } catch (err) {
+        console.error('Error in fetchPoliticianData:', err);
+      }
+    };
+    
+    fetchPoliticianData();
+  }, []);
 
   // Fetch legislation data from legi_index when component mounts
   useEffect(() => {
@@ -708,10 +774,10 @@ const exp1 = React.memo(() => {
                 await NavigationService.navigateToPoliticianProfile({
                   pathname: '/index1',
                   params: {
-                    title: 'Politician 11',
-                    subtitle: 'Position 11',
+                    title: politicianData[0]?.name || 'No Data Available',
+                    subtitle: politicianData[0]?.sub_name || 'No Data Available',
                     imgKey: 'trending1',
-                    numbersObj: JSON.stringify({ red: '50%', green: '50%' }),
+                    numbersObj: JSON.stringify({ red: politicianData[0]?.disapproval || '50.0%', green: politicianData[0]?.approval || '50.0%' }),
                     index: '11',
                   }
                 }, user?.id);
@@ -748,10 +814,10 @@ const exp1 = React.memo(() => {
                 await NavigationService.navigateToPoliticianProfile({
                   pathname: '/index1',
                   params: {
-                    title: 'Politician 12',
-                    subtitle: 'Position 12',
+                    title: politicianData[1]?.name || 'No Data Available',
+                    subtitle: politicianData[1]?.sub_name || 'No Data Available',
                     imgKey: 'trending2',
-                    numbersObj: JSON.stringify({ red: '50%', green: '50%' }),
+                    numbersObj: JSON.stringify({ red: politicianData[1]?.disapproval || '50.0%', green: politicianData[1]?.approval || '50.0%' }),
                     index: '12',
                   }
                 }, user?.id);
@@ -788,10 +854,10 @@ const exp1 = React.memo(() => {
                 await NavigationService.navigateToPoliticianProfile({
                   pathname: '/index1',
                   params: {
-                    title: 'Politician 13',
-                    subtitle: 'Position 13',
+                    title: politicianData[2]?.name || 'No Data Available',
+                    subtitle: politicianData[2]?.sub_name || 'No Data Available',
                     imgKey: 'trending3',
-                    numbersObj: JSON.stringify({ red: '50%', green: '50%' }),
+                    numbersObj: JSON.stringify({ red: politicianData[2]?.disapproval || '50.0%', green: politicianData[2]?.approval || '50.0%' }),
                     index: '13',
                   }
                 }, user?.id);
@@ -828,10 +894,10 @@ const exp1 = React.memo(() => {
                 await NavigationService.navigateToPoliticianProfile({
                   pathname: '/index1',
                   params: {
-                    title: 'Politician 14',
-                    subtitle: 'Position 14',
+                    title: politicianData[3]?.name || 'No Data Available',
+                    subtitle: politicianData[3]?.sub_name || 'No Data Available',
                     imgKey: 'trending4',
-                    numbersObj: JSON.stringify({ red: '50%', green: '50%' }),
+                    numbersObj: JSON.stringify({ red: politicianData[3]?.disapproval || '50.0%', green: politicianData[3]?.approval || '50.0%' }),
                     index: '14',
                   }
                 }, user?.id);
@@ -868,10 +934,10 @@ const exp1 = React.memo(() => {
                 await NavigationService.navigateToPoliticianProfile({
                   pathname: '/index1',
                   params: {
-                    title: 'Politician 15',
-                    subtitle: 'Position 15',
+                    title: politicianData[4]?.name || 'No Data Available',
+                    subtitle: politicianData[4]?.sub_name || 'No Data Available',
                     imgKey: 'trending5',
-                    numbersObj: JSON.stringify({ red: '50%', green: '50%' }),
+                    numbersObj: JSON.stringify({ red: politicianData[4]?.disapproval || '50.0%', green: politicianData[4]?.approval || '50.0%' }),
                     index: '15',
                   }
                 }, user?.id);
@@ -1274,6 +1340,8 @@ const exp1 = React.memo(() => {
         visible={isProcessingProfile} 
         error={profileError}
         onCancel={handleCancelProfileLoading}
+        title="Loading Profile"
+        subtitle="Please keep the app open while we prepare your profile..."
       />
     </SafeAreaView>
   );
@@ -1482,6 +1550,8 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 18,
     justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#101010',
   },
   searchGridRow: {
     flexDirection: 'row',

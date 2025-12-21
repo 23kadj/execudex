@@ -587,6 +587,8 @@ export default function Legi2({ scrollY, name, position, scrollRef }: Legi2Props
       <CardLoadingIndicator 
         visible={isCardLoading || isGeneratingCards} 
         onCancel={handleCancelLoading}
+        title="Loading Legislation"
+        subtitle="Please keep the app open while we prepare your legislation..."
       />
     </Animated.ScrollView>
   );

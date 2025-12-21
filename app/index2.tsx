@@ -13,6 +13,8 @@ import {
 import { useAuth } from '../components/AuthProvider';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { NavigationService } from '../services/navigationService';
+import { showLegislationAlertIfNeeded, showLegislationAlertForTesting, showWeakLegislationAlertIfNeeded, showWeakLegislationAlertForInfoButton } from '../utils/profileAlerts';
+import { safeHapticsSelection } from '../utils/safeHaptics';
 import { getSupabaseClient } from '../utils/supabase';
 
 import Legi1 from './legislation/legi1';
@@ -31,6 +33,7 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 
 export default function Index2({ navigation }: { navigation?: any }) {
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const [isWeakProfile, setIsWeakProfile] = useState<boolean>(false);
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
@@ -40,6 +43,25 @@ export default function Index2({ navigation }: { navigation?: any }) {
     typeof params.index === 'string' ? params.index : undefined, 
     false
   );
+
+  // Show first-time legislation profile alert (normal or weak based on profile status)
+  useEffect(() => {
+    const showAlert = async () => {
+      const profileId = typeof params.index === 'string' ? params.index : undefined;
+      
+      if (profileId) {
+        if (isWeakProfile) {
+          // Show weak profile alert for this specific profile
+          await showWeakLegislationAlertIfNeeded(user?.id, profileId);
+        } else {
+          // Show normal first-time alert
+          await showLegislationAlertIfNeeded();
+        }
+      }
+    };
+    
+    showAlert();
+  }, [isWeakProfile, params.index, user?.id]);
 
   // Force tab index to 0 (overview) when profile is locked
   useEffect(() => {
@@ -83,33 +105,54 @@ export default function Index2({ navigation }: { navigation?: any }) {
   const name = typeof params.title === 'string' ? params.title : 'No Data Available';
   const position = typeof params.subtitle === 'string' ? params.subtitle : 'No Data Available';
   
-  // State for bill status
-  const [billStatus, setBillStatus] = useState<string>('No Data');
+  // Initialize profileData with prefetched data if available
+  const [profileData, setProfileData] = useState<any>(() => {
+    if (typeof params.prefetchedProfileData === 'string') {
+      try {
+        return JSON.parse(params.prefetchedProfileData);
+      } catch (e) {
+        console.error('Failed to parse prefetched profile data:', e);
+        return null;
+      }
+    }
+    return null;
+  });
   
-  // Fetch bill status from legi_index when component mounts
+  // State for bill status and profile slug
+  const [billStatus, setBillStatus] = useState<string>('No Data');
+  const [profileSlug, setProfileSlug] = useState<string | null>(null);
+  
+  // Fetch bill status, slug, and weak status from legi_index when component mounts
   // Note: Access check now happens in NavigationService BEFORE navigation
   useEffect(() => {
-    const fetchBillStatus = async () => {
+    const fetchBillData = async () => {
       const index = params.index;
       if (index) {
         try {
           const supabase = getSupabaseClient();
           const { data: legislationData, error } = await supabase
             .from('legi_index')
-            .select('bill_status')
+            .select('bill_status, slug, weak')
             .eq('id', index)
             .single();
           
-          if (!error && legislationData && legislationData.bill_status) {
-            setBillStatus(legislationData.bill_status);
+          if (!error && legislationData) {
+            if (legislationData.bill_status) {
+              setBillStatus(legislationData.bill_status);
+            }
+            if (legislationData.slug) {
+              setProfileSlug(legislationData.slug);
+            }
+            // Set weak status (default to false if not present)
+            setIsWeakProfile(legislationData.weak === true);
           }
         } catch (error) {
-          console.error('Error fetching bill status:', error);
+          console.error('Error fetching bill data:', error);
         }
       }
     };
     
-    fetchBillStatus();
+    fetchBillData();
   }, [params.index]);
   
   const [tabIndex, setTabIndex] = useState(0);
@@ -230,6 +273,32 @@ export default function Index2({ navigation }: { navigation?: any }) {
 
   // Header
   const Header = useCallback(() => {
+    const handleContactPress = () => {
+      safeHapticsSelection();
+      try {
+        // Pass source as {slug}/{profileId} for legislation profiles
+        const profileId = params.index as string;
+        if (profileSlug && profileId) {
+          const source = `${profileSlug}/${profileId}`;
+          router.push(`/feedback?source=${source}`);
+        } else {
+          router.push('/feedback');
+        }
+      } catch (error) {
+        console.error('[INDEX2] Error navigating to feedback:', error);
+      }
+    };
+
+    // Info button - Shows legislation profile information alert (weak or normal)
+    const handleInfoPress = () => {
+      safeHapticsSelection();
+      if (isWeakProfile) {
+        showWeakLegislationAlertForInfoButton();
+      } else {
+        showLegislationAlertForTesting();
+      }
+    };
+
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity
@@ -243,10 +312,24 @@ export default function Index2({ navigation }: { navigation?: any }) {
           <Image source={require('../assets/back1.png')} style={styles.headerIcon} />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={styles.headerIconBtn}
+          onPress={handleInfoPress}
+          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+        >
+          <Image source={require('../assets/Info.png')} style={styles.headerIcon} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.headerIconBtn}
+          onPress={handleContactPress}
+          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+        >
+          <Image source={require('../assets/contact.png')} style={styles.headerIcon} />
+        </TouchableOpacity>
         <BookmarkButton isBookmarked={isBookmarked} setIsBookmarked={setIsBookmarked} profileId={params.index as string} />
       </View>
     );
-  }, [router, isBookmarked]);
+  }, [router, isBookmarked, profileSlug, params.index, isWeakProfile]);
 
   // Footer with animated pill
   const Footer = useCallback(() => {
@@ -364,7 +447,14 @@ export default function Index2({ navigation }: { navigation?: any }) {
               }}
             >
               {tab.key === 'overview' ? (
-                <ValidatedComponent name={name} position={position} billStatus={billStatus} isLowMateriality={isLowMateriality} congressLink={suggestUI?.congress_link} />
+                <ValidatedComponent 
+                  name={name} 
+                  position={position} 
+                  billStatus={billStatus} 
+                  isLowMateriality={isLowMateriality} 
+                  congressLink={suggestUI?.congress_link}
+                  prefetchedProfileData={profileData}
+                />
               ) : (
                 <ValidatedComponent 
                   name={name} 

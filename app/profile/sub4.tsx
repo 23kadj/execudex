@@ -783,6 +783,8 @@ export default function Sub4() {
         <CardLoadingIndicator 
           visible={isCardLoading || isGeneratingCards} 
           onCancel={handleCancelLoading}
+          title="Loading Card"
+          subtitle="Please keep the app open while we prepare your card..."
         />
       </View>
     </TouchableWithoutFeedback>

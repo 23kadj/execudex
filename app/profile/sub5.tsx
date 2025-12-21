@@ -14,6 +14,7 @@ import {
 import { useAuth } from '../../components/AuthProvider';
 import { addToHistory } from '../../utils/historyUtils';
 import { safeNativeCall } from '../../utils/nativeCallDebugger';
+import { showCardAlertIfNeeded, showCardAlertForTesting } from '../../utils/profileAlerts';
 import { safeHapticsSelection } from '../../utils/safeHaptics';
 import { getSupabaseClient } from '../../utils/supabase';
 
@@ -185,16 +186,26 @@ export default function Sub5() {
   } | null>(null);
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   
-  // Card index state for subtext, is_active, screen, category, and created_at
+  // Card index state for subtext, is_active, screen, category, created_at, owner_id, and is_ppl
   const [cardIndexData, setCardIndexData] = useState<{
     subtext: string;
     is_active: boolean;
     screen?: string;
     category?: string;
     created_at?: string;
+    owner_id?: string;
+    is_ppl?: boolean;
   } | null>(null);
   const [isLoadingIndex, setIsLoadingIndex] = useState(false);
   
+  // State for profile slug (fetched from ppl_index or legi_index)
+  const [profileSlug, setProfileSlug] = useState<string | null>(null);
+  
+  // Show first-time card/info page alert
+  useEffect(() => {
+    showCardAlertIfNeeded();
+  }, []);
+
   // Check bookmark status when component mounts
   useEffect(() => {
     const checkBookmarkStatus = async () => {
@@ -364,7 +375,7 @@ export default function Sub5() {
             const supabase = getSupabaseClient();
             const { data, error } = await supabase
               .from('card_index')
-              .select('subtext, is_active, screen, category, created_at')
+              .select('subtext, is_active, screen, category, created_at, owner_id, is_ppl')
               .eq('id', parsedCardId)
               .maybeSingle();
             
@@ -400,21 +411,49 @@ export default function Sub5() {
     
     fetchCardIndexData();
   }, [cardId]);
+
+  // Fetch profile slug from ppl_index or legi_index based on card owner
+  useEffect(() => {
+    const fetchProfileSlug = async () => {
+      if (!cardIndexData?.owner_id) {
+        return;
+      }
+      
+      try {
+        const supabase = getSupabaseClient();
+        const tableName = cardIndexData.is_ppl ? 'ppl_index' : 'legi_index';
+        const { data, error } = await supabase
+          .from(tableName)
+          .select('slug')
+          .eq('id', cardIndexData.owner_id)
+          .single();
+        
+        if (!error && data && data.slug) {
+          setProfileSlug(data.slug);
+        }
+      } catch (error) {
+        console.error('[SUB5] Error fetching profile slug:', error);
+      }
+    };
+    
+    fetchProfileSlug();
+  }, [cardIndexData?.owner_id, cardIndexData?.is_ppl]);
   
   // Helper function to capitalize first letter of each word
   const capitalizeWords = (str: string) => {
     return str.replace(/\b\w/g, (char) => char.toUpperCase());
   };
 
-  // Helper function to format date as "Month Year"
+  // Helper function to format date as "Month Day, Year"
   const formatLastUpdated = (dateString: string | undefined) => {
     if (!dateString) return 'Last Updated: Unknown';
     
     try {
       const date = new Date(dateString);
       const month = date.toLocaleString('default', { month: 'long' });
+      const day = date.getDate();
       const year = date.getFullYear();
-      return `Last Updated: ${month} ${year}`;
+      return `Last Updated: ${month} ${day}, ${year}`;
     } catch (error) {
       return 'Last Updated: Unknown';
     }
@@ -553,7 +592,7 @@ export default function Sub5() {
     }
   }
 
-  // Header with bookmark button
+  // Header with contact and bookmark buttons
   const Header = useCallback(() => {
     const handleBack = () => {
       console.log('[SUB5] Checkpoint: Back button pressed, about to call router.back()');
@@ -567,6 +606,27 @@ export default function Sub5() {
       }
     };
     
+    const handleContactPress = () => {
+      safeHapticsSelection();
+      try {
+        // Build source string: {slug}/{owner_id}/{cardId}
+        if (cardId && cardIndexData?.owner_id && profileSlug) {
+          const source = `${profileSlug}/${cardIndexData.owner_id}/${cardId}`;
+          router.push(`/feedback?source=${source}`);
+        } else {
+          router.push('/feedback');
+        }
+      } catch (error) {
+        console.error('[SUB5] Error navigating to feedback:', error);
+      }
+    };
+    
+    // Info button - Shows card/info page information alert
+    const handleInfoPress = () => {
+      safeHapticsSelection();
+      showCardAlertForTesting();
+    };
+    
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity
@@ -577,6 +637,20 @@ export default function Sub5() {
           <Image source={require('../../assets/back1.png')} style={styles.headerIcon} />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={styles.headerIconBtn}
+          onPress={handleInfoPress}
+          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+        >
+          <Image source={require('../../assets/Info.png')} style={styles.headerIcon} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.headerIconBtn}
+          onPress={handleContactPress}
+          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+        >
+          <Image source={require('../../assets/contact.png')} style={styles.headerIcon} />
+        </TouchableOpacity>
         {cardId && (
           <BookmarkButton 
             isBookmarked={isBookmarked} 
@@ -586,7 +660,7 @@ export default function Sub5() {
         )}
       </View>
     );
-  }, [router, cardId, isBookmarked]);
+  }, [router, cardId, isBookmarked, cardIndexData, profileSlug]);
 
 
 

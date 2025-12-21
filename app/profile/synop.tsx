@@ -12,6 +12,45 @@ import { getSupabaseClient } from '../../utils/supabase';
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const STAR_COUNT = 5;
 
+// Simple skeleton loader component
+const SkeletonLoader = ({ width = '100%', height = 60 }: { width?: string | number, height?: number }) => {
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
+  
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmerAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shimmerAnim, {
+          toValue: 0,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+  
+  const opacity = shimmerAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.3, 0.6],
+  });
+  
+  return (
+    <Animated.View
+      style={{
+        width,
+        height,
+        backgroundColor: '#2a2a2a',
+        borderRadius: 8,
+        opacity,
+      }}
+    />
+  );
+};
+
 // #region agent log - crash isolation: disable haptics
 // Apple crash logs show turbomodule exception conversion + hapticd involvement; isolate by disabling haptics.
 const __DISABLE_HAPTICS_FOR_CRASH_TEST = true;
@@ -744,7 +783,11 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       <View style={styles.boxRow}>
         <View style={[styles.synopsisBox, { flex: 1, marginBottom: 0 }]}> 
           <Text style={styles.boxTitle}>Synopsis</Text>
-          <Text style={styles.boxContent}>{profileData?.synopsis || 'No Data Available'}</Text>
+          {profileData?.synopsis ? (
+            <Text style={styles.boxContent}>{profileData.synopsis}</Text>
+          ) : (
+            <SkeletonLoader height={80} />
+          )}
         </View>
       </View>
 
@@ -752,7 +795,11 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       <View style={styles.boxRow}>
         <View style={[styles.agendaBox, { flex: 1, marginBottom: 0 }]}> 
           <Text style={styles.boxTitle}>Agenda Overview</Text>
-          <Text style={styles.boxContent}>{profileData?.agenda || 'No Data Available'}</Text>
+          {profileData?.agenda ? (
+            <Text style={styles.boxContent}>{profileData.agenda}</Text>
+          ) : (
+            <SkeletonLoader height={80} />
+          )}
         </View>
       </View>
 
@@ -760,7 +807,11 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       <View style={styles.boxRow}>
         <View style={[styles.historyBox, { flex: 1, marginBottom: 0 }]}> 
           <Text style={styles.boxTitle}>Personal & Political History</Text>
-          <Text style={styles.boxContent}>{profileData?.identity || 'No Data Available'}</Text>
+          {profileData?.identity ? (
+            <Text style={styles.boxContent}>{profileData.identity}</Text>
+          ) : (
+            <SkeletonLoader height={80} />
+          )}
         </View>
       </View>
 
@@ -768,7 +819,11 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       <View style={styles.boxRow}>
         <View style={[styles.affiliatesBox, { flex: 1, marginBottom: 0 }]}> 
           <Text style={styles.boxTitle}>Affiliates</Text>
-          <Text style={styles.boxContent}>{profileData?.affiliates || 'No Data Available'}</Text>
+          {profileData?.affiliates ? (
+            <Text style={styles.boxContent}>{profileData.affiliates}</Text>
+          ) : (
+            <SkeletonLoader height={80} />
+          )}
         </View>
       </View>
 

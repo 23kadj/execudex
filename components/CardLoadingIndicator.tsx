@@ -4,11 +4,21 @@ import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } fr
 interface CardLoadingIndicatorProps {
   visible: boolean;
   onCancel?: () => void;
+  /**
+   * Optional custom title; defaults to "Loading Card"
+   */
+  title?: string;
+  /**
+   * Optional custom subtitle; defaults to the card loading message
+   */
+  subtitle?: string;
 }
 
 export function CardLoadingIndicator({ 
   visible,
-  onCancel
+  onCancel,
+  title,
+  subtitle
 }: CardLoadingIndicatorProps) {
 
   if (!visible) return null;
@@ -46,11 +56,11 @@ export function CardLoadingIndicator({
           />
           
           <Text style={styles.title}>
-            Loading
+            {title || 'Loading Card'}
           </Text>
           
           <Text style={styles.subtitle}>
-            Please wait while we prepare the card content...
+            {subtitle || 'Please keep the app open while we prepare your card...'}
           </Text>
         </View>
       </View>

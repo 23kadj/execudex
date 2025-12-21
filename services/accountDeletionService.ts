@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { PERSISTENT_ALERT_KEYS } from "../utils/profileAlerts";
 import { getSupabaseClient } from "../utils/supabase";
 
 const FUNC_NAME = "delete-account"; // matches your deployed function name
@@ -24,9 +25,23 @@ export async function deleteAccountOnServer() {
   // Sign out locally after server deletes
   await getSupabaseClient().auth.signOut();
   
-  // Clear all local caches and storage
+  // Clear all local caches and storage (but preserve persistent alert preferences)
   try {
+    // Save persistent data before clearing
+    const persistentData: Record<string, string | null> = {};
+    for (const key of PERSISTENT_ALERT_KEYS) {
+      persistentData[key] = await AsyncStorage.getItem(key);
+    }
+    
+    // Clear all storage
     await AsyncStorage.clear();
+    
+    // Restore persistent data
+    for (const [key, value] of Object.entries(persistentData)) {
+      if (value !== null) {
+        await AsyncStorage.setItem(key, value);
+      }
+    }
   } catch (error) {
     console.warn('Failed to clear AsyncStorage:', error);
   }

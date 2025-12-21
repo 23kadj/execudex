@@ -66,7 +66,7 @@ export function ProfileLoadingIndicator({
           </Text>
           
           <Text style={styles.subtitle}>
-            {error ? '' : (subtitle || 'Please wait while we update the profile data...')}
+            {error ? '' : (subtitle || 'Please keep the app open while we prepare your profile...')}
           </Text>
         </View>
       </View>

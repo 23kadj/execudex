@@ -100,6 +100,11 @@ export default function Rankings() {
                 return;
               }
               
+              console.log('[Rankings] Loading user score from database:', {
+                user_id: user.id?.substring(0, 12) + '...',
+                index_id: parsedIndex
+              });
+              
               const supabase = getSupabaseClient();
               const { data: userScore, error } = await supabase
                 .from('ppl_scores')
@@ -110,16 +115,24 @@ export default function Rankings() {
 
               if (isCancelled) return;
 
+              console.log('[Rankings] Database query result:', {
+                hasData: !!userScore,
+                score: userScore?.score,
+                error: error?.message || 'none'
+              });
+
               if (!error && userScore && userScore.score != null) {
                 const score = Number(userScore.score);
                 if (!isNaN(score) && score >= 0 && score <= 5) {
                   setFilledStars(score);
                   setSubmittedRanking(score.toString());
                   setIsSubmitted(true);
+                  console.log('[Rankings] ✅ User score loaded:', score);
                 } else {
                   setSubmittedRanking('No Data');
                   setIsSubmitted(false);
                   setFilledStars(0);
+                  console.log('[Rankings] Invalid score value:', score);
                 }
               } else {
                 // No matching row found - reset to default values
@@ -127,6 +140,7 @@ export default function Rankings() {
                   setSubmittedRanking('No Data');
                   setIsSubmitted(false);
                   setFilledStars(0);
+                  console.log('[Rankings] No user score found in database');
                 }
               }
             } catch (error) {
@@ -208,6 +222,11 @@ export default function Rankings() {
           return;
         }
         
+        console.log('[Rankings] Refreshing user score:', {
+          user_id: user.id?.substring(0, 12) + '...',
+          index_id: parsedIndex
+        });
+        
         const supabase = getSupabaseClient();
         const { data: userScore, error } = await supabase
           .from('ppl_scores')
@@ -218,17 +237,25 @@ export default function Rankings() {
 
         if (isCancelled) return;
 
+        console.log('[Rankings] Refresh result:', {
+          hasData: !!userScore,
+          score: userScore?.score,
+          error: error?.message || 'none'
+        });
+
         if (!error && userScore && userScore.score != null) {
           const score = Number(userScore.score);
           if (!isNaN(score) && score >= 0 && score <= 5) {
             setSubmittedRanking(score.toString());
             setIsSubmitted(true);
             setFilledStars(score);
+            console.log('[Rankings] ✅ Refreshed user score:', score);
           } else {
             if (!isCancelled) {
               setSubmittedRanking('No Data');
               setIsSubmitted(false);
               setFilledStars(0);
+              console.log('[Rankings] Invalid refreshed score:', score);
             }
           }
         } else {
@@ -236,6 +263,7 @@ export default function Rankings() {
             setSubmittedRanking('No Data');
             setIsSubmitted(false);
             setFilledStars(0);
+            console.log('[Rankings] No score found during refresh');
           }
         }
       } catch (error) {
@@ -357,7 +385,13 @@ export default function Rankings() {
         return;
       }
 
-      console.log('Calling ppl_scoring function with:', { user_id: user.id, index_id: indexId, score });
+      console.log('Calling ppl_scoring function with:', { 
+        user_id: user.id?.substring(0, 12) + '...', 
+        user_id_type: typeof user.id,
+        user_id_length: user.id?.length || 0,
+        index_id: indexId, 
+        score: score 
+      });
 
       // Call the ppl_scoring Edge Function
       const { data, error } = await supabase.functions.invoke('ppl_scoring', {
@@ -383,6 +417,27 @@ export default function Rankings() {
         if (!isNaN(newAverage)) {
           setAverageRanking(newAverage.toFixed(1));
           console.log(`✅ Score submitted successfully. New average: ${newAverage.toFixed(1)}`);
+          
+          // Verify the score was saved by querying it back
+          setTimeout(async () => {
+            try {
+              const { data: verifyScore, error: verifyError } = await supabase
+                .from('ppl_scores')
+                .select('score, user_id')
+                .eq('user_id', user.id)
+                .eq('index_id', indexId)
+                .maybeSingle();
+              
+              console.log('[Rankings] Verification query result:', {
+                hasData: !!verifyScore,
+                score: verifyScore?.score,
+                user_id_matches: verifyScore?.user_id === user.id,
+                error: verifyError?.message || 'none'
+              });
+            } catch (err) {
+              console.error('[Rankings] Verification query failed:', err);
+            }
+          }, 500);
         }
       } else if (data?.error) {
         console.error('Function returned error:', data.error);

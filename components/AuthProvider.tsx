@@ -124,6 +124,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   setSession(null);
                   setUser(null);
                 }
+              } else if (error.message?.includes('Invalid Refresh Token') || error.message?.includes('Refresh Token Not Found')) {
+                // Invalid/expired refresh token - this is expected after token expiry or revocation
+                // Silently clear the session and clean up AsyncStorage
+                console.log('[AuthProvider] Invalid refresh token detected, clearing session storage');
+                logStartup(`AuthProvider: Invalid refresh token, clearing storage`);
+                setSession(null);
+                setUser(null);
+                // Clear AsyncStorage to prevent this error on every restart
+                AsyncStorage.removeItem('supabase.auth.token').catch((e) => 
+                  console.warn('[AuthProvider] Failed to clear invalid token from storage:', e)
+                );
               } else {
                 console.error('[AuthProvider] Auth error getting session:', error);
                 logStartup(`AuthProvider: getSession() auth error: ${error.message}`);
@@ -147,8 +158,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               userId: session?.user?.id,
             });
           }).catch((error) => {
-            console.error('[AuthProvider] Exception getting session:', error);
-            logStartup(`AuthProvider: getSession() exception: ${error}`);
+            // Check if this is an invalid refresh token error (expected during token expiry)
+            const isInvalidTokenError = error?.message?.includes('Invalid Refresh Token') || 
+                                        error?.message?.includes('Refresh Token Not Found');
+            
+            if (isInvalidTokenError) {
+              console.log('[AuthProvider] Invalid refresh token detected (exception), clearing session storage');
+              logStartup(`AuthProvider: Invalid refresh token (exception), clearing storage`);
+              // Clear AsyncStorage to prevent this error on every restart
+              AsyncStorage.removeItem('supabase.auth.token').catch((e) => 
+                console.warn('[AuthProvider] Failed to clear invalid token from storage:', e)
+              );
+            } else {
+              console.error('[AuthProvider] Exception getting session:', error);
+              logStartup(`AuthProvider: getSession() exception: ${error}`);
+            }
+            
             // On exception, only clear if we haven't received INITIAL_SESSION
             if (!initialSessionReceived) {
               setSession(null);

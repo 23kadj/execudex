@@ -39,14 +39,23 @@ serve(async (req) => {
 
     // Parse request body
     const { index_id, score, user_id } = await req.json();
-    console.log('[ppl_scoring] Request body:', { index_id, score, user_id: user_id ? 'present' : 'missing' });
+    console.log('[ppl_scoring] Request body:', { 
+      index_id, 
+      score, 
+      user_id: user_id ? user_id.substring(0, 12) + '...' : 'missing',
+      user_id_type: typeof user_id,
+      user_id_length: user_id ? user_id.length : 0
+    });
 
     // Validate user_id
-    if (!user_id) {
-      console.error('[ppl_scoring] Missing user_id in request');
+    if (!user_id || typeof user_id !== 'string' || user_id.trim() === '') {
+      console.error('[ppl_scoring] Missing or invalid user_id in request:', { 
+        user_id_present: !!user_id,
+        user_id_type: typeof user_id 
+      });
       return new Response(
         JSON.stringify({ 
-          error: 'Authentication required: user_id missing',
+          error: 'Authentication required: user_id missing or invalid',
         }),
         {
           status: 401,
@@ -98,6 +107,8 @@ serve(async (req) => {
     }
 
     console.log(`[ppl_scoring] Processing: user=${user_id.substring(0, 8)}..., politician=${indexNum}, score=${scoreNum}`);
+    console.log(`[ppl_scoring] Full user_id value: "${user_id}"`);
+    console.log(`[ppl_scoring] user_id type: ${typeof user_id}, length: ${user_id.length}`);
 
     // Use service role client for all DB operations
     const serviceClient = createClient(
@@ -132,12 +143,20 @@ serve(async (req) => {
     }
 
     // STEP 1: Insert or update the user's score in ppl_scores
+    console.log('[ppl_scoring] Checking for existing score with user_id:', user_id.substring(0, 12) + '...', 'index_id:', indexNum);
+    
     const { data: existingScore, error: checkError } = await serviceClient
       .from('ppl_scores')
-      .select('id')
+      .select('id, user_id')
       .eq('user_id', user_id)
       .eq('index_id', indexNum)
       .maybeSingle();
+    
+    console.log('[ppl_scoring] Existing score check result:', {
+      found: !!existingScore,
+      existing_user_id: existingScore?.user_id ? existingScore.user_id.substring(0, 12) + '...' : 'N/A',
+      error: checkError?.message || 'none'
+    });
 
     if (checkError) {
       console.error('[ppl_scoring] Error checking existing score:', checkError);
@@ -158,29 +177,86 @@ serve(async (req) => {
     if (existingScore) {
       // Update existing score
       console.log(`[ppl_scoring] Updating existing score (id: ${existingScore.id})`);
-      const { error: updateError } = await serviceClient
+      console.log('[ppl_scoring] Update params:', {
+        user_id: user_id.substring(0, 12) + '...',
+        user_id_full_length: user_id.length,
+        score: scoreNum,
+        index_id: indexNum
+      });
+      
+      const updateData = { 
+        user_id: user_id,
+        score: scoreNum,
+        created_at: new Date().toISOString()
+      };
+      
+      const { data: updatedRow, error: updateError } = await serviceClient
         .from('ppl_scores')
-        .update({ 
-          score: scoreNum,
-          created_at: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('user_id', user_id)
-        .eq('index_id', indexNum);
+        .eq('index_id', indexNum)
+        .select('id, user_id, index_id, score')
+        .single();
 
       dbError = updateError;
+      if (!updateError && updatedRow) {
+        console.log('[ppl_scoring] ✅ Score updated successfully. Saved row:', {
+          id: updatedRow.id,
+          user_id: updatedRow.user_id ? updatedRow.user_id.substring(0, 12) + '...' : 'NULL',
+          user_id_is_null: updatedRow.user_id === null,
+          index_id: updatedRow.index_id,
+          score: updatedRow.score
+        });
+      } else if (updateError) {
+        console.error('[ppl_scoring] Update error details:', updateError);
+      }
     } else {
       // Insert new score
       console.log('[ppl_scoring] Inserting new score');
-      const { error: insertError } = await serviceClient
+      console.log('[ppl_scoring] Values to insert:', {
+        user_id: user_id.substring(0, 12) + '...',
+        user_id_full_length: user_id.length,
+        index_id: indexNum,
+        score: scoreNum
+      });
+      
+      const insertData = {
+        user_id: user_id,
+        index_id: indexNum,
+        score: scoreNum,
+        created_at: new Date().toISOString()
+      };
+      
+      const { data: insertedRow, error: insertError } = await serviceClient
         .from('ppl_scores')
-        .insert({
-          user_id: user_id,
-          index_id: indexNum,
-          score: scoreNum,
-          created_at: new Date().toISOString()
-        });
-
+        .insert(insertData)
+        .select('id, user_id, index_id, score')
+        .single();
+      
       dbError = insertError;
+      if (!insertError && insertedRow) {
+        console.log('[ppl_scoring] ✅ Score inserted successfully. Saved row:', {
+          id: insertedRow.id,
+          user_id: insertedRow.user_id ? insertedRow.user_id.substring(0, 12) + '...' : 'NULL',
+          user_id_is_null: insertedRow.user_id === null,
+          index_id: insertedRow.index_id,
+          score: insertedRow.score
+        });
+        
+        // Verify the insert immediately
+        const { data: verifyData } = await serviceClient
+          .from('ppl_scores')
+          .select('id, user_id, index_id, score')
+          .eq('id', insertedRow.id)
+          .single();
+        
+        console.log('[ppl_scoring] Verification read:', {
+          user_id_in_db: verifyData?.user_id ? verifyData.user_id.substring(0, 12) + '...' : 'NULL',
+          user_id_is_null_in_db: verifyData?.user_id === null
+        });
+      } else if (insertError) {
+        console.error('[ppl_scoring] Insert error details:', JSON.stringify(insertError));
+      }
     }
 
     if (dbError) {

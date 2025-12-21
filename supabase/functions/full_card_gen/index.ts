@@ -164,6 +164,77 @@ async function downloadFullText(path: string): Promise<string> {
   return await data.text();
 }
 
+/** Clean a sentence by removing links, formatting, metadata, and other non-content elements */
+function cleanExcerptSentence(sentence: string): string {
+  let s = sentence;
+  
+  // Remove markdown/HTML links entirely: [text](url) → ""
+  s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, '');
+  
+  // Remove standalone URLs
+  s = s.replace(/https?:\/\/[^\s]+/g, '');
+  
+  // Remove markdown formatting
+  s = s.replace(/#{1,6}\s*/g, ''); // headers
+  s = s.replace(/\*\*([^*]+)\*\*/g, '$1'); // bold
+  s = s.replace(/\*([^*]+)\*/g, '$1'); // italic
+  s = s.replace(/`([^`]+)`/g, '$1'); // code
+  
+  // Remove image markdown
+  s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, '');
+  
+  // Remove HTML tags
+  s = s.replace(/<[^>]+>/g, '');
+  
+  // Remove metadata labels (case insensitive)
+  s = s.replace(/\b(Signed|Published|Date|Outcome|Bill No\.?|FR Citation|FR Doc\.?|Number|Permalink|See|More information about|About the|Click here|Read more)\s*:\s*/gi, '');
+  
+  // Normalize punctuation issues
+  s = s.replace(/:\s*:/g, ':'); // ": :" → ":"
+  s = s.replace(/\|\s*\|/g, ''); // Remove table separators
+  s = s.replace(/\|/g, ''); // Remove remaining pipes
+  
+  // Remove table markdown separators
+  s = s.replace(/[-]{3,}/g, '');
+  
+  // Remove extra punctuation artifacts
+  s = s.replace(/\.{2,}/g, '.'); // Multiple periods
+  s = s.replace(/,{2,}/g, ','); // Multiple commas
+  
+  // Normalize whitespace
+  s = s.replace(/\s+/g, ' ');
+  
+  // Trim
+  s = s.trim();
+  
+  return s;
+}
+
+/** Check if a sentence looks like a header, navigation element, or metadata rather than actual content */
+function isHeaderLike(sentence: string): boolean {
+  const s = sentence.trim();
+  
+  // Too short (likely a header or label)
+  if (s.length < 20) return true;
+  
+  // All caps (likely a header) - check if most alpha characters are uppercase
+  const alphaOnly = s.replace(/[^a-zA-Z]/g, '');
+  if (alphaOnly.length > 5 && alphaOnly === alphaOnly.toUpperCase()) return true;
+  
+  // Starts with common metadata/navigation patterns
+  if (/^(Signed|Published|Date|Outcome|Bill No|FR Citation|Number|Permalink|See|More information|About|Click|Read more|Login|Forgot|Register|Subscribe|Download|PDF|Print)/i.test(s)) return true;
+  
+  // Contains mostly non-alphabetic characters (metadata junk like "86 FR 58551")
+  const nonAlpha = s.replace(/[a-zA-Z\s]/g, '').length;
+  const total = s.length;
+  if (total > 0 && nonAlpha / total > 0.5) return true;
+  
+  // Looks like a navigation or UI element (contains certain patterns)
+  if (/\*\*|\[|\]|Login|Password|Sign up|Register/i.test(s)) return true;
+  
+  return false;
+}
+
 /** Build a quoted excerpt ≤ 1000 chars from relevant sentences; allow disjoint segments separated by […] */
 function buildQuotedExcerpt(fullText: string, title: string, subtext: string, maxChars = 1000): string {
   const focus = (title + " " + subtext).toLowerCase();
@@ -171,15 +242,26 @@ function buildQuotedExcerpt(fullText: string, title: string, subtext: string, ma
 
   const sentences = fullText
     .replace(/\s+/g, " ")
-    .split(/(?<=[\.\!\?]["”’)]?)\s+/);
+    .split(/(?<=[\.\!\?][""')]?)\s+/);
 
-  const scored = sentences.map((s, i) => {
-    const low = s.toLowerCase();
+  // Clean and filter sentences BEFORE scoring
+  const cleanedSentences = sentences
+    .map((s, i) => ({ original: s.trim(), cleaned: cleanExcerptSentence(s.trim()), index: i }))
+    .filter(({ cleaned }) => cleaned.length > 0 && !isHeaderLike(cleaned));
+
+  // If no valid sentences after cleaning, return fallback
+  if (cleanedSentences.length === 0) {
+    return '"No readable excerpt available."';
+  }
+
+  // Score the cleaned sentences
+  const scored = cleanedSentences.map(({ cleaned, index }) => {
+    const low = cleaned.toLowerCase();
     let score = 0;
     for (const t of focusTerms) if (low.includes(t)) score++;
-    const len = s.length;
+    const len = cleaned.length;
     if (len > 40 && len < 600) score += 0.3;
-    return { s: s.trim(), i, score };
+    return { s: cleaned, i: index, score };
   });
 
   scored.sort((a, b) => (b.score - a.score) || (a.i - b.i));
@@ -197,16 +279,16 @@ function buildQuotedExcerpt(fullText: string, title: string, subtext: string, ma
   }
 
   if (chosen.length === 0) {
-    const clip = fullText.trim().slice(0, Math.max(0, maxChars - 2));
-    const safe = clip.replace(/\s+\S*$/, "");
-    return `"${safe}"`;
+    return '"No readable excerpt available."';
   }
 
+  // Reassemble with quotes and [...]
   let out = `"${chosen[0]}"`;
   for (let i = 1; i < chosen.length; i++) {
     out += ` "[...]" "${chosen[i]}"`;
   }
-  if (out.length > maxChars) out = out.slice(0, maxChars - 1) + "”";
+  
+  // Note: Don't truncate after cleaning - if it's short, that's okay
   return out;
 }
 

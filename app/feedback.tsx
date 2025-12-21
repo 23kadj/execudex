@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useRef, useState } from 'react';
 import { Image, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useAuth } from '../components/AuthProvider';
@@ -6,16 +6,21 @@ import { getSupabaseClient } from '../utils/supabase';
 
 export default function Feedback() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const { user } = useAuth();
   const [feedbackText, setFeedbackText] = useState('');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isDisabled, setIsDisabled] = useState(false);
+  
+  // Get source from route params (e.g., "ppl123", "legi456", "ppl123/789")
+  const source = typeof params.source === 'string' ? params.source : null;
 
-  // Debug logging for user authentication
+  // Debug logging for user authentication and source
   console.log('Feedback component - User authentication status:', {
     isAuthenticated: !!user,
     userId: user?.id,
-    userEmail: user?.email
+    userEmail: user?.email,
+    source: source || 'account page (no source)'
   });
 
   // Ref for feedback input to handle keyboard dismissal
@@ -37,15 +42,23 @@ export default function Feedback() {
     try {
       const timestamp = new Date().toISOString();
       
-      // Insert feedback into the feedback table with user_id and created_at
+      // Insert feedback into the feedback table with user_id, user_email, created_at, and source
       const supabase = getSupabaseClient();
+      const feedbackData: any = {
+        comment: feedbackText.trim(),
+        user_id: user.id,
+        userEmail: user.email,
+        created_at: timestamp
+      };
+      
+      // Add source if it exists (from profile/card pages)
+      if (source) {
+        feedbackData.source = source;
+      }
+      
       const { data, error } = await supabase
         .from('feedback')
-        .insert({
-          comment: feedbackText.trim(),
-          user_id: user.id,
-          created_at: timestamp
-        })
+        .insert(feedbackData)
         .select();
 
       if (error) {

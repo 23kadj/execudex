@@ -196,7 +196,26 @@ export class NavigationService {
         throw new Error('CANCELLED');
       }
       
-      console.log('Profile processing completed, navigating to profile');
+      console.log('Profile processing completed, prefetching profile data');
+      
+      // ✅ STEP 3: Prefetch profile data to avoid "No Data Available" flash
+      try {
+        const supabase = getSupabaseClient();
+        const { data: profileData } = await supabase
+          .from('ppl_profiles')
+          .select('approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, score')
+          .eq('index_id', politicianId)
+          .maybeSingle();
+        
+        // Add prefetched data to params if available
+        if (profileData) {
+          console.log('Successfully prefetched profile data');
+          params.params.prefetchedProfileData = JSON.stringify(profileData);
+        }
+      } catch (error) {
+        console.warn('Failed to prefetch profile data, will load on page:', error);
+        // Continue without prefetched data - page will fetch it
+      }
       
       // Navigate after processing is complete
       router.push(params);
@@ -401,7 +420,26 @@ export class NavigationService {
         throw new Error('CANCELLED');
       }
       
-      console.log('Legislation profile processing completed, navigating to profile');
+      console.log('Legislation profile processing completed, prefetching profile data');
+      
+      // ✅ STEP 3: Prefetch profile data to avoid "No Data Available" flash
+      try {
+        const supabase = getSupabaseClient();
+        const { data: profileData } = await supabase
+          .from('legi_profiles')
+          .select('overview, agenda, impact')
+          .eq('owner_id', legislationId)
+          .maybeSingle();
+        
+        // Add prefetched data to params if available
+        if (profileData) {
+          console.log('Successfully prefetched legislation profile data');
+          params.params.prefetchedProfileData = JSON.stringify(profileData);
+        }
+      } catch (error) {
+        console.warn('Failed to prefetch legislation profile data, will load on page:', error);
+        // Continue without prefetched data - page will fetch it
+      }
       
       // Check for low materiality result
       if (result?.isLowMateriality) {

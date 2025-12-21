@@ -470,6 +470,8 @@ export default function Legi4() {
       <CardLoadingIndicator 
         visible={isCardLoading} 
         onCancel={handleCancelLoading}
+        title="Loading Card"
+        subtitle="Please keep the app open while we prepare your card..."
       />
       </View>
     </TouchableWithoutFeedback>

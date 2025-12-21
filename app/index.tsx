@@ -31,7 +31,7 @@ import { getSupabaseClient } from '../utils/supabase';
 const BOX_1_CONTENT = {
   title: 'Execudex Basic',
   feature1: 'Access 5 profiles a week',
-  feature2: 'Free',
+  feature2: 'Free of Charge',
 };
 
 const BOX_2_CONTENT = {
