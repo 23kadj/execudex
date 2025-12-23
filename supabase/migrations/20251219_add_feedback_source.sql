@@ -12,3 +12,4 @@ ADD COLUMN IF NOT EXISTS source TEXT;
 -- Add comment to document the column
 COMMENT ON COLUMN feedback.source IS 'Source of feedback: NULL for account page, "ppl{id}" or "legi{id}" for profile pages, "ppl{id}/{card_id}" or "legi{id}/{card_id}" for card pages';
 
+

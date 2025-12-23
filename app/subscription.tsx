@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAuth } from '../components/AuthProvider';
 import { initIap, restorePurchases } from '../iap.apple';
 import { iapService } from '../services/iapService';
@@ -50,14 +50,8 @@ export default function Subscription() {
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<string | null>(null);
   
-  // Modal state for subscription status
-  const [showStatusModal, setShowStatusModal] = useState(false);
-  const [subscriptionStatus, setSubscriptionStatus] = useState<{
-    currentPlan: string;
-    currentExpiration: string;
-    nextPlan: string;
-    nextBegins: string;
-  } | null>(null);
+  // Flag to prevent duplicate purchase processing
+  const [isProcessingPurchase, setIsProcessingPurchase] = useState(false);
   
   // Animation values for bounce effect
   const box1Scale = useRef(new Animated.Value(1)).current;
@@ -153,6 +147,14 @@ export default function Subscription() {
     // Set up purchase listeners
     const cleanup = iapService.setupPurchaseListeners(
       async (purchase) => {
+        // Prevent duplicate processing
+        if (isProcessingPurchase) {
+          console.log('⚠️ Already processing a purchase, ignoring duplicate');
+          return;
+        }
+        
+        setIsProcessingPurchase(true);
+        
         try {
           console.log('Purchase successful:', purchase);
           
@@ -168,12 +170,15 @@ export default function Subscription() {
           Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
         } finally {
           setIsPurchasing(false);
+          // Reset processing flag after a delay to prevent rapid retriggers
+          setTimeout(() => setIsProcessingPurchase(false), 2000);
         }
       },
       (error) => {
         console.error('Purchase error:', error);
         iapService.showPurchaseError(error);
         setIsPurchasing(false);
+        setIsProcessingPurchase(false);
       }
     );
 
@@ -296,72 +301,22 @@ export default function Subscription() {
     if (!user?.id) return;
 
     try {
-      // Validate receipt with Apple for security
-      let validatedData = null;
-      if (purchase.transactionReceipt) {
-        const { data, error } = await getSupabaseClient().functions.invoke('verify_receipt', {
-          body: {
-            receiptData: purchase.transactionReceipt,
-            userId: user.id
-          }
-        });
-
-        if (error) {
-          console.error('❌ Receipt validation failed:', error);
-        } else {
-          validatedData = data;
-          console.log('✅ Receipt validated successfully:', data);
-        }
-      }
-
       // Parse Apple transaction data
       const productId = purchase.productId;
-      const transactionDate = purchase.transactionDate ? new Date(parseInt(purchase.transactionDate)) : new Date();
+      const transactionId = purchase.transactionId || purchase.originalTransactionId;
       
       // Determine cycle from product ID
       const newCycle = productId.includes('quarterly') ? 'quarterly' : 'monthly';
-      const newPlan = 'plus'; // Always plus since we're purchasing
       
-      // Calculate expiration date (approximate - Apple will provide actual)
-      // For now, use standard periods: monthly = 30 days, quarterly = 90 days
-      const expirationDate = new Date(transactionDate);
-      if (newCycle === 'quarterly') {
-        expirationDate.setDate(expirationDate.getDate() + 90);
-      } else {
-        expirationDate.setDate(expirationDate.getDate() + 30);
-      }
+      // Update Supabase - Only Basic → Plus upgrades allowed
+      await updateSubscriptionInSupabase(newCycle, transactionId, purchase);
 
-      const currentPlan = profileUsage?.plan || 'basic';
-      const currentCycle = profileUsage?.cycle || 'monthly';
-      
-      // Determine if this is an upgrade or switch
-      // Note: Downgrade (Plus → Basic) is handled via Apple subscription cancellation, not purchase
-      const isUpgrade = currentPlan === 'basic' && newPlan === 'plus';
-      const isSwitch = currentPlan === 'plus' && newPlan === 'plus' && currentCycle !== newCycle;
-
-      // Update Supabase based on transaction type
-      await updateSubscriptionInSupabase(newPlan, newCycle, isUpgrade, expirationDate, purchase);
-
-      // Prepare status modal data
-      const formatDate = (date: Date) => {
-        return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
-      };
-
-      const currentPlanName = isUpgrade 
-        ? `Plus ${newCycle === 'quarterly' ? 'Quarterly' : 'Monthly'}` 
-        : `${currentPlan === 'plus' ? 'Plus' : 'Basic'} ${currentCycle === 'quarterly' ? 'Quarterly' : 'Monthly'}`;
-      
-      const nextPlanName = `Plus ${newCycle === 'quarterly' ? 'Quarterly' : 'Monthly'}`;
-
-      setSubscriptionStatus({
-        currentPlan: currentPlanName,
-        currentExpiration: formatDate(isUpgrade ? new Date() : expirationDate),
-        nextPlan: nextPlanName,
-        nextBegins: formatDate(isUpgrade ? new Date() : expirationDate)
-      });
-
-      // Show modal
-      setShowStatusModal(true);
+      // Show success alert
+      Alert.alert(
+        'Purchase Successful',
+        'Your subscription has been activated! You now have access to unlimited profiles.',
+        [{ text: 'OK' }]
+      );
 
       // Refresh usage data
       const usage = await getWeeklyProfileUsage(user.id);
@@ -382,10 +337,8 @@ export default function Subscription() {
   };
 
   const updateSubscriptionInSupabase = async (
-    newPlan: string, 
-    newCycle: string, 
-    isUpgrade: boolean,
-    expirationDate: Date,
+    newCycle: string,
+    transactionId: string,
     purchase: any
   ) => {
     if (!user?.id) return;
@@ -393,48 +346,34 @@ export default function Subscription() {
     const supabase = getSupabaseClient();
     
     try {
-      if (isUpgrade) {
-        // Upgrade: Basic → Plus (immediate)
-        const { error } = await supabase
-          .from('users')
-          .update({
-            plan: 'plus' as const,
-            cycle: newCycle as 'monthly' | 'quarterly',
-            plus_til: null
-          })
-          .eq('id', user.id);
-
-        if (error) throw error;
-        console.log('✅ Upgraded to Plus');
-
-      } else {
-        // Switch: Plus Monthly ↔ Plus Quarterly
-        const { error } = await supabase
-          .from('users')
-          .update({
-            plan: 'plus' as const,
-            cycle: newCycle as 'monthly' | 'quarterly',
-            plus_til: null
-          })
-          .eq('id', user.id);
-
-        if (error) throw error;
-        console.log('✅ Switched Plus subscription type');
-      }
-
-      // Also call the update subscription Edge Function if it exists
-      try {
-        await iapService.updateUserSubscription(user.id, {
-          plan: newPlan as 'basic' | 'plus',
+      // Upgrade: Basic → Plus (immediate)
+      const { error } = await supabase
+        .from('users')
+        .update({
+          plan: 'plus' as const,
           cycle: newCycle as 'monthly' | 'quarterly',
-          transactionId: purchase.transactionId,
-          purchaseDate: purchase.transactionDate 
-            ? new Date(parseInt(purchase.transactionDate)).toISOString()
-            : new Date().toISOString()
-        });
-      } catch (edgeFnError) {
-        console.warn('⚠️ Edge function update failed (non-critical):', edgeFnError);
-      }
+          plus_til: null,
+          last_transaction_id: transactionId
+        })
+        .eq('id', user.id);
+
+      if (error) throw error;
+      console.log('✅ Upgraded to Plus');
+
+      // Log to sub_logs
+      const currentLogs = (await supabase
+        .from('users')
+        .select('sub_logs')
+        .eq('id', user.id)
+        .single()).data?.sub_logs || '';
+
+      const newLog = `${new Date().toISOString()} | UPGRADE | Basic → Plus ${newCycle} | TxnID: ${transactionId}`;
+      const updatedLogs = currentLogs ? `${currentLogs}\n${newLog}` : newLog;
+
+      await supabase
+        .from('users')
+        .update({ sub_logs: updatedLogs })
+        .eq('id', user.id);
 
     } catch (error) {
       console.error('❌ Supabase update failed:', error);
@@ -449,7 +388,8 @@ export default function Subscription() {
           .update({
             plan: 'plus' as const,
             cycle: newCycle as 'monthly' | 'quarterly',
-            plus_til: null
+            plus_til: null,
+            last_transaction_id: transactionId
           })
           .eq('id', user.id);
 
@@ -473,6 +413,28 @@ export default function Subscription() {
       return;
     }
 
+    const currentPlan = profileUsage?.plan || 'basic';
+
+    // ONLY allow Basic → Plus upgrades
+    if (currentPlan !== 'basic') {
+      Alert.alert(
+        'Manage Subscription',
+        'To make changes to your subscription, please use the "Manage Subscription" button to go to the App Store.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // User is on Basic, only allow Plus selection
+    if (selectedPlan !== 'plus') {
+      Alert.alert(
+        'Invalid Selection',
+        'Please select a Plus subscription to upgrade.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     if (!isIAPAvailable()) {
       Alert.alert(
         'In-App Purchases Unavailable',
@@ -484,24 +446,10 @@ export default function Subscription() {
     setIsPurchasing(true);
     
     try {
-      // Determine product ID based on selection
-      let productId: string;
-      
-      if (selectedPlan === 'plus' && selectedCycle === 'monthly') {
-        productId = 'execudex.plus.monthly';
-      } else if (selectedPlan === 'plus' && selectedCycle === 'quarterly') {
-        productId = 'execudex.plus.quarterly';
-      } else {
-        // Basic selected - this means downgrade
-        // For downgrade, we don't purchase anything - user cancels their subscription
-        Alert.alert(
-          'Downgrade to Basic',
-          'To downgrade to Basic, please cancel your current subscription using the "Manage Subscription" button. Your Plus access will continue until the end of your billing period.',
-          [{ text: 'OK' }]
-        );
-        setIsPurchasing(false);
-        return;
-      }
+      // Determine product ID based on cycle
+      const productId = selectedCycle === 'quarterly' 
+        ? 'execudex.plus.quarterly' 
+        : 'execudex.plus.monthly';
 
       console.log('🛒 Initiating purchase for:', productId);
       
@@ -669,6 +617,11 @@ export default function Subscription() {
                     </Text>
                   </>
                 )}
+                
+                {/* Subscription Renewal Disclaimer */}
+                <Text style={styles.renewalDisclaimerText}>
+                  Subscriptions automatically renew unless canceled at least 24 hours before the end of the current period. Payment will be charged to your Apple ID account. You can manage or cancel your subscription in your Apple ID settings.
+                </Text>
               </>
             )}
           </View>
@@ -751,39 +704,27 @@ export default function Subscription() {
             Manage Subscription
           </Text>
         </TouchableOpacity>
-      </ScrollView>
 
-      {/* Subscription Status Modal */}
-      <Modal
-        visible={showStatusModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowStatusModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Subscription Status</Text>
-            
-            {subscriptionStatus && (
-              <>
-                <Text style={styles.modalStatusText}>
-                  Current: {subscriptionStatus.currentPlan} (Active Until {subscriptionStatus.currentExpiration})
-                </Text>
-                <Text style={styles.modalStatusText}>
-                  Next: {subscriptionStatus.nextPlan} (Begins {subscriptionStatus.nextBegins})
-                </Text>
-              </>
-            )}
-            
-            <TouchableOpacity
-              style={styles.modalButton}
-              onPress={() => setShowStatusModal(false)}
+        {/* Terms and Privacy Links */}
+        <View style={styles.termsAgreementContainer}>
+          <Text style={styles.termsAgreementText}>
+            By subscribing, you agree to the{' '}
+            <Text 
+              style={styles.termsLink}
+              onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
             >
-              <Text style={styles.modalButtonText}>OK</Text>
-            </TouchableOpacity>
-          </View>
+              Terms of Use
+            </Text>
+            {' '}and{' '}
+            <Text 
+              style={styles.termsLink}
+              onPress={() => Linking.openURL('https://execudex.dev/privacy')}
+            >
+              Privacy Policy
+            </Text>
+          </Text>
         </View>
-      </Modal>
+      </ScrollView>
     </View>
   );
 }
@@ -895,6 +836,13 @@ const styles = StyleSheet.create({
     color: '#888',
     fontWeight: '400',
   },
+  renewalDisclaimerText: {
+    fontSize: 11,
+    color: '#666',
+    fontWeight: '400',
+    marginTop: 5,
+    lineHeight: 16,
+  },
 
   // PURCHASE BUTTON
   purchaseButton: {
@@ -930,7 +878,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   submitButtonClose: {
-    marginTop: -10,  // Reduce space between Purchase and Manage buttons
+    marginTop: -13,  // Reduce space between Purchase and Manage buttons
   },
   submitButtonText: {
     color: '#fff',
@@ -976,50 +924,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // SUBSCRIPTION STATUS MODAL
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    justifyContent: 'center',
+  // Terms Agreement
+  termsAgreementContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 20,
     alignItems: 'center',
-    padding: 20,
   },
-  modalContent: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 20,
-    padding: 30,
-    width: '90%',
-    maxWidth: 400,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 20,
+  termsAgreementText: {
+    color: '#888',
+    fontSize: 13,
     textAlign: 'center',
+    lineHeight: 16,
   },
-  modalStatusText: {
-    fontSize: 15,
-    color: '#ddd',
-    marginBottom: 12,
-    lineHeight: 22,
-  },
-  modalButton: {
-    backgroundColor: '#0',
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    alignItems: 'center',
-    marginTop: 20,
-    borderColor: '#444',
-    borderWidth: 1,
-  },
-  modalButtonText: {
+  termsLink: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
 });
 

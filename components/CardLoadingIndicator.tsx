@@ -60,7 +60,9 @@ export function CardLoadingIndicator({
           </Text>
           
           <Text style={styles.subtitle}>
-            {subtitle || 'Please keep the app open while we prepare your card...'}
+            {subtitle || (title?.toLowerCase().includes('cards') 
+              ? 'Please keep the app open while we prepare your cards...' 
+              : 'Please keep the app open while we prepare your card...')}
           </Text>
         </View>
       </View>

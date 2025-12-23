@@ -1799,14 +1799,14 @@ if (step === 'valueProp') {
           Continuing means you agree to the{' '}
           <Text 
             style={styles.termsLink}
-            onPress={() => Linking.openURL('https://execudex.framer.website/terms')}
+            onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
           >
-            Terms of Service
+            Terms of Use
           </Text>
           {' '}and{' '}
           <Text 
             style={styles.termsLink}
-            onPress={() => Linking.openURL('https://execudex.framer.website/privacy')}
+            onPress={() => Linking.openURL('https://execudex.dev/privacy')}
           >
             Privacy Policy
           </Text>
@@ -1997,15 +1997,35 @@ if (step === 'paymentPlan') {
           </Animated.View>
         </View>
 
-        {/* Spacer to push description box down */}
-        <View style={{ flex: 1 }} />
-
-        {/* DESCRIPTION - positioned right above continue button */}
+        {/* DESCRIPTION */}
         <View style={styles.descriptionBox}>
           <Text style={styles.description}>
-            Manage your subscription in settings
+            You can change your subscription plan at any time
           </Text>
         </View>
+
+        {/* Spacer to push terms text down */}
+        <View style={{ flex: 1 }} />
+      </View>
+
+      {/* TERMS AGREEMENT TEXT */}
+      <View style={[styles.termsAgreementContainer, { position: 'relative', bottom: 'auto' }]}>
+        <Text style={styles.termsAgreementText}>
+          Continuing means you agree to the{' '}
+          <Text 
+            style={styles.termsLink}
+            onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
+          >
+            Terms of Use
+          </Text>
+          {' '}and{' '}
+          <Text 
+            style={styles.termsLink}
+            onPress={() => Linking.openURL('https://execudex.dev/privacy')}
+          >
+            Privacy Policy
+          </Text>
+        </Text>
       </View>
 
       {/* CONTINUE */}
@@ -2341,7 +2361,7 @@ planDiscountPressed: {
 
 description: {
   color: '#ccc',
-  fontSize: 15,
+  fontSize: 13,
   fontWeight: '400',
   textAlign: 'center',
   marginBottom: 0,

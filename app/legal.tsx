@@ -14,11 +14,11 @@ export default function Legal() {
 
 
   const handleTermsLink = () => {
-    Linking.openURL('https://execudex.framer.website/terms');
+    Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/');
   };
 
   const handlePrivacyLink = () => {
-    Linking.openURL('https://execudex.framer.website/privacy');
+    Linking.openURL('https://execudex.dev/privacy');
   };
 
   return (
@@ -39,7 +39,7 @@ export default function Legal() {
       <View style={styles.content}>
         <View style={styles.buttonsWrapper}>
           <View style={styles.buttonsContainer}>
-            {/* Terms of Service Button */}
+            {/* Terms of Use Button */}
             <AnimatedPressable
               onPressIn={() => {
                 Haptics.selectionAsync();
@@ -64,7 +64,7 @@ export default function Legal() {
             >
               <View style={styles.buttonContent}>
                 <View style={styles.buttonTopRow}>
-                  <Text style={styles.buttonTitle}>Terms of Service</Text>
+                  <Text style={styles.buttonTitle}>Terms of Use</Text>
                 </View>
               </View>
             </AnimatedPressable>

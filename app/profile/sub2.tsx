@@ -1096,7 +1096,7 @@ export default function Sub2({ scrollY, name, position, goToTab, index, scrollRe
       <CardLoadingIndicator 
         visible={isCardLoading || isGeneratingCards} 
         onCancel={handleCancelLoading}
-        title="Loading Card"
+        title={isGeneratingCards ? "Loading Cards" : "Loading Card"}
         subtitle="Please keep the app open while we prepare your card..."
       />
     </Animated.ScrollView>

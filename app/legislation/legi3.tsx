@@ -592,7 +592,7 @@ export default function Legi3({ scrollY, name, position, scrollRef }: Legi3Props
       <CardLoadingIndicator 
         visible={isLoading || isGeneratingCards || isCardLoading} 
         onCancel={handleCancelLoading}
-        title="Loading Legislation"
+        title={isGeneratingCards ? "Loading Legislation Cards" : "Loading Legislation"}
         subtitle="Please keep the app open while we prepare your legislation..."
       />
     </Animated.ScrollView>
