@@ -4,12 +4,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Image, Linking, Pressable, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../components/AuthProvider';
+import { Typography } from '../constants/Typography';
 import { initIap, restorePurchases } from '../iap.apple';
 import { iapService } from '../services/iapService';
 import { getWeeklyProfileUsage } from '../services/profileAccessService';
 import { isIAPAvailable } from '../utils/iapAvailability';
 import { getSupabaseClient } from '../utils/supabase';
-import { Typography } from '../constants/Typography';
 
 // Subscription box content - EDIT THESE TO CHANGE TEXT
 const BOX_1_CONTENT = {

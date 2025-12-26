@@ -3,7 +3,7 @@
 
 export const Typography = {
   // Used for “Continuing means…” / “By subscribing…” disclaimer text.
-  termsAgreementFontSize: 12,
+  termsAgreementFontSize: 14,
   termsAgreementLineHeight: 15,
 } as const;
 
