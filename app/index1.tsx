@@ -5,6 +5,8 @@ import {
   Animated,
   Dimensions,
   Image,
+  Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -21,7 +23,7 @@ fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{metho
 import { useAuth } from '../components/AuthProvider';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { checkBookmarkStatus, toggleBookmark } from '../utils/bookmarkUtils';
-import { showPoliticianAlertIfNeeded, showPoliticianAlertForTesting, showWeakPoliticianAlertIfNeeded, showWeakPoliticianAlertForInfoButton } from '../utils/profileAlerts';
+import { showPoliticianAlertForTesting, showPoliticianAlertIfNeeded, showWeakPoliticianAlertForInfoButton, showWeakPoliticianAlertIfNeeded } from '../utils/profileAlerts';
 import { safeHapticsSelection } from '../utils/safeHaptics';
 import { getSupabaseClient } from '../utils/supabase';
 import Sub1 from './profile/sub1';
@@ -275,6 +277,7 @@ export default function Index1({ navigation }: { navigation?: any }) {
   // State for profile slug and weak status
   const [profileSlug, setProfileSlug] = useState<string | null>(null);
   const [isWeakProfile, setIsWeakProfile] = useState<boolean>(false);
+  const [isMoreSheetVisible, setIsMoreSheetVisible] = useState(false);
   
   const submittedStars = typeof params.submittedStars === 'string' ? parseInt(params.submittedStars) : 0;
   
@@ -580,6 +583,35 @@ export default function Index1({ navigation }: { navigation?: any }) {
   // Note: Access check now happens in NavigationService BEFORE navigation
   // This component only loads if access is granted
 
+  // Sheet actions (same logic as the previous header icons)
+  const handleSheetInfoPress = () => {
+    safeHapticsSelection();
+    if (isWeakProfile) {
+      showWeakPoliticianAlertForInfoButton();
+    } else {
+      showPoliticianAlertForTesting();
+    }
+    setIsMoreSheetVisible(false);
+  };
+
+  const handleSheetFeedbackPress = () => {
+    safeHapticsSelection();
+    try {
+      const profileId = params.index as string | undefined;
+      // Pass source as {slug}/{profileId} for politician profiles
+      if (profileSlug && profileId) {
+        const source = `${profileSlug}/${profileId}`;
+        router.push(`/feedback?source=${source}`);
+      } else {
+        router.push('/feedback');
+      }
+    } catch (error) {
+      console.error('[INDEX1] Error navigating to feedback:', error);
+    } finally {
+      setIsMoreSheetVisible(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <Header 
@@ -588,8 +620,10 @@ export default function Index1({ navigation }: { navigation?: any }) {
         isBookmarked={isBookmarked}
         setIsBookmarked={setIsBookmarked}
         profileId={params.index as string}
-        profileSlug={profileSlug}
-        isWeakProfile={isWeakProfile}
+        onPressMore={() => {
+          safeHapticsSelection();
+          setIsMoreSheetVisible(true);
+        }}
       />
 
       <Animated.ScrollView
@@ -795,6 +829,52 @@ export default function Index1({ navigation }: { navigation?: any }) {
           pillInitialized={pillInitialized}
         />
       </Animated.View>
+
+      <Modal
+        transparent
+        animationType="slide"
+        visible={isMoreSheetVisible}
+        onRequestClose={() => setIsMoreSheetVisible(false)}
+      >
+        <View style={styles.moreModalRoot}>
+          <Pressable style={styles.moreBackdrop} onPress={() => setIsMoreSheetVisible(false)} />
+          <View style={styles.moreSheet}>
+            <Text style={styles.moreSheetTitle}>Profile</Text>
+
+            <View style={styles.moreSheetActions}>
+              <TouchableOpacity
+                style={styles.moreSheetActionBtn}
+                activeOpacity={1}
+                onPress={handleSheetInfoPress}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreSheetActionText}>Info</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.moreSheetActionBtn}
+                activeOpacity={1}
+                onPress={handleSheetFeedbackPress}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreSheetActionText}>Feedback</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ flex: 1 }} />
+
+            <View style={styles.moreCloseButtonRow}>
+              <TouchableOpacity
+                style={styles.moreCloseButton}
+                activeOpacity={1}
+                onPress={() => setIsMoreSheetVisible(false)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreCloseButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
       
     </View>
   );
@@ -807,42 +887,15 @@ const Header = memo(function Header({
   isBookmarked, 
   setIsBookmarked, 
   profileId,
-  profileSlug,
-  isWeakProfile
+  onPressMore
 }: { 
   navigation?: any; 
   router: any; 
   isBookmarked: boolean; 
   setIsBookmarked: (value: boolean | ((prev: boolean) => boolean)) => void; 
   profileId: string | undefined;
-  profileSlug: string | null;
-  isWeakProfile: boolean;
+  onPressMore: () => void;
 }) {
-  const handleContactPress = () => {
-    safeHapticsSelection();
-    try {
-      // Pass source as {slug}/{profileId} for politician profiles
-      if (profileSlug && profileId) {
-        const source = `${profileSlug}/${profileId}`;
-        router.push(`/feedback?source=${source}`);
-      } else {
-        router.push('/feedback');
-      }
-    } catch (error) {
-      console.error('[INDEX1] Error navigating to feedback:', error);
-    }
-  };
-
-  // Info button - Shows politician profile information alert (weak or normal)
-  const handleInfoPress = () => {
-    safeHapticsSelection();
-    if (isWeakProfile) {
-      showWeakPoliticianAlertForInfoButton();
-    } else {
-      showPoliticianAlertForTesting();
-    }
-  };
-
   return (
     <View style={styles.headerContainer}>
       <TouchableOpacity
@@ -855,21 +908,14 @@ const Header = memo(function Header({
         <Image source={require('../assets/back1.png')} style={styles.headerIcon} />
       </TouchableOpacity>
       <View style={{ flex: 1 }} />
-      <TouchableOpacity
-        style={styles.headerIconBtn}
-        onPress={handleInfoPress}
-        hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
-      >
-        <Image source={require('../assets/Info.png')} style={styles.headerIcon} />
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.headerIconBtn}
-        onPress={handleContactPress}
-        hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
-      >
-        <Image source={require('../assets/contact.png')} style={styles.headerIcon} />
-      </TouchableOpacity>
       <BookmarkButton isBookmarked={isBookmarked} setIsBookmarked={setIsBookmarked} profileId={profileId} />
+      <TouchableOpacity
+        style={[styles.headerIconBtn, styles.headerIconBtnTight]}
+        onPress={onPressMore}
+        hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+      >
+        <Image source={require('../assets/more.png')} style={styles.headerIcon} />
+      </TouchableOpacity>
     </View>
   );
 });
@@ -1000,10 +1046,73 @@ const styles = StyleSheet.create({
     padding: 8,
     marginHorizontal: 2,
   },
+  headerIconBtnTight: {
+    // Pull the last icon slightly left to reduce visual gap vs the bookmark icon
+    marginLeft: -6,
+  },
   headerIcon: {
     width: 28,
     height: 28,
     resizeMode: 'contain',
+  },
+
+  // MORE (bottom sheet overlay)
+  moreModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  moreBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  moreSheet: {
+    height: '28.75%',
+    backgroundColor: '#080808',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+    justifyContent: 'flex-start',
+  },
+  moreSheetTitle: {
+    fontSize: 16,
+    fontWeight: '300',
+    color: '#fff',
+    marginBottom: 5,
+    marginLeft: 13,
+    marginTop: 5,
+  },
+  moreSheetActions: {
+    alignItems: 'flex-start',
+  },
+  moreSheetActionBtn: {
+    paddingVertical: 8,
+  },
+  moreSheetActionText: {
+    fontSize: 20,
+    fontWeight: '500',
+    color: '#fff',
+    marginLeft: 13,
+  },
+  moreCloseButtonRow: {
+    alignItems: 'center',
+  },
+  moreCloseButton: {
+    borderRadius: 18,
+    paddingHorizontal: 34,
+    paddingVertical: 12,
+    minHeight: 46,
+    width: 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#2f2f2f',
+  },
+  moreCloseButtonText: {
+    fontSize: 17,
+    fontWeight: '500',
+    color: '#f2f2f2',
+    textAlign: 'center',
   },
 
   // FOOTER / TABS

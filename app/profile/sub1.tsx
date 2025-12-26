@@ -1,12 +1,12 @@
+import * as Sentry from '@sentry/react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import * as Sentry from '@sentry/react-native';
+import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
-import { CardData, fetchCardsByScreen, getCategoryMapping, getScreenDisplayName } from '../../utils/cardData';
+import { CardData, fetchCardsByScreen, getCardIndexScreenForPage, getCategoryMapping, getScreenDisplayName, searchCardsForPage } from '../../utils/cardData';
 import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -44,6 +44,50 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
   const currentLoadingCardId = useRef<number | null>(null);
   const profileDataAbortControllerRef = useRef<AbortController | null>(null);
   const cardDataAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Search (submit-on-enter, above grid)
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<TextInput>(null);
+
+  const handleSearchSubmit = async () => {
+    const q = String(searchQuery ?? '').trim();
+    if (!q || !index) return;
+
+    try {
+      const cards = await searchCardsForPage({
+        ownerId: parseInt(index.toString(), 10),
+        isPpl: true,
+        pageName: 'sub1',
+        query: q,
+      });
+
+      const searchResults = cards.map((c) => ({
+        id: String(c.id),
+        title: c.title,
+        subtitle: c.subtext,
+        type: 'card' as const,
+        limit_score: 0,
+        category: c.category ?? null,
+        is_ppl: true,
+      }));
+
+      router.push({
+        pathname: '/results',
+        params: {
+          mode: 'cardSearch',
+          searchQuery: q,
+          searchResults: JSON.stringify(searchResults),
+          originPage: 'sub1',
+          ownerName: String(name ?? 'No Data Available'),
+          ownerIsPpl: 'true',
+        }
+      });
+    } catch (error) {
+      console.error('Error searching cards (sub1):', error);
+    } finally {
+      searchInputRef.current?.blur();
+    }
+  };
 
 
   
@@ -1224,6 +1268,28 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
       )}
     >
       <View style={styles.container}>
+        <View style={styles.searchBarContainer}>
+          <Image source={require('../../assets/search.png')} style={styles.searchIcon} />
+          <TextInput
+            ref={searchInputRef}
+            style={styles.searchBarInput}
+            placeholder={String(`Search ${getScreenDisplayName(getCardIndexScreenForPage('sub1', true))} Cards`)}
+            placeholderTextColor="#666"
+            value={String(searchQuery ?? '')}
+            onChangeText={(text) => setSearchQuery(String(text ?? ''))}
+            returnKeyType="search"
+            onSubmitEditing={handleSearchSubmit}
+            blurOnSubmit={true}
+          />
+          {searchQuery.length > 0 && (
+            <Pressable
+              onPress={() => setSearchQuery('')}
+              style={styles.clearButton}
+            >
+              <Text style={styles.clearButtonText}>✕</Text>
+            </Pressable>
+          )}
+        </View>
         {renderGrid()}
         {renderCards()}
         
@@ -1284,6 +1350,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
     backgroundColor: '#000',
     alignItems: 'stretch',
+  },
+  // Search bar (matches sub4)
+  searchBarContainer: {
+    backgroundColor: '#050505',
+    borderColor: '#101010',
+    borderWidth: 1,
+    width: '90%',
+    alignSelf: 'center',
+    borderRadius: 20,
+    height: 60,
+    marginTop: 2,
+    marginBottom: 15,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  searchIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 12,
+    tintColor: '#666',
+  },
+  searchBarInput: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '400',
+    flex: 1,
+  },
+  clearButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  clearButtonText: {
+    color: '#666',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   // Card 1 styles
   card1: {

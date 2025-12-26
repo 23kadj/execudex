@@ -36,12 +36,12 @@ const LEGISLATION_ALERT_CONFIG = {
 };
 
 /**
- * Alert configuration for card/info pages
+ * Alert configuration for card/info cards
  * This alert shows the FIRST time a user enters ANY card detail page (legi5 or sub5)
  */
 const CARD_ALERT_CONFIG = {
-  title: 'Info Page',
-  message: 'Each info page comes with breakdowns on key issues, a TLDR to keep things simple, and direct excerpts from the source that you can verify yourself. Feel free to send feedback with bugs, errors, or suggestions you want us to know about. You can also bookmark this page for later.',
+  title: 'Info Card',
+  message: 'Each info card comes with breakdowns on key issues, a TLDR to keep things simple, and direct excerpts from the source that you can verify yourself. Feel free to send feedback with bugs, errors, or suggestions you want us to know about. You can also bookmark this card for later.',
   buttonText: 'Got it',
 };
 
@@ -192,7 +192,7 @@ export const showLegislationAlertIfNeeded = async (): Promise<boolean> => {
 };
 
 /**
- * Show the card/info page alert if it hasn't been shown before
+ * Show the card/info card alert if it hasn't been shown before
  * Returns true if the alert was shown, false if it was already shown before
  */
 export const showCardAlertIfNeeded = async (): Promise<boolean> => {

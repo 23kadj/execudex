@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Image,
@@ -476,8 +476,8 @@ export default function Legi4() {
     });
   };
 
-  // Header
-  const Header = useCallback(() => {
+  // Header (render as an element, not an inline component, to avoid unmount/remount "blink")
+  const header = useMemo(() => {
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity
@@ -486,7 +486,11 @@ export default function Legi4() {
           onPress={() => router.back()}
           hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
         >
-          <Image source={require('../../assets/back1.png')} style={styles.headerIcon} />
+          <Image
+            source={require('../../assets/back1.png')}
+            style={styles.headerIcon}
+            fadeDuration={0}
+          />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
         <TouchableOpacity
@@ -500,11 +504,10 @@ export default function Legi4() {
         >
           <Image
             source={
-              canGoPrev
-                ? require('../../assets/left1.png')
-                : require('../../assets/leftgrey.png')
+              canGoPrev ? require('../../assets/left1.png') : require('../../assets/leftgrey.png')
             }
             style={styles.headerIcon}
+            fadeDuration={0}
           />
         </TouchableOpacity>
         <TouchableOpacity
@@ -523,6 +526,7 @@ export default function Legi4() {
                 : require('../../assets/rightgrey.png')
             }
             style={styles.headerIcon}
+            fadeDuration={0}
           />
         </TouchableOpacity>
       </View>
@@ -532,7 +536,7 @@ export default function Legi4() {
   return (
     <TouchableWithoutFeedback onPress={dismissKeyboard}>
       <View style={styles.container}>
-        <Header />
+        {header}
         
         {/* Profile Header Container */}
         <View style={styles.profileHeaderContainer}>
@@ -1288,6 +1292,8 @@ const styles = StyleSheet.create({
   // Search bar styles
   searchBarContainer: {
     backgroundColor: '#050505',
+    borderWidth: 1,
+    borderColor: '#101010',
     width: '90%',
     alignSelf: 'center',
     borderRadius: 20,

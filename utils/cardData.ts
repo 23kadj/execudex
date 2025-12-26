@@ -24,6 +24,95 @@ export interface CategoryCardParams {
 }
 
 /**
+ * Maps a page name to the actual `card_index.screen` value used in the database.
+ * (These are not the same as the "friendly" page names.)
+ */
+export function getCardIndexScreenForPage(pageName: string, isPpl: boolean): string {
+  if (isPpl) {
+    switch (pageName) {
+      case 'sub1': return 'agenda_ppl';
+      case 'sub2': return 'identity';
+      case 'sub3': return 'affiliates';
+      default: return 'agenda_ppl';
+    }
+  }
+
+  switch (pageName) {
+    case 'legi1': return 'agenda_legi';
+    case 'legi2': return 'impact';
+    case 'legi3': return 'discourse';
+    default: return 'agenda_legi';
+  }
+}
+
+/**
+ * Searches `card_index` for a specific owner + page (screen), matching query
+ * as a substring against title, subtext, or category (case-insensitive).
+ */
+export async function searchCardsForPage({
+  ownerId,
+  isPpl,
+  pageName,
+  query,
+}: {
+  ownerId: number;
+  isPpl: boolean;
+  pageName: string;
+  query: string;
+}): Promise<CardData[]> {
+  try {
+    const q = String(query ?? '').trim().toLowerCase();
+    if (!q) return [];
+
+    const supabase = getSupabaseClient();
+    const targetScreen = getCardIndexScreenForPage(pageName, isPpl);
+
+    const { data, error } = await supabase
+      .from('card_index')
+      .select('id, title, subtext, screen, category, opens_7d, score')
+      .eq('owner_id', ownerId)
+      .eq('is_ppl', isPpl)
+      .eq('screen', targetScreen)
+      .eq('is_active', true);
+
+    if (error) {
+      console.error('Error searching cards:', error);
+      return [];
+    }
+
+    const rows = (data || []) as any[];
+    if (rows.length === 0) return [];
+
+    // Filter client-side so we can substring-match enums (e.g. `category` is an enum type).
+    const filtered = rows.filter((c) => {
+      const title = String(c?.title ?? '').toLowerCase();
+      const subtext = String(c?.subtext ?? '').toLowerCase();
+      const category = String(c?.category ?? '').toLowerCase();
+      return title.includes(q) || subtext.includes(q) || category.includes(q);
+    });
+
+    if (filtered.length === 0) return [];
+
+    const sorted = filtered.sort((a, b) => {
+      const ao = a?.opens_7d ?? -Infinity;
+      const bo = b?.opens_7d ?? -Infinity;
+      if (ao !== bo) return bo - ao;
+
+      const as = a?.score ?? -Infinity;
+      const bs = b?.score ?? -Infinity;
+      if (as !== bs) return bs - as;
+
+      return (b?.id ?? 0) - (a?.id ?? 0);
+    });
+
+    return sorted as CardData[];
+  } catch (error) {
+    console.error('Error in searchCardsForPage:', error);
+    return [];
+  }
+}
+
+/**
  * Fetches all card data from card_index table for preview card assignment
  * Cards are sorted by opens_7d descending (with fallback to score) and will be limited by tier in the calling component
  */
@@ -496,25 +585,8 @@ export async function fetchCardsByScreen({
       return [];
     }
     
-    // Determine which screen value should be shown on this page
-    let targetScreen: string;
-    if (isPpl) {
-      // Profile pages
-      switch (pageName) {
-        case 'sub1': targetScreen = 'agenda_ppl'; break;
-        case 'sub2': targetScreen = 'identity'; break;
-        case 'sub3': targetScreen = 'affiliates'; break;
-        default: targetScreen = 'agenda_ppl';
-      }
-    } else {
-      // Legislation pages
-      switch (pageName) {
-        case 'legi1': targetScreen = 'agenda_legi'; break;
-        case 'legi2': targetScreen = 'impact'; break;
-        case 'legi3': targetScreen = 'discourse'; break;
-        default: targetScreen = 'agenda_legi';
-      }
-    }
+    // Determine which DB screen value should be shown on this page
+    const targetScreen = getCardIndexScreenForPage(pageName, isPpl);
     
     // FIRST FILTER: Filter cards by screen value (cards only show on correct pages)
     let filteredCards = allCards.filter(card => card.screen === targetScreen);

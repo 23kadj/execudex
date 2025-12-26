@@ -4,6 +4,8 @@ import {
   Animated,
   Dimensions,
   Image,
+  Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -34,6 +36,7 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 export default function Index2({ navigation }: { navigation?: any }) {
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [isWeakProfile, setIsWeakProfile] = useState<boolean>(false);
+  const [isMoreSheetVisible, setIsMoreSheetVisible] = useState(false);
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
@@ -118,11 +121,12 @@ export default function Index2({ navigation }: { navigation?: any }) {
     return null;
   });
   
-  // State for bill status and profile slug
+  // State for bill status and profile "slug" (for legislation: bill_id)
   const [billStatus, setBillStatus] = useState<string>('No Data');
   const [profileSlug, setProfileSlug] = useState<string | null>(null);
+  // (More sheet is a simple non-draggable overlay; no extra animation state needed)
   
-  // Fetch bill status, slug, and weak status from legi_index when component mounts
+  // Fetch bill status, bill_id, and weak status from legi_index when component mounts
   // Note: Access check now happens in NavigationService BEFORE navigation
   useEffect(() => {
     const fetchBillData = async () => {
@@ -132,7 +136,7 @@ export default function Index2({ navigation }: { navigation?: any }) {
           const supabase = getSupabaseClient();
           const { data: legislationData, error } = await supabase
             .from('legi_index')
-            .select('bill_status, slug, weak')
+            .select('bill_status, bill_id, weak')
             .eq('id', index)
             .single();
           
@@ -140,8 +144,8 @@ export default function Index2({ navigation }: { navigation?: any }) {
             if (legislationData.bill_status) {
               setBillStatus(legislationData.bill_status);
             }
-            if (legislationData.slug) {
-              setProfileSlug(legislationData.slug);
+            if (legislationData.bill_id) {
+              setProfileSlug(legislationData.bill_id);
             }
             // Set weak status (default to false if not present)
             setIsWeakProfile(legislationData.weak === true);
@@ -208,6 +212,7 @@ export default function Index2({ navigation }: { navigation?: any }) {
     useRef<ScrollView>(null) as React.RefObject<ScrollView>,
   ];
 
+
   // When a tab is pressed, animate the pill to its position and width
   function goToTab(idx: number) {
     scrollRef.current?.scrollTo({ x: idx * SCREEN_WIDTH, animated: true });
@@ -271,34 +276,37 @@ export default function Index2({ navigation }: { navigation?: any }) {
     }
   };
 
+  // Sheet actions (same logic as the previous header icons)
+  const handleSheetInfoPress = () => {
+    safeHapticsSelection();
+    if (isWeakProfile) {
+      showWeakLegislationAlertForInfoButton();
+    } else {
+      showLegislationAlertForTesting();
+    }
+    setIsMoreSheetVisible(false);
+  };
+
+  const handleSheetFeedbackPress = () => {
+    safeHapticsSelection();
+    try {
+      // Pass source as {slug}/{profileId} for legislation profiles
+      const profileId = params.index as string;
+      if (profileSlug && profileId) {
+        const source = `${profileSlug}/${profileId}`;
+        router.push(`/feedback?source=${source}`);
+      } else {
+        router.push('/feedback');
+      }
+    } catch (error) {
+      console.error('[INDEX2] Error navigating to feedback:', error);
+    } finally {
+      setIsMoreSheetVisible(false);
+    }
+  };
+
   // Header
   const Header = useCallback(() => {
-    const handleContactPress = () => {
-      safeHapticsSelection();
-      try {
-        // Pass source as {slug}/{profileId} for legislation profiles
-        const profileId = params.index as string;
-        if (profileSlug && profileId) {
-          const source = `${profileSlug}/${profileId}`;
-          router.push(`/feedback?source=${source}`);
-        } else {
-          router.push('/feedback');
-        }
-      } catch (error) {
-        console.error('[INDEX2] Error navigating to feedback:', error);
-      }
-    };
-
-    // Info button - Shows legislation profile information alert (weak or normal)
-    const handleInfoPress = () => {
-      safeHapticsSelection();
-      if (isWeakProfile) {
-        showWeakLegislationAlertForInfoButton();
-      } else {
-        showLegislationAlertForTesting();
-      }
-    };
-
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity
@@ -312,24 +320,20 @@ export default function Index2({ navigation }: { navigation?: any }) {
           <Image source={require('../assets/back1.png')} style={styles.headerIcon} />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity
-          style={styles.headerIconBtn}
-          onPress={handleInfoPress}
-          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
-        >
-          <Image source={require('../assets/Info.png')} style={styles.headerIcon} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.headerIconBtn}
-          onPress={handleContactPress}
-          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
-        >
-          <Image source={require('../assets/contact.png')} style={styles.headerIcon} />
-        </TouchableOpacity>
         <BookmarkButton isBookmarked={isBookmarked} setIsBookmarked={setIsBookmarked} profileId={params.index as string} />
+        <TouchableOpacity
+          style={[styles.headerIconBtn, styles.headerIconBtnTight]}
+          onPress={() => {
+            safeHapticsSelection();
+            setIsMoreSheetVisible(true);
+          }}
+          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+        >
+          <Image source={require('../assets/more.png')} style={styles.headerIcon} />
+        </TouchableOpacity>
       </View>
     );
-  }, [router, isBookmarked, profileSlug, params.index, isWeakProfile]);
+  }, [router, isBookmarked, params.index]);
 
   // Footer with animated pill
   const Footer = useCallback(() => {
@@ -471,6 +475,52 @@ export default function Index2({ navigation }: { navigation?: any }) {
       <Animated.View style={{ opacity: scrollY.interpolate({ inputRange: [0, 120], outputRange: [1, 0.15], extrapolate: 'clamp' }) }}>
         <Footer />
       </Animated.View>
+
+      <Modal
+        transparent
+        animationType="slide"
+        visible={isMoreSheetVisible}
+        onRequestClose={() => setIsMoreSheetVisible(false)}
+      >
+        <View style={styles.moreModalRoot}>
+          <Pressable style={styles.moreBackdrop} onPress={() => setIsMoreSheetVisible(false)} />
+          <View style={styles.moreSheet}>
+            <Text style={styles.moreSheetTitle}>Profile</Text>
+
+            <View style={styles.moreSheetActions}>
+              <TouchableOpacity
+                style={styles.moreSheetActionBtn}
+                activeOpacity={1}
+                onPress={handleSheetInfoPress}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreSheetActionText}>Info</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.moreSheetActionBtn}
+                activeOpacity={1}
+                onPress={handleSheetFeedbackPress}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreSheetActionText}>Feedback</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ flex: 1 }} />
+
+            <View style={styles.moreCloseButtonRow}>
+              <TouchableOpacity
+                style={styles.moreCloseButton}
+                activeOpacity={1}
+                onPress={() => setIsMoreSheetVisible(false)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreCloseButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -567,10 +617,73 @@ const styles = StyleSheet.create({
     padding: 8,
     marginHorizontal: 2,
   },
+  headerIconBtnTight: {
+    // Pull the last icon slightly left to reduce visual gap vs the bookmark icon
+    marginLeft: -6,
+  },
   headerIcon: {
     width: 28,
     height: 28,
     resizeMode: 'contain',
+  },
+
+  // MORE (bottom sheet overlay)
+  moreModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  moreBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  moreSheet: {
+    height: '28.75%',
+    backgroundColor: '#080808',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+    justifyContent: 'flex-start',
+  },
+  moreSheetTitle: {
+    fontSize: 16,
+    fontWeight: '300',
+    color: '#fff',
+    marginBottom: 5,
+    marginLeft: 13,
+    marginTop: 5,
+  },
+  moreSheetActions: {
+    alignItems: 'flex-start',
+  },
+  moreSheetActionBtn: {
+    paddingVertical: 8,
+  },
+  moreSheetActionText: {
+    fontSize: 20,
+    fontWeight: '500',
+    color: '#fff',
+    marginLeft: 13,
+  },
+  moreCloseButtonRow: {
+    alignItems: 'center',
+  },
+  moreCloseButton: {
+    borderRadius: 18,
+    paddingHorizontal: 34,
+    paddingVertical: 12,
+    minHeight: 46,
+    width: 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#2f2f2f',
+  },
+  moreCloseButtonText: {
+    fontSize: 17,
+    fontWeight: '500',
+    color: '#f2f2f2',
+    textAlign: 'center',
   },
 
   // FOOTER / TABS

@@ -204,7 +204,7 @@ export default function Bookmarks() {
       case 'legi':
         return 'Legislation';
       case 'card':
-        return 'Info Page';
+        return 'Info Card';
       default:
         return bookmarkType.toUpperCase();
     }
@@ -253,7 +253,7 @@ export default function Bookmarks() {
           break;
         
       case 'card':
-        // Navigate to appropriate card info page based on card type
+        // Navigate to appropriate card info card based on card type
         const isPoliticianCard = profile.is_ppl;
         // Ensure cardId is a string
         const cardId = bookmark.owner_id ? String(bookmark.owner_id) : '';
@@ -272,7 +272,7 @@ export default function Bookmarks() {
         };
         
         if (isPoliticianCard) {
-          // Navigate to politician card info page
+          // Navigate to politician card info card
           router.push({
             pathname: '/profile/sub5',
             params: {
@@ -281,7 +281,7 @@ export default function Bookmarks() {
             }
           });
         } else {
-          // Navigate to legislation card info page
+          // Navigate to legislation card info card
           router.push({
             pathname: '/legislation/legi5',
             params: {
@@ -355,7 +355,7 @@ export default function Bookmarks() {
             onPress={() => handleFilterPress('legi')}
           />
           <TypeFilterButton
-            label="Info Pages"
+            label="Info Cards"
             isSelected={selectedFilter === 'card'}
             onPress={() => handleFilterPress('card')}
           />
@@ -512,6 +512,8 @@ const styles = StyleSheet.create({
   },
   searchBarSurface: {
     backgroundColor: '#050505',
+    borderWidth: 1,
+    borderColor: '#101010',
     width: '100%',
     alignSelf: 'center',
     borderRadius: 20,

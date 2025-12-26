@@ -4,6 +4,7 @@ import {
     Animated,
     Image,
     Linking,
+    Modal,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -176,6 +177,7 @@ export default function Sub5() {
   
   // Bookmark state
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const [isMoreSheetVisible, setIsMoreSheetVisible] = useState(false);
   
   // Card content state
   const [cardContent, setCardContent] = useState<{
@@ -201,8 +203,32 @@ export default function Sub5() {
   
   // State for profile slug (fetched from ppl_index or legi_index)
   const [profileSlug, setProfileSlug] = useState<string | null>(null);
+
+  // Sheet actions (same logic as previous header icons)
+  const handleSheetInfoPress = () => {
+    safeHapticsSelection();
+    showCardAlertForTesting();
+    setIsMoreSheetVisible(false);
+  };
+
+  const handleSheetFeedbackPress = () => {
+    safeHapticsSelection();
+    try {
+      // Build source string: {slug}/{owner_id}/{cardId}
+      if (cardId && cardIndexData?.owner_id && profileSlug) {
+        const source = `${profileSlug}/${cardIndexData.owner_id}/${cardId}`;
+        router.push(`/feedback?source=${source}`);
+      } else {
+        router.push('/feedback');
+      }
+    } catch (error) {
+      console.error('[SUB5] Error navigating to feedback:', error);
+    } finally {
+      setIsMoreSheetVisible(false);
+    }
+  };
   
-  // Show first-time card/info page alert
+  // Show first-time card/info card alert
   useEffect(() => {
     showCardAlertIfNeeded();
   }, []);
@@ -614,27 +640,6 @@ export default function Sub5() {
       }
     };
     
-    const handleContactPress = () => {
-      safeHapticsSelection();
-      try {
-        // Build source string: {slug}/{owner_id}/{cardId}
-        if (cardId && cardIndexData?.owner_id && profileSlug) {
-          const source = `${profileSlug}/${cardIndexData.owner_id}/${cardId}`;
-          router.push(`/feedback?source=${source}`);
-        } else {
-          router.push('/feedback');
-        }
-      } catch (error) {
-        console.error('[SUB5] Error navigating to feedback:', error);
-      }
-    };
-    
-    // Info button - Shows card/info page information alert
-    const handleInfoPress = () => {
-      safeHapticsSelection();
-      showCardAlertForTesting();
-    };
-    
     return (
       <View style={styles.headerContainer}>
         <TouchableOpacity
@@ -645,30 +650,25 @@ export default function Sub5() {
           <Image source={require('../../assets/back1.png')} style={styles.headerIcon} />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity
-          style={styles.headerIconBtn}
-          onPress={handleInfoPress}
-          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
-        >
-          <Image source={require('../../assets/Info.png')} style={styles.headerIcon} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.headerIconBtn}
-          onPress={handleContactPress}
-          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
-        >
-          <Image source={require('../../assets/contact.png')} style={styles.headerIcon} />
-        </TouchableOpacity>
         {cardId && (
-          <BookmarkButton 
-            isBookmarked={isBookmarked} 
-            setIsBookmarked={setIsBookmarked} 
-            cardId={cardId} 
-          />
+          <>
+            <BookmarkButton 
+              isBookmarked={isBookmarked} 
+              setIsBookmarked={setIsBookmarked} 
+              cardId={cardId} 
+            />
+            <TouchableOpacity
+              style={[styles.headerIconBtn, styles.headerIconBtnTight]}
+              onPress={() => setIsMoreSheetVisible(true)}
+              hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+            >
+              <Image source={require('../../assets/more.png')} style={styles.headerIcon} />
+            </TouchableOpacity>
+          </>
         )}
       </View>
     );
-  }, [router, cardId, isBookmarked, cardIndexData, profileSlug]);
+  }, [router, cardId, isBookmarked]);
 
 
 
@@ -726,6 +726,49 @@ export default function Sub5() {
            <InfoSection {...infoSectionStyle} cardContent={cardContent} cardIndexData={cardIndexData} visible={true} handleLinkPress={handleLinkPress} />
          )}
       </ScrollView>
+
+      <Modal
+        transparent
+        animationType="slide"
+        visible={isMoreSheetVisible}
+        onRequestClose={() => setIsMoreSheetVisible(false)}
+      >
+        <View style={styles.moreModalRoot}>
+          <Pressable style={styles.moreBackdrop} onPress={() => setIsMoreSheetVisible(false)} />
+          <View style={styles.moreSheet}>
+            <Text style={styles.moreSheetTitle}>Info Card</Text>
+            <View style={styles.moreSheetActions}>
+              <TouchableOpacity
+                style={styles.moreSheetActionBtn}
+                activeOpacity={1}
+                onPress={handleSheetInfoPress}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreSheetActionText}>Info</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.moreSheetActionBtn}
+                activeOpacity={1}
+                onPress={handleSheetFeedbackPress}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreSheetActionText}>Feedback</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flex: 1 }} />
+            <View style={styles.moreCloseButtonRow}>
+              <TouchableOpacity
+                style={styles.moreCloseButton}
+                activeOpacity={1}
+                onPress={() => setIsMoreSheetVisible(false)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreCloseButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -848,10 +891,73 @@ const styles = StyleSheet.create({
     padding: 8,
     marginHorizontal: 2,
   },
+  headerIconBtnTight: {
+    // Match index1/index2 spacing between bookmark and more icon
+    marginLeft: -6,
+  },
   headerIcon: {
     width: 28,
     height: 28,
     resizeMode: 'contain',
+  },
+
+  // MORE (bottom sheet overlay)
+  moreModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  moreBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  moreSheet: {
+    height: '28.75%',
+    backgroundColor: '#080808',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+    justifyContent: 'flex-start',
+  },
+  moreSheetTitle: {
+    fontSize: 16,
+    fontWeight: '300',
+    color: '#fff',
+    marginBottom: 5,
+    marginLeft: 13,
+    marginTop: 5,
+  },
+  moreSheetActions: {
+    alignItems: 'flex-start',
+  },
+  moreSheetActionBtn: {
+    paddingVertical: 8,
+  },
+  moreSheetActionText: {
+    fontSize: 20,
+    fontWeight: '500',
+    color: '#fff',
+    marginLeft: 13,
+  },
+  moreCloseButtonRow: {
+    alignItems: 'center',
+  },
+  moreCloseButton: {
+    borderRadius: 18,
+    paddingHorizontal: 34,
+    paddingVertical: 12,
+    minHeight: 46,
+    width: 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#2f2f2f',
+  },
+  moreCloseButtonText: {
+    fontSize: 17,
+    fontWeight: '500',
+    color: '#f2f2f2',
+    textAlign: 'center',
   },
 
   // MAIN

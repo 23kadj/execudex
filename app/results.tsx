@@ -3,8 +3,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAuth } from '../components/AuthProvider';
+import { CardLoadingIndicator } from '../components/CardLoadingIndicator';
 import { ProfileLoadingIndicator } from '../components/ProfileLoadingIndicator';
+import { CardService } from '../services/cardService';
 import { NavigationService } from '../services/navigationService';
+import { getCategoryMapping } from '../utils/cardData';
 import { getSupabaseClient } from '../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -22,8 +25,11 @@ interface ResultItem {
   id: string;
   title: string;
   subtitle: string;
-  type: 'politician' | 'legislation';
+  type: 'politician' | 'legislation' | 'card';
   limit_score: number;
+  // Card search mode fields
+  category?: string | null;
+  is_ppl?: boolean;
 }
 
 // Header component moved outside to prevent re-creation on each render
@@ -55,6 +61,8 @@ export default function Results() {
   const [error, setError] = useState<string | null>(null);
   const [isProcessingProfile, setIsProcessingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [isCardLoading, setIsCardLoading] = useState(false);
+  const currentLoadingCardId = useRef<number | null>(null);
 
   // Animated scale values for result buttons
   const resultButtonScales = useRef<{ [key: string]: Animated.Value }>({}).current;
@@ -66,6 +74,11 @@ export default function Results() {
   const filtersJson = typeof params.filters === 'string' ? params.filters : '{}';
   const searchResultsJson = typeof params.searchResults === 'string' ? params.searchResults : '';
   const searchQueryParam = typeof params.searchQuery === 'string' ? params.searchQuery : '';
+  const mode = typeof params.mode === 'string' ? params.mode : '';
+  const isCardSearchMode = mode === 'cardSearch' || params.cardSearch === 'true';
+  const ownerNameParam = typeof params.ownerName === 'string' ? params.ownerName : '';
+  const ownerIsPplParam = typeof params.ownerIsPpl === 'string' ? params.ownerIsPpl === 'true' : false;
+  const originPageParam = typeof params.originPage === 'string' ? params.originPage : '';
   
   // Parse filters once and memoize to prevent recreation on every render
   const filters: FilterParams = React.useMemo(() => {
@@ -394,7 +407,7 @@ export default function Results() {
       return false;
     }
     
-    if (!item.type || !['politician', 'legislation'].includes(item.type)) {
+    if (!item.type || !['politician', 'legislation', 'card'].includes(item.type)) {
       console.error('Invalid item: missing or invalid type');
       return false;
     }
@@ -416,10 +429,84 @@ export default function Results() {
         subtitle: item.subtitle,
         limitScore: item.limit_score
       });
+    } else if (item.type === 'card') {
+      // Card results should have an ID + title
+      console.log('Validating card result:', {
+        id: item.id,
+        title: item.title,
+        subtitle: item.subtitle,
+        category: item.category,
+        is_ppl: item.is_ppl
+      });
     }
     
     return true;
   }, []);
+
+  // Handle cancel card loading
+  const handleCancelCardLoading = () => {
+    if (currentLoadingCardId.current !== null) {
+      CardService.cancelCardGeneration(currentLoadingCardId.current);
+      currentLoadingCardId.current = null;
+    }
+    setIsCardLoading(false);
+  };
+
+  const handleCardResultPress = useCallback(async (item: ResultItem) => {
+    if (item.type !== 'card') return;
+
+    const cardIdStr = String(item.id ?? '');
+    const parsedCardId = parseInt(cardIdStr, 10);
+    if (!cardIdStr || isNaN(parsedCardId) || parsedCardId <= 0) {
+      console.error('Invalid cardId:', item.id);
+      return;
+    }
+
+    const isPplCard = typeof item.is_ppl === 'boolean' ? item.is_ppl : ownerIsPplParam;
+    currentLoadingCardId.current = parsedCardId;
+
+    let wasCancelled = false;
+    try {
+      await CardService.generateFullCard(parsedCardId, setIsCardLoading, isPplCard);
+    } catch (error: any) {
+      if (error?.message === 'CANCELLED') {
+        wasCancelled = true;
+      } else {
+        console.error('Error generating full card:', error);
+      }
+    } finally {
+      currentLoadingCardId.current = null;
+    }
+
+    if (wasCancelled) return;
+
+    const baseParams: any = {
+      cardTitle: item.title || 'No Data',
+      sourcePage: originPageParam || 'results',
+      originalPage: originPageParam || '',
+      isMedia: 'false',
+      pageCount: String(1),
+      cardId: cardIdStr,
+    };
+
+    if (isPplCard) {
+      router.push({
+        pathname: '/profile/sub5',
+        params: {
+          ...baseParams,
+          profileName: ownerNameParam || 'No Data Available',
+        }
+      });
+    } else {
+      router.push({
+        pathname: '/legislation/legi5',
+        params: {
+          ...baseParams,
+          billName: ownerNameParam || 'No Data Available',
+        }
+      });
+    }
+  }, [originPageParam, ownerIsPplParam, ownerNameParam, router]);
 
   const handleResultPress = useCallback(async (item: ResultItem) => {
     console.log('handleResultPress called with item:', item);
@@ -428,6 +515,11 @@ export default function Results() {
       // Validate profile data before proceeding
       if (!validateProfileData(item)) {
         console.error('Profile data validation failed for item:', item);
+        return;
+      }
+
+      if (item.type === 'card') {
+        await handleCardResultPress(item);
         return;
       }
 
@@ -495,7 +587,7 @@ export default function Results() {
       console.error('Error navigating to profile:', error);
       console.error('Error details:', error);
     }
-  }, [router, validateProfileData]);
+  }, [handleCardResultPress, router, validateProfileData]);
 
   // Set up navigation service loading callback
   useEffect(() => {
@@ -583,6 +675,12 @@ export default function Results() {
                 return null;
               }
               
+              const categoryMapping = getCategoryMapping();
+              const badgeTextRaw = (item.category ?? '').toString().trim();
+              const badgeText =
+                (badgeTextRaw && categoryMapping[badgeTextRaw.toLowerCase()]) ||
+                (badgeTextRaw ? badgeTextRaw : 'Uncategorized');
+
               return (
                 <TouchableOpacity
                   key={`${item.type}-${item.id}-${index}`}
@@ -628,6 +726,13 @@ export default function Results() {
                   <View style={styles.resultCardContent}>
                     <View style={styles.resultTopRow}>
                       <Text style={styles.resultTitle}>{item.title || 'No Title'}</Text>
+                      {isCardSearchMode && (
+                        <View style={styles.cardCategoryBadge}>
+                          <Text style={styles.cardCategoryText} numberOfLines={1}>
+                            {badgeText}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                     <View style={styles.resultBottomRow}>
                       <Text style={styles.resultSubtitle}>{item.subtitle || 'No Subtitle'}</Text>
@@ -689,11 +794,18 @@ export default function Results() {
       </ScrollView>
       
       <ProfileLoadingIndicator 
-        visible={isProcessingProfile} 
+        visible={!isCardSearchMode && isProcessingProfile} 
         error={profileError}
         onCancel={handleCancelProfileLoading}
         title="Loading Profile"
         subtitle="Please keep the app open while we prepare your profile..."
+      />
+
+      <CardLoadingIndicator
+        visible={isCardSearchMode && isCardLoading}
+        onCancel={handleCancelCardLoading}
+        title="Loading Card"
+        subtitle="Please keep the app open while we prepare your card..."
       />
     </View>
   );
@@ -788,13 +900,13 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 10,
     width: '95%',
-    height: 80,
     alignSelf: 'center',
     shadowColor: '#000',
     shadowOpacity: 0.10,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
+    minHeight: 80,
     borderWidth: 1,
     borderColor: '#101010',
   },
@@ -820,11 +932,34 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     fontSize: 20,
     flex: 1,
+    flexWrap: 'wrap',
   },
   resultSubtitle: {
     color: '#898989',
     fontWeight: '400',
     fontSize: 12,
+    flexWrap: 'wrap',
+  },
+
+  // Card search badge (matches history/bookmarks pill style)
+  cardCategoryBadge: {
+    backgroundColor: '#222',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginLeft: 10,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 24,
+    maxWidth: 140,
+  },
+  cardCategoryText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlignVertical: 'center',
   },
 
   // Load Legislation Button (identical to sub5.tsx Load More button)

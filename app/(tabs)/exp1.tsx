@@ -13,18 +13,37 @@ const exp1 = React.memo(() => {
   const router = useRouter();
   const { user } = useAuth();
 
+  const formatTrendingPoliticianName = useCallback((fullName?: string) => {
+    const cleaned = (fullName || '').trim().replace(/\s+/g, ' ');
+    if (!cleaned) return '';
+    const parts = cleaned.split(' ');
+    if (parts.length < 2) return cleaned;
+    const first = parts[0];
+    const last = parts[parts.length - 1];
+    const initial = first[0] ? first[0].toUpperCase() : '';
+    return initial ? `${initial}. ${last}` : last;
+  }, []);
+
   // State for search input
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
   const [isProcessingProfile, setIsProcessingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
 
   // Ref for search input to handle keyboard dismissal
   const searchInputRef = useRef<TextInput>(null);
+  const isMountedRef = useRef(true);
 
   // Set up navigation service loading callback
   useEffect(() => {
     NavigationService.setLoadingCallback(setIsProcessingProfile);
     NavigationService.setErrorCallback(setProfileError);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
   
   // Handle cancel profile loading
@@ -254,6 +273,7 @@ const exp1 = React.memo(() => {
     if (q.length < 2) return; // Require at least 2 characters
 
     isSearchingRef.current = true;
+    if (isMountedRef.current) setIsSearchLoading(true);
     
     try {
       // Use lazy-loaded Supabase client
@@ -371,12 +391,13 @@ const exp1 = React.memo(() => {
       console.error('Search error:', error);
       // You could add error handling here (e.g., show a toast message)
     } finally {
+      if (isMountedRef.current) setIsSearchLoading(false);
       // Add a small delay before allowing the next search to prevent rapid successive searches
       setTimeout(() => {
         isSearchingRef.current = false;
       }, 100);
     }
-  }, [searchQuery, router]);
+  }, [searchQuery, router, category5Label, category6Label]);
 
   // Animated scale values for cards
   const card1Scale = useRef(new Animated.Value(1)).current;
@@ -475,11 +496,6 @@ const exp1 = React.memo(() => {
             )}
           </View>
 
-        {/* Search By Category Section */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.trendingPoliticiansTitle}>Search By Category</Text>
-        </View>
-          
           {/* First Search Category Grid */}
           <View style={styles.searchGridContainer}>
             <View style={styles.searchGridRow}>
@@ -754,204 +770,229 @@ const exp1 = React.memo(() => {
             scrollEventThrottle={16}
           >
             {/* Politician Card 1 */}
-            <AnimatedPressable
-              onPressIn={() => {
-                Haptics.selectionAsync();
-                Animated.spring(politicianCard1Scale, {
-                  toValue: 0.95,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPressOut={() => {
-                Animated.spring(politicianCard1Scale, {
-                  toValue: 1,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPress={async () => {
-                await NavigationService.navigateToPoliticianProfile({
-                  pathname: '/index1',
-                  params: {
-                    title: politicianData[0]?.name || 'No Data Available',
-                    subtitle: politicianData[0]?.sub_name || 'No Data Available',
-                    imgKey: 'trending1',
-                    numbersObj: JSON.stringify({ red: politicianData[0]?.disapproval || '50.0%', green: politicianData[0]?.approval || '50.0%' }),
-                    index: '11',
-                  }
-                }, user?.id);
-              }}
-              style={[
-                styles.politicianCard,
-                { transform: [{ scale: politicianCard1Scale }] }
-              ]}
-            >
-              <Image 
-                source={require('../../assets/trending1.png')} 
-                style={styles.politicianCardImage}
-              />
-            </AnimatedPressable>
+            <View style={styles.politicianCardItem}>
+              <AnimatedPressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(politicianCard1Scale, {
+                    toValue: 0.95,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(politicianCard1Scale, {
+                    toValue: 1,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={async () => {
+                  await NavigationService.navigateToPoliticianProfile({
+                    pathname: '/index1',
+                    params: {
+                      title: politicianData[0]?.name || 'No Data Available',
+                      subtitle: politicianData[0]?.sub_name || 'No Data Available',
+                      imgKey: 'trending1',
+                      numbersObj: JSON.stringify({ red: politicianData[0]?.disapproval || '50.0%', green: politicianData[0]?.approval || '50.0%' }),
+                      index: '11',
+                    }
+                  }, user?.id);
+                }}
+                style={[
+                  styles.politicianCard,
+                  { transform: [{ scale: politicianCard1Scale }] }
+                ]}
+              >
+                <Image 
+                  source={require('../../assets/trending1.png')} 
+                  style={styles.politicianCardImage}
+                />
+              </AnimatedPressable>
+              <Text style={styles.politicianCardLabel}>
+                {formatTrendingPoliticianName(politicianData[0]?.name)}
+              </Text>
+            </View>
 
             {/* Politician Card 2 */}
-            <AnimatedPressable
-              onPressIn={() => {
-                Haptics.selectionAsync();
-                Animated.spring(politicianCard2Scale, {
-                  toValue: 0.95,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPressOut={() => {
-                Animated.spring(politicianCard2Scale, {
-                  toValue: 1,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPress={async () => {
-                await NavigationService.navigateToPoliticianProfile({
-                  pathname: '/index1',
-                  params: {
-                    title: politicianData[1]?.name || 'No Data Available',
-                    subtitle: politicianData[1]?.sub_name || 'No Data Available',
-                    imgKey: 'trending2',
-                    numbersObj: JSON.stringify({ red: politicianData[1]?.disapproval || '50.0%', green: politicianData[1]?.approval || '50.0%' }),
-                    index: '12',
-                  }
-                }, user?.id);
-              }}
-              style={[
-                styles.politicianCard,
-                { transform: [{ scale: politicianCard2Scale }] }
-              ]}
-            >
-              <Image 
-                source={require('../../assets/trending2.png')} 
-                style={styles.politicianCardImage}
-              />
-            </AnimatedPressable>
+            <View style={styles.politicianCardItem}>
+              <AnimatedPressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(politicianCard2Scale, {
+                    toValue: 0.95,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(politicianCard2Scale, {
+                    toValue: 1,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={async () => {
+                  await NavigationService.navigateToPoliticianProfile({
+                    pathname: '/index1',
+                    params: {
+                      title: politicianData[1]?.name || 'No Data Available',
+                      subtitle: politicianData[1]?.sub_name || 'No Data Available',
+                      imgKey: 'trending2',
+                      numbersObj: JSON.stringify({ red: politicianData[1]?.disapproval || '50.0%', green: politicianData[1]?.approval || '50.0%' }),
+                      index: '12',
+                    }
+                  }, user?.id);
+                }}
+                style={[
+                  styles.politicianCard,
+                  { transform: [{ scale: politicianCard2Scale }] }
+                ]}
+              >
+                <Image 
+                  source={require('../../assets/trending2.png')} 
+                  style={styles.politicianCardImage}
+                />
+              </AnimatedPressable>
+              <Text style={styles.politicianCardLabel}>
+                {formatTrendingPoliticianName(politicianData[1]?.name)}
+              </Text>
+            </View>
 
             {/* Politician Card 3 */}
-            <AnimatedPressable
-              onPressIn={() => {
-                Haptics.selectionAsync();
-                Animated.spring(politicianCard3Scale, {
-                  toValue: 0.95,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPressOut={() => {
-                Animated.spring(politicianCard3Scale, {
-                  toValue: 1,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPress={async () => {
-                await NavigationService.navigateToPoliticianProfile({
-                  pathname: '/index1',
-                  params: {
-                    title: politicianData[2]?.name || 'No Data Available',
-                    subtitle: politicianData[2]?.sub_name || 'No Data Available',
-                    imgKey: 'trending3',
-                    numbersObj: JSON.stringify({ red: politicianData[2]?.disapproval || '50.0%', green: politicianData[2]?.approval || '50.0%' }),
-                    index: '13',
-                  }
-                }, user?.id);
-              }}
-              style={[
-                styles.politicianCard,
-                { transform: [{ scale: politicianCard3Scale }] }
-              ]}
-            >
-              <Image 
-                source={require('../../assets/trending3.png')} 
-                style={styles.politicianCardImage}
-              />
-            </AnimatedPressable>
+            <View style={styles.politicianCardItem}>
+              <AnimatedPressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(politicianCard3Scale, {
+                    toValue: 0.95,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(politicianCard3Scale, {
+                    toValue: 1,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={async () => {
+                  await NavigationService.navigateToPoliticianProfile({
+                    pathname: '/index1',
+                    params: {
+                      title: politicianData[2]?.name || 'No Data Available',
+                      subtitle: politicianData[2]?.sub_name || 'No Data Available',
+                      imgKey: 'trending3',
+                      numbersObj: JSON.stringify({ red: politicianData[2]?.disapproval || '50.0%', green: politicianData[2]?.approval || '50.0%' }),
+                      index: '13',
+                    }
+                  }, user?.id);
+                }}
+                style={[
+                  styles.politicianCard,
+                  { transform: [{ scale: politicianCard3Scale }] }
+                ]}
+              >
+                <Image 
+                  source={require('../../assets/trending3.png')} 
+                  style={styles.politicianCardImage}
+                />
+              </AnimatedPressable>
+              <Text style={styles.politicianCardLabel}>
+                {formatTrendingPoliticianName(politicianData[2]?.name)}
+              </Text>
+            </View>
 
             {/* Politician Card 4 */}
-            <AnimatedPressable
-              onPressIn={() => {
-                Haptics.selectionAsync();
-                Animated.spring(politicianCard4Scale, {
-                  toValue: 0.95,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPressOut={() => {
-                Animated.spring(politicianCard4Scale, {
-                  toValue: 1,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPress={async () => {
-                await NavigationService.navigateToPoliticianProfile({
-                  pathname: '/index1',
-                  params: {
-                    title: politicianData[3]?.name || 'No Data Available',
-                    subtitle: politicianData[3]?.sub_name || 'No Data Available',
-                    imgKey: 'trending4',
-                    numbersObj: JSON.stringify({ red: politicianData[3]?.disapproval || '50.0%', green: politicianData[3]?.approval || '50.0%' }),
-                    index: '14',
-                  }
-                }, user?.id);
-              }}
-              style={[
-                styles.politicianCard,
-                { transform: [{ scale: politicianCard4Scale }] }
-              ]}
-            >
-              <Image 
-                source={require('../../assets/trending4.png')} 
-                style={styles.politicianCardImage}
-              />
-            </AnimatedPressable>
+            <View style={styles.politicianCardItem}>
+              <AnimatedPressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(politicianCard4Scale, {
+                    toValue: 0.95,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(politicianCard4Scale, {
+                    toValue: 1,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={async () => {
+                  await NavigationService.navigateToPoliticianProfile({
+                    pathname: '/index1',
+                    params: {
+                      title: politicianData[3]?.name || 'No Data Available',
+                      subtitle: politicianData[3]?.sub_name || 'No Data Available',
+                      imgKey: 'trending4',
+                      numbersObj: JSON.stringify({ red: politicianData[3]?.disapproval || '50.0%', green: politicianData[3]?.approval || '50.0%' }),
+                      index: '14',
+                    }
+                  }, user?.id);
+                }}
+                style={[
+                  styles.politicianCard,
+                  { transform: [{ scale: politicianCard4Scale }] }
+                ]}
+              >
+                <Image 
+                  source={require('../../assets/trending4.png')} 
+                  style={styles.politicianCardImage}
+                />
+              </AnimatedPressable>
+              <Text style={styles.politicianCardLabel}>
+                {formatTrendingPoliticianName(politicianData[3]?.name)}
+              </Text>
+            </View>
 
             {/* Politician Card 5 */}
-            <AnimatedPressable
-              onPressIn={() => {
-                Haptics.selectionAsync();
-                Animated.spring(politicianCard5Scale, {
-                  toValue: 0.95,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPressOut={() => {
-                Animated.spring(politicianCard5Scale, {
-                  toValue: 1,
-                  friction: 6,
-                  useNativeDriver: true,
-                }).start();
-              }}
-              onPress={async () => {
-                await NavigationService.navigateToPoliticianProfile({
-                  pathname: '/index1',
-                  params: {
-                    title: politicianData[4]?.name || 'No Data Available',
-                    subtitle: politicianData[4]?.sub_name || 'No Data Available',
-                    imgKey: 'trending5',
-                    numbersObj: JSON.stringify({ red: politicianData[4]?.disapproval || '50.0%', green: politicianData[4]?.approval || '50.0%' }),
-                    index: '15',
-                  }
-                }, user?.id);
-              }}
-              style={[
-                styles.politicianCard,
-                { transform: [{ scale: politicianCard5Scale }] }
-              ]}
-            >
-              <Image 
-                source={require('../../assets/trending5.png')} 
-                style={styles.politicianCardImage}
-              />
-            </AnimatedPressable>
+            <View style={styles.politicianCardItem}>
+              <AnimatedPressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(politicianCard5Scale, {
+                    toValue: 0.95,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(politicianCard5Scale, {
+                    toValue: 1,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={async () => {
+                  await NavigationService.navigateToPoliticianProfile({
+                    pathname: '/index1',
+                    params: {
+                      title: politicianData[4]?.name || 'No Data Available',
+                      subtitle: politicianData[4]?.sub_name || 'No Data Available',
+                      imgKey: 'trending5',
+                      numbersObj: JSON.stringify({ red: politicianData[4]?.disapproval || '50.0%', green: politicianData[4]?.approval || '50.0%' }),
+                      index: '15',
+                    }
+                  }, user?.id);
+                }}
+                style={[
+                  styles.politicianCard,
+                  { transform: [{ scale: politicianCard5Scale }] }
+                ]}
+              >
+                <Image 
+                  source={require('../../assets/trending5.png')} 
+                  style={styles.politicianCardImage}
+                />
+              </AnimatedPressable>
+              <Text style={styles.politicianCardLabel}>
+                {formatTrendingPoliticianName(politicianData[4]?.name)}
+              </Text>
+            </View>
 
 
           </ScrollView>
@@ -1343,6 +1384,12 @@ const exp1 = React.memo(() => {
         title="Loading Profile"
         subtitle="Please keep the app open while we prepare your profile..."
       />
+
+      <ProfileLoadingIndicator 
+        visible={isSearchLoading && !isProcessingProfile}
+        title="Searching"
+        subtitle="Please keep the app open while we prepare your results..."
+      />
     </SafeAreaView>
   );
 });
@@ -1377,16 +1424,29 @@ const styles = StyleSheet.create({
     gap: 12,
     left: -4,
   },
+  politicianCardItem: {
+    width: Dimensions.get('window').width * 0.295,
+    alignItems: 'center',
+  },
   politicianCard: {
     width: Dimensions.get('window').width * 0.295,
     height: Dimensions.get('window').width * 0.5,
-    backgroundColor: '#090909',
+    backgroundColor: '#030303',
+    borderWidth: 1,
+    borderColor: '#101010',
     borderRadius: 16,
   },
   politicianCardImage: {
     width: '100%',
     height: '100%',
     borderRadius: 16,
+  },
+  politicianCardLabel: {
+    marginTop: 6,
+    color: '#aaa',
+    fontSize: 12,
+    fontWeight: '400',
+    textAlign: 'center',
   },
   sectionHeader: {
     alignItems: 'center',
@@ -1508,12 +1568,14 @@ const styles = StyleSheet.create({
   },
   searchBarContainer: {
     backgroundColor: '#050505',
+    borderWidth: 1,
+    borderColor: '#101010',
     width: '90%',
     alignSelf: 'center',
     borderRadius: 20,
     height: 60,
     marginTop: 10,
-    marginBottom: 5,
+    marginBottom: 15,
     paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',

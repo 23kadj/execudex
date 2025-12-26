@@ -194,7 +194,7 @@ export default function History() {
       case 'legi':
         return 'Legislation';
       case 'card':
-        return 'Info Page';
+        return 'Info Card';
       default:
         return historyItem.is_ppl ? 'Politician' : 'Legislation';
     }
@@ -214,7 +214,7 @@ export default function History() {
 
     try {
       if (itemType === 'card') {
-        // Navigate to card info page based on card type
+        // Navigate to card info card based on card type
         const isPoliticianCard = profile.is_ppl;
         // Ensure cardId is a string
         const cardId = historyItem.id ? String(historyItem.id) : '';
@@ -233,7 +233,7 @@ export default function History() {
         };
         
         if (isPoliticianCard) {
-          // Navigate to politician card info page
+          // Navigate to politician card info card
           router.push({
             pathname: '/profile/sub5',
             params: {
@@ -242,7 +242,7 @@ export default function History() {
             }
           });
         } else {
-          // Navigate to legislation card info page
+          // Navigate to legislation card info card
           router.push({
             pathname: '/legislation/legi5',
             params: {
@@ -341,7 +341,7 @@ export default function History() {
             onPress={() => handleFilterPress('legi')}
           />
           <TypeFilterButton
-            label="Info Pages"
+            label="Info Cards"
             isSelected={selectedFilter === 'card'}
             onPress={() => handleFilterPress('card')}
           />
@@ -500,6 +500,8 @@ const styles = StyleSheet.create({
   },
   searchBarSurface: {
     backgroundColor: '#050505',
+    borderWidth: 1,
+    borderColor: '#101010',
     width: '100%',
     alignSelf: 'center',
     borderRadius: 20,
