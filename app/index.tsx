@@ -22,6 +22,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../components/ProfileLoadingIndicator';
+import { Typography } from '../constants/Typography';
 import { iapService } from '../services/iapService';
 import { SUBSCRIPTION_PRODUCTS } from '../types/iapTypes';
 import { isIAPAvailable } from '../utils/iapAvailability';
@@ -2723,9 +2724,9 @@ choice6:           {
   },
   termsAgreementText: {
     color: '#888',
-    fontSize: 13,
+    fontSize: Typography.termsAgreementFontSize,
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: Typography.termsAgreementLineHeight,
   },
   termsLink: {
     color: '#fff',

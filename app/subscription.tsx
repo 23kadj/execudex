@@ -1,13 +1,15 @@
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Image, Linking, Pressable, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../components/AuthProvider';
 import { initIap, restorePurchases } from '../iap.apple';
 import { iapService } from '../services/iapService';
 import { getWeeklyProfileUsage } from '../services/profileAccessService';
 import { isIAPAvailable } from '../utils/iapAvailability';
 import { getSupabaseClient } from '../utils/supabase';
+import { Typography } from '../constants/Typography';
 
 // Subscription box content - EDIT THESE TO CHANGE TEXT
 const BOX_1_CONTENT = {
@@ -36,6 +38,7 @@ const BOX_4_CONTENT = {
 
 export default function Subscription() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [profileUsage, setProfileUsage] = useState<{
     profilesUsed: number;
@@ -83,7 +86,7 @@ export default function Subscription() {
         const { data: userData, error } = await supabase
           .from('users')
           .select('plus_til, plan')
-          .eq('id', user.id)
+          .eq('uuid', user.id)
           .single();
 
         if (error) {
@@ -107,7 +110,7 @@ export default function Subscription() {
                 plus_til: null,
                 cycle: null
               })
-              .eq('id', user.id);
+              .eq('uuid', user.id);
 
             if (updateError) {
               console.error('Error enforcing downgrade:', updateError);
@@ -355,7 +358,7 @@ export default function Subscription() {
           plus_til: null,
           last_transaction_id: transactionId
         })
-        .eq('id', user.id);
+        .eq('uuid', user.id);
 
       if (error) throw error;
       console.log('✅ Upgraded to Plus');
@@ -364,7 +367,7 @@ export default function Subscription() {
       const currentLogs = (await supabase
         .from('users')
         .select('sub_logs')
-        .eq('id', user.id)
+        .eq('uuid', user.id)
         .single()).data?.sub_logs || '';
 
       const newLog = `${new Date().toISOString()} | UPGRADE | Basic → Plus ${newCycle} | TxnID: ${transactionId}`;
@@ -373,7 +376,7 @@ export default function Subscription() {
       await supabase
         .from('users')
         .update({ sub_logs: updatedLogs })
-        .eq('id', user.id);
+        .eq('uuid', user.id);
 
     } catch (error) {
       console.error('❌ Supabase update failed:', error);
@@ -391,7 +394,7 @@ export default function Subscription() {
             plus_til: null,
             last_transaction_id: transactionId
           })
-          .eq('id', user.id);
+          .eq('uuid', user.id);
 
         if (retryError) {
           throw retryError;
@@ -544,10 +547,14 @@ export default function Subscription() {
     });
   };
 
+  const HEADER_BAR_HEIGHT = 60;
+  const headerTotalHeight = HEADER_BAR_HEIGHT + insets.top;
+
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#000" />
       {/* Header */}
-      <View style={styles.headerContainer}>
+      <View style={[styles.headerContainer, { paddingTop: insets.top, height: headerTotalHeight }]}>
         <TouchableOpacity
           style={styles.headerIconBtn}
           onPress={() => router.back()}
@@ -556,13 +563,15 @@ export default function Subscription() {
           <Image source={require('../assets/back1.png')} style={styles.headerIcon} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Subscription</Text>
+        <View style={styles.headerRightSpacer} />
       </View>
       
       {/* Scrollable Content */}
       <ScrollView 
         style={styles.scrollView}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingTop: headerTotalHeight + 24 }]}
         showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="never"
       >
         {/* Profile Usage Display - For Both Basic and Plus Plans */}
         {profileUsage && (
@@ -737,10 +746,10 @@ const styles = StyleSheet.create({
 
   scrollView: {
     flex: 1,
+    backgroundColor: '#000',
   },
 
   content: {
-    paddingTop: 100, // Leave space for header
     paddingHorizontal: 10,
     paddingBottom: 40,
   },
@@ -748,7 +757,7 @@ const styles = StyleSheet.create({
   // Subscription Boxes
   subscriptionBox: {
     width: '100%',
-    backgroundColor: '#0',
+    backgroundColor: '#000',
     borderRadius: 20,
     marginBottom: 15,
     borderWidth: 1,
@@ -799,7 +808,7 @@ const styles = StyleSheet.create({
   // USAGE BOX
   usageBox: {
     width: '100%',
-    backgroundColor: '#0',
+    backgroundColor: '#000',
     borderRadius: 20,
     marginBottom: 20,
     alignSelf: 'center',
@@ -865,7 +874,7 @@ const styles = StyleSheet.create({
 
   // SUBMIT BUTTON
   submitButton: {
-    backgroundColor: '#0',
+    backgroundColor: '#000',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 32,
@@ -892,11 +901,9 @@ const styles = StyleSheet.create({
   // HEADER - identical to feedback.tsx
   headerContainer: {
     position: 'absolute',
-    top: 30, // edit this to move header up/down
+    top: 0,
     left: 0,
     right: 0,
-    height: 60,
-    paddingTop: 16,
     paddingHorizontal: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -912,16 +919,15 @@ const styles = StyleSheet.create({
     height: 28,
     resizeMode: 'contain',
   },
-  // HEADER TITLE - identical to feedback.tsx
   headerTitle: {
-    position: 'absolute',
-    marginTop: 20,
-    left: 0,
-    right: 0,
+    flex: 1,
     color: '#fff',
     fontSize: 18,
     fontWeight: '400',
     textAlign: 'center',
+  },
+  headerRightSpacer: {
+    width: 48, // keeps title centered vs back button (matches icon button width incl. margin)
   },
 
   // Terms Agreement
@@ -932,9 +938,9 @@ const styles = StyleSheet.create({
   },
   termsAgreementText: {
     color: '#888',
-    fontSize: 13,
+    fontSize: Typography.termsAgreementFontSize,
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: Typography.termsAgreementLineHeight,
   },
   termsLink: {
     color: '#fff',

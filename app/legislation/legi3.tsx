@@ -6,7 +6,6 @@ import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
 import { CardData, fetchCardsByScreen, fetchLegislationTier } from '../../utils/cardData';
-import { incrementOpens } from '../../utils/incrementOpens7d';
 import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -353,8 +352,6 @@ export default function Legi3({ scrollY, name, position, scrollRef }: Legi3Props
                 console.error('Invalid cardId:', cardId);
                 return;
               }
-              
-              incrementOpens(cardId);
               
               // Track the currently loading card
               currentLoadingCardId.current = parsedCardId;

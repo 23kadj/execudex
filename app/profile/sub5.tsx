@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
 import { addToHistory } from '../../utils/historyUtils';
+import { trackCardOpen } from '../../utils/cardOpensTracker';
 import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { showCardAlertIfNeeded, showCardAlertForTesting } from '../../utils/profileAlerts';
 import { safeHapticsSelection } from '../../utils/safeHaptics';
@@ -205,6 +206,13 @@ export default function Sub5() {
   useEffect(() => {
     showCardAlertIfNeeded();
   }, []);
+
+  // Increment opens_7d when page loads
+  useEffect(() => {
+    if (cardId) {
+      trackCardOpen(cardId);
+    }
+  }, [cardId]);
 
   // Check bookmark status when component mounts
   useEffect(() => {

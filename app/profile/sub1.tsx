@@ -7,7 +7,6 @@ import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
 import { CardData, fetchCardsByScreen, getCategoryMapping, getScreenDisplayName } from '../../utils/cardData';
-import { incrementOpens } from '../../utils/incrementOpens7d';
 import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -495,8 +494,6 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
                 console.error('Invalid cardId:', cardId);
                 return;
               }
-              
-              incrementOpens(cardId);
               
               // Track the currently loading card
               currentLoadingCardId.current = parsedCardId;

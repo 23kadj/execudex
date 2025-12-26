@@ -2,24 +2,23 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Animated,
-    Image,
-    Keyboard,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View
+  Animated,
+  Image,
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View
 } from 'react-native';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { SearchFilterButton } from '../../components/SearchFilterButton';
 import { CardService } from '../../services/cardService';
 import { CardData, getCategoryFromTitle } from '../../utils/cardData';
-import { incrementOpens } from '../../utils/incrementOpens7d';
 import { filterCardsByWords, getMostCommonWords, shouldShowSearchAssistance } from '../../utils/searchAssistanceUtils';
 import { getSupabaseClient } from '../../utils/supabase';
 
@@ -59,8 +58,62 @@ export default function Legi4() {
   const [commonWords, setCommonWords] = useState<string[]>([]);
   const [showSearchAssistance, setShowSearchAssistance] = useState(false);
   
+  // Sort By button state and cycling
+  const [sortByLabel, setSortByLabel] = useState('Sort By');
+  const sortByLabels = ['Sort By', 'Recent', 'Popular'];
+  
+  const cycleSortBy = () => {
+    const currentIndex = sortByLabels.indexOf(sortByLabel);
+    const nextIndex = (currentIndex + 1) % sortByLabels.length;
+    setSortByLabel(sortByLabels[nextIndex]);
+  };
+  
   // Filter cards based on search query and selected filter words
   const filteredCardData = (() => {
+    const defaultCompare = (a: any, b: any) => {
+      const ao = a?.opens_7d ?? -Infinity;
+      const bo = b?.opens_7d ?? -Infinity;
+      if (ao !== bo) return bo - ao;
+
+      const as = a?.score ?? -Infinity;
+      const bs = b?.score ?? -Infinity;
+      if (as !== bs) return bs - as;
+
+      return (b?.id ?? 0) - (a?.id ?? 0);
+    };
+
+    const createdAtMs = (x: any) => {
+      const raw = x?.created_at;
+      const ms = typeof raw === 'string' ? Date.parse(raw) : raw instanceof Date ? raw.getTime() : NaN;
+      return Number.isFinite(ms) ? ms : -Infinity;
+    };
+
+    const compareRecent = (a: any, b: any) => {
+      const at = createdAtMs(a);
+      const bt = createdAtMs(b);
+      if (at !== bt) return bt - at;
+      return defaultCompare(a, b);
+    };
+
+    const comparePopular = (a: any, b: any) => {
+      const ao = a?.opens_7d ?? 0;
+      const bo = b?.opens_7d ?? 0;
+      const aHas = typeof ao === 'number' && ao > 0;
+      const bHas = typeof bo === 'number' && bo > 0;
+
+      // If both have meaningful opens_7d, sort by it.
+      if (aHas && bHas) {
+        if (ao !== bo) return bo - ao;
+        return defaultCompare(a, b);
+      }
+
+      // If only one has meaningful opens_7d, prefer it.
+      if (aHas !== bHas) return aHas ? -1 : 1;
+
+      // If neither has opens_7d (null/0), "sort that specific card by default".
+      return defaultCompare(a, b);
+    };
+
     let filtered = cardData;
     
     // Apply search query filter
@@ -76,9 +129,47 @@ export default function Legi4() {
     if (selectedFilterWords.length > 0) {
       filtered = filterCardsByWords(filtered, selectedFilterWords);
     }
+
+    // Apply Sort By
+    if (sortByLabel === 'Recent') {
+      filtered = [...filtered].sort(compareRecent);
+    } else if (sortByLabel === 'Popular') {
+      filtered = [...filtered].sort(comparePopular);
+    } else {
+      // Default behavior (matches prior ordering semantics)
+      filtered = [...filtered].sort(defaultCompare);
+    }
     
     return filtered;
   })();
+
+  // Pagination (10 cards per page) - applies to whatever filtered/search results are currently visible
+  const PAGE_SIZE = 10;
+  const [pageIndex, setPageIndex] = useState(0); // 0-based page
+  const filteredCount = filteredCardData.length;
+  const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE));
+
+  // If the current page disappears due to filtering/search, clamp to the last available page.
+  useEffect(() => {
+    if (pageIndex > totalPages - 1) {
+      setPageIndex(totalPages - 1);
+    }
+  }, [pageIndex, totalPages]);
+
+  const pageStart = pageIndex * PAGE_SIZE;
+  const paginatedCardData = filteredCardData.slice(pageStart, pageStart + PAGE_SIZE);
+  const canGoPrev = pageIndex > 0;
+  const canGoNext = pageIndex < totalPages - 1;
+
+  const goPrevPage = useCallback(() => {
+    if (!canGoPrev) return;
+    setPageIndex(prev => Math.max(0, prev - 1));
+  }, [canGoPrev]);
+
+  const goNextPage = useCallback(() => {
+    if (!canGoNext) return;
+    setPageIndex(prev => Math.min(totalPages - 1, prev + 1));
+  }, [canGoNext, totalPages]);
   
   // Keyboard dismissal function
   const dismissKeyboard = useCallback(() => {
@@ -110,7 +201,7 @@ export default function Legi4() {
           const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('card_index')
-            .select('id, title, subtext, screen, category, opens_7d, score')
+            .select('id, title, subtext, screen, category, opens_7d, score, created_at')
             .eq('owner_id', parseInt(profileIndex))
             .eq('is_ppl', false)
             .eq('category', category)
@@ -189,10 +280,11 @@ export default function Legi4() {
   const card13Scale = useRef(new Animated.Value(1)).current;
   const card14Scale = useRef(new Animated.Value(1)).current;
   const card15Scale = useRef(new Animated.Value(1)).current;
+  const sortByButtonScale = useRef(new Animated.Value(1)).current;
 
   // Render cards dynamically based on available data (copied from sub4.tsx)
   const renderCards = () => {
-    const cards = filteredCardData;
+    const cards = paginatedCardData;
     const cardScales = [card1Scale, card2Scale, card3Scale, card4Scale, card5Scale, card6Scale, card7Scale, card8Scale, card9Scale, card10Scale, card11Scale, card12Scale, card13Scale, card14Scale, card15Scale];
     
     return cards.map((card, index) => {
@@ -318,8 +410,6 @@ export default function Legi4() {
                 return;
               }
               
-              incrementOpens(cardId);
-              
               // Track the currently loading card
               currentLoadingCardId.current = parsedCardId;
               
@@ -392,14 +482,52 @@ export default function Legi4() {
       <View style={styles.headerContainer}>
         <TouchableOpacity
           style={styles.headerIconBtn}
+          activeOpacity={1}
           onPress={() => router.back()}
           hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
         >
           <Image source={require('../../assets/back1.png')} style={styles.headerIcon} />
         </TouchableOpacity>
-            </View>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={styles.headerIconBtn}
+          activeOpacity={1}
+          onPress={goPrevPage}
+          disabled={!canGoPrev}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canGoPrev }}
+          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+        >
+          <Image
+            source={
+              canGoPrev
+                ? require('../../assets/left1.png')
+                : require('../../assets/leftgrey.png')
+            }
+            style={styles.headerIcon}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.headerIconBtn}
+          activeOpacity={1}
+          onPress={goNextPage}
+          disabled={!canGoNext}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canGoNext }}
+          hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+        >
+          <Image
+            source={
+              canGoNext
+                ? require('../../assets/right1.png')
+                : require('../../assets/rightgrey.png')
+            }
+            style={styles.headerIcon}
+          />
+        </TouchableOpacity>
+      </View>
     );
-  }, [router]);
+  }, [router, canGoPrev, canGoNext, goPrevPage, goNextPage]);
 
   return (
     <TouchableWithoutFeedback onPress={dismissKeyboard}>
@@ -413,6 +541,29 @@ export default function Legi4() {
               <Text style={styles.nameText}>{buttonText}</Text>
               <Text style={styles.subtitleText}>{profileName}: {tabName}</Text>
             </View>
+            <Animated.View style={{ transform: [{ scale: sortByButtonScale }] }}>
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(sortByButtonScale, {
+                    toValue: 0.95,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(sortByButtonScale, {
+                    toValue: 1,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={cycleSortBy}
+                style={styles.sortByButton}
+              >
+                <Text style={styles.sortByButtonText}>{sortByLabel}</Text>
+              </Pressable>
+            </Animated.View>
           </View>
         </View>
 
@@ -497,7 +648,7 @@ const styles = StyleSheet.create({
   },
   headerIconBtn: {
     padding: 8,
-    marginHorizontal: 2,
+    marginHorizontal: -2,
   },
   headerIcon: {
     width: 28,
@@ -557,6 +708,32 @@ const styles = StyleSheet.create({
   leftContent: {
     flex: 1,
     alignItems: 'flex-start',
+  },
+  sortByButton: {
+    backgroundColor: '#080808',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#101010',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    /**
+     * TWEAK HERE (does NOT affect layout of the row):
+     * - Increase `top` to move DOWN, decrease (or negative) to move UP.
+     * - Increase `left` to move RIGHT, decrease (or negative) to move LEFT.
+     * Using relative positioning shifts ONLY this button visually without moving siblings.
+     */
+    position: 'relative',
+    top: 10,
+    left: 0,
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sortByButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+    textAlign: 'center',
   },
 
   // Cards Container
