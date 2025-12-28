@@ -39,7 +39,7 @@ function lazyLoadIAPModule() {
   }
 }
 
-const SUBSCRIPTION_PRODUCTS = ['execudex.plus.monthly', 'execudex.plus.quarterly'];
+const SUBSCRIPTION_PRODUCTS = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
 
 /**
  * Initialize IAP connection

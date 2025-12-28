@@ -13,6 +13,7 @@ import {
   Linking,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -22,6 +23,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../components/ProfileLoadingIndicator';
+import { SearchFilterButton } from '../components/SearchFilterButton';
 import { Typography } from '../constants/Typography';
 import { iapService } from '../services/iapService';
 import { SUBSCRIPTION_PRODUCTS } from '../types/iapTypes';
@@ -31,8 +33,8 @@ import { getSupabaseClient } from '../utils/supabase';
 // Payment Plan Subscription Box Content - EDIT THESE TO CHANGE TEXT
 const BOX_1_CONTENT = {
   title: 'Execudex Basic',
-  feature1: 'Access 5 profiles a week',
-  feature2: 'Free of Charge',
+  feature1: 'Access 10 profiles a week',
+  feature2: '3 Day Trial then $4.99 a month',
 };
 
 const BOX_2_CONTENT = {
@@ -43,7 +45,7 @@ const BOX_2_CONTENT = {
 
 const BOX_3_CONTENT = {
   title: 'Execudex Basic 3 Month Plan',
-  feature1: 'Access 5 profiles a week',
+  feature1: 'Access 10 profiles a week',
   feature2: '$12.99 every 3 months',
 };
 
@@ -136,8 +138,36 @@ const step: StepKey = steps[stepIndex];
     }
   };
 
-  const buildOnboardData = () =>
-    `[${age}], [${gender}], [${involvement}], [${heardFrom}], [${informedFrom}], [${reason}]`;
+  const buildOnboardData = () => {
+    const parts: string[] = [];
+    
+    // Original onboarding questions with prompts
+    if (age) parts.push(`Age: ${age}`);
+    if (gender) parts.push(`Gender: ${gender}`);
+    if (involvement) parts.push(`Political Involvement: ${involvement}`);
+    if (heardFrom.length > 0) parts.push(`Where did you hear about us: ${heardFrom.join(', ')}`);
+    if (informedFrom.length > 0) parts.push(`How do you usually stay informed: ${informedFrom.join(', ')}`);
+    if (reason.length > 0) parts.push(`Why were you unsatisfied: ${reason.join(', ')}`);
+    
+    // Demographic indicators section
+    if (stateCode) parts.push(`State Code: ${stateCode}`);
+    if (politicalStanding) parts.push(`Political Standing: ${politicalStanding}`);
+    if (educationLevel) parts.push(`Highest Education Level: ${educationLevel}`);
+    if (employmentStatus.length > 0) parts.push(`Employment Status: ${employmentStatus.join(', ')}`);
+    if (incomeLevel) parts.push(`Income Level: ${incomeLevel}`);
+    if (raceEthnicity) parts.push(`Race & Ethnicity: ${raceEthnicity}`);
+    if (dependentStatus) parts.push(`Dependent Status: ${dependentStatus}`);
+    if (militaryStatus) parts.push(`Military Status: ${militaryStatus}`);
+    if (immigrationStatus) parts.push(`Immigration Status: ${immigrationStatus}`);
+    if (governmentBenefits.length > 0) parts.push(`Government Benefits: ${governmentBenefits.join(', ')}`);
+    if (sexualOrientation) parts.push(`Sexual Orientation: ${sexualOrientation}`);
+    if (voterEligibility) parts.push(`Voter Eligibility: ${voterEligibility}`);
+    if (disabilityStatus.length > 0) parts.push(`Disability Status: ${disabilityStatus.join(', ')}`);
+    if (industryOfWork.length > 0) parts.push(`Industry of Work or Study: ${industryOfWork.join(', ')}`);
+    if (additionalInformation) parts.push(`Additional Information: ${additionalInformation}`);
+    
+    return parts.join(' | ');
+  };
 
   // Only redirect to home if user is authenticated AND has completed onboarding (has a plan)
   // Don't redirect if user is currently on the payment plan step (they're selecting a plan)
@@ -234,8 +264,9 @@ const step: StepKey = steps[stepIndex];
 
           // Save onboard data immediately after purchase
           const onboardData = buildOnboardData();
+          const currentPlan = selectedPlanRef.current || 'basic';
           const currentCycle = selectedCycleRef.current === 'quarterly' ? 'quarterly' : 'monthly';
-          await saveOnboardData(user.id, onboardData, 'plus', currentCycle);
+          await saveOnboardData(user.id, onboardData, currentPlan, currentCycle);
 
           // Navigate to home
           router.replace('/(tabs)/home');
@@ -347,7 +378,7 @@ const hearOptions = [
   'Other',
 ];
 const hearScaleAnims = useRef(hearOptions.map(() => new Animated.Value(1))).current;
-const [heardFrom, setHeardFrom] = useState<string>('');
+const [heardFrom, setHeardFrom] = useState<string[]>([]);
 // ─── STEP 5: How do you usually stay informed? ───
 const informOptions = [
   'Databases, records, studies',
@@ -360,7 +391,7 @@ const informOptions = [
 const informScaleAnims = useRef(
   informOptions.map(() => new Animated.Value(1))
 ).current;
-const [informedFrom, setInformedFrom] = useState<string>('');
+const [informedFrom, setInformedFrom] = useState<string[]>([]);
 const reasonOptions = [
   'Too much bias',
   'Lack of perspective',
@@ -381,7 +412,55 @@ const alignmentScaleAnims = useRef(
   alignmentOptions.map(() => new Animated.Value(1))
 ).current;
 const [alignment, setAlignment] = useState<string>('');
+const [stateCode, setStateCode] = useState<string>('');
+const [politicalStanding, setPoliticalStanding] = useState<string>('');
+const [educationLevel, setEducationLevel] = useState<string>('');
+const [employmentStatus, setEmploymentStatus] = useState<string[]>([]);
+const [incomeLevel, setIncomeLevel] = useState<string>('');
+const [raceEthnicity, setRaceEthnicity] = useState<string>('');
+const [dependentStatus, setDependentStatus] = useState<string>('');
+const [militaryStatus, setMilitaryStatus] = useState<string>('');
+const [immigrationStatus, setImmigrationStatus] = useState<string>('');
+const [governmentBenefits, setGovernmentBenefits] = useState<string[]>([]);
+const [sexualOrientation, setSexualOrientation] = useState<string>('');
+const [voterEligibility, setVoterEligibility] = useState<string>('');
+const [disabilityStatus, setDisabilityStatus] = useState<string[]>([]);
+const [industryOfWork, setIndustryOfWork] = useState<string[]>([]);
+const [additionalInformation, setAdditionalInformation] = useState<string>('');
+const [hasInteractedWithAlignment, setHasInteractedWithAlignment] = useState(false);
+const [alignmentTimerComplete, setAlignmentTimerComplete] = useState(false);
+const [hasEnteredInformation, setHasEnteredInformation] = useState(false);
+const alignmentTimerRef = useRef<NodeJS.Timeout | null>(null);
+const alignmentInitializedRef = useRef<boolean>(false);
 const biasAnim      = useRef(new Animated.Value(0)).current;
+
+// Track interactions on alignment step
+const markAlignmentInteraction = () => {
+  if (!hasInteractedWithAlignment) {
+    setHasInteractedWithAlignment(true);
+    if (alignmentTimerRef.current) {
+      clearTimeout(alignmentTimerRef.current);
+      alignmentTimerRef.current = null;
+    }
+  }
+};
+
+// Valid US state codes
+const validStateCodes = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
+  'DC' // District of Columbia
+];
+
+// Validate state code
+const isValidStateCode = (code: string) => {
+  if (code.length === 0) return true; // Empty is valid (optional field)
+  if (code.length !== 2) return false;
+  return validStateCodes.includes(code.toUpperCase());
+};
 const neutralAnim   = useRef(new Animated.Value(0)).current;
 const bottomBarAnim = useRef(new Animated.Value(0)).current;
 const topBarAnim    = useRef(new Animated.Value(0)).current;
@@ -402,7 +481,7 @@ const profileDescAnim   = useRef(new Animated.Value(0)).current;
 const reasonScaleAnims = useRef(
   reasonOptions.map(() => new Animated.Value(1))
 ).current;
-const [reason, setReason] = useState<string>('');
+const [reason, setReason] = useState<string[]>([]);
 
   // Referral code state
   const [referralCode, setReferralCode] = useState<string>('');
@@ -523,7 +602,38 @@ const runStaggerAnimation = () => {
     }
   }, [stepIndex]);
     
-
+  // Timer and interaction tracking for alignment step
+  useEffect(() => {
+    if (step === 'alignment') {
+      // Only reset state on first visit to alignment step
+      if (!alignmentInitializedRef.current) {
+        setHasInteractedWithAlignment(false);
+        setAlignmentTimerComplete(false);
+        setHasEnteredInformation(false);
+        
+        // Clear any existing timer
+        if (alignmentTimerRef.current) {
+          clearTimeout(alignmentTimerRef.current);
+        }
+        
+        // Set 3 second timer only on first visit
+        alignmentTimerRef.current = setTimeout(() => {
+          setAlignmentTimerComplete(true);
+          alignmentTimerRef.current = null;
+        }, 3000);
+        
+        alignmentInitializedRef.current = true;
+      }
+      
+      // Cleanup on unmount or step change
+      return () => {
+        if (alignmentTimerRef.current) {
+          clearTimeout(alignmentTimerRef.current);
+          alignmentTimerRef.current = null;
+        }
+      };
+    }
+  }, [step]);
 
 
 
@@ -822,7 +932,7 @@ useLayoutEffect(() => {
   return (
     <AnimatedPressable
       key={option}
-      onPress={() => setAge(option)}
+      onPress={() => setAge(age === option ? '' : option)}
       onPressIn={() => {
         Haptics.selectionAsync();
         Animated.spring(scaleAnim, {
@@ -862,7 +972,7 @@ useLayoutEffect(() => {
           return (
             <AnimatedPressable
               key={opt}
-              onPress={() => setGender(opt)}
+              onPress={() => setGender(gender === opt ? '' : opt)}
               onPressIn={() => {
                 Haptics.selectionAsync();
                 Animated.spring(scaleAnim, {
@@ -964,7 +1074,7 @@ useLayoutEffect(() => {
           return (
 <AnimatedPressable
   key={opt}
-  onPress={() => setInvolvement(opt)}
+  onPress={() => setInvolvement(involvement === opt ? '' : opt)}
   onPressIn={() => {
     Haptics.selectionAsync();
     Animated.spring(anim, { toValue: 0.85, friction: 6, useNativeDriver: true }).start();
@@ -1062,10 +1172,17 @@ if (step === 'hearAbout') {
           idx === 3 ? require('../assets/logo4.png') :
           idx === 4 ? require('../assets/logo5.png') :
           null;
+        const isSelected = heardFrom.includes(opt);
         return (
           <AnimatedPressable
             key={opt}
-            onPress={() => setHeardFrom(opt)}
+            onPress={() => {
+              if (isSelected) {
+                setHeardFrom(heardFrom.filter(item => item !== opt));
+              } else {
+                setHeardFrom([...heardFrom, opt]);
+              }
+            }}
             onPressIn={() => {
               Haptics.selectionAsync();
               Animated.spring(anim, {
@@ -1082,10 +1199,10 @@ if (step === 'hearAbout') {
               }).start();
             }}
      style={[
-       // if this is the “Other” option, use choiceOther; otherwise use choice3
+       // if this is the "Other" option, use choiceOther; otherwise use choice3
        opt === 'Other' ? styles.choice6 : styles.choice6,
        { transform: [{ scale: anim }] },
-       heardFrom === opt && styles.choiceSelected,
+       isSelected && styles.choiceSelected,
      ]}
           >
             <View style={styles.optionRow}>
@@ -1095,7 +1212,7 @@ if (step === 'hearAbout') {
               <Text
                 style={[
                   styles.choiceText,
-                  heardFrom === opt && styles.choiceTextSelected,
+                  isSelected && styles.choiceTextSelected,
                 ]}
               >
                 {opt}
@@ -1107,17 +1224,17 @@ if (step === 'hearAbout') {
 
       {/* CONTINUE */}
       <Pressable
-        disabled={!heardFrom}
-        onPressIn={() => heardFrom && Haptics.selectionAsync()}
+        disabled={heardFrom.length === 0}
+        onPressIn={() => heardFrom.length > 0 && Haptics.selectionAsync()}
         style={[
           styles.continueButton,
-          !heardFrom && styles.continueButtonDisabled
+          heardFrom.length === 0 && styles.continueButtonDisabled
         ]}
         onPress={() => setStepIndex(stepIndex + 1)}
       >
         <Text style={[
           styles.continueButtonText,
-          !heardFrom && styles.continueButtonTextDisabled
+          heardFrom.length === 0 && styles.continueButtonTextDisabled
         ]}>
           Continue
         </Text>
@@ -1168,32 +1285,39 @@ if (step === 'stayInformed') {
       {/* OPTIONS */}
       {informOptions.map((opt, idx) => {
         const anim = informScaleAnims[idx];
+        const isSelected = informedFrom.includes(opt);
  const iconSrc =
    idx === 0
-     ? (informedFrom === informOptions[0]
+     ? (isSelected
          ? require('../assets/icons1.png')
          : require('../assets/icon1.png'))
    : idx === 1
-     ? (informedFrom === informOptions[1]
+     ? (isSelected
          ? require('../assets/icons2.png')
          : require('../assets/icon2.png'))
    : idx === 2
-     ? (informedFrom === informOptions[2]
+     ? (isSelected
          ? require('../assets/icons3.png')
          : require('../assets/icon3.png'))
    : idx === 3
-     ? (informedFrom === informOptions[3]
+     ? (isSelected
          ? require('../assets/icons4.png')
          : require('../assets/icon4.png'))
    : idx === 4
-     ? (informedFrom === informOptions[4]
+     ? (isSelected
          ? require('../assets/icons5.png')
          : require('../assets/icon5.png'))
    : null;
         return (
           <AnimatedPressable
             key={opt}
-            onPress={() => setInformedFrom(opt)}
+            onPress={() => {
+              if (isSelected) {
+                setInformedFrom(informedFrom.filter(item => item !== opt));
+              } else {
+                setInformedFrom([...informedFrom, opt]);
+              }
+            }}
             onPressIn={() => {
               Haptics.selectionAsync();
               Animated.spring(anim, {
@@ -1212,7 +1336,7 @@ if (step === 'stayInformed') {
             style={[
               opt === 'Other' ? styles.choice6 : styles.choice6,
               { transform: [{ scale: anim }] },
-              informedFrom === opt && styles.choiceSelected,
+              isSelected && styles.choiceSelected,
             ]}
           >
             <View style={styles.optionRow}>
@@ -1220,7 +1344,7 @@ if (step === 'stayInformed') {
               <Text
                 style={[
                   styles.choiceText,
-                  informedFrom === opt && styles.choiceTextSelected,
+                  isSelected && styles.choiceTextSelected,
                 ]}
               >
                 {opt}
@@ -1232,17 +1356,17 @@ if (step === 'stayInformed') {
 
       {/* CONTINUE */}
       <Pressable
-        disabled={!informedFrom}
-        onPressIn={() => informedFrom && Haptics.selectionAsync()}
+        disabled={informedFrom.length === 0}
+        onPressIn={() => informedFrom.length > 0 && Haptics.selectionAsync()}
         style={[
           styles.continueButton,
-          !informedFrom && styles.continueButtonDisabled
+          informedFrom.length === 0 && styles.continueButtonDisabled
         ]}
         onPress={() => setStepIndex(stepIndex + 1)}
       >
         <Text style={[
           styles.continueButtonText,
-          !informedFrom && styles.continueButtonTextDisabled
+          informedFrom.length === 0 && styles.continueButtonTextDisabled
         ]}>
           Continue
         </Text>
@@ -1293,10 +1417,17 @@ if (step === 'unsatisfiedReason') {
       {/* OPTIONS */}
       {reasonOptions.map((opt, idx) => {
         const anim = reasonScaleAnims[idx];
+        const isSelected = reason.includes(opt);
         return (
           <AnimatedPressable
             key={opt}
-            onPress={() => setReason(opt)}
+            onPress={() => {
+              if (isSelected) {
+                setReason(reason.filter(item => item !== opt));
+              } else {
+                setReason([...reason, opt]);
+              }
+            }}
             onPressIn={() => {
               Haptics.selectionAsync();
               Animated.spring(anim, {
@@ -1315,13 +1446,13 @@ if (step === 'unsatisfiedReason') {
             style={[
               styles.choice6,
               { transform: [{ scale: anim }], paddingLeft: 24 },
-              reason === opt && styles.choiceSelected,
+              isSelected && styles.choiceSelected,
             ]}
           >
             <Text
               style={[
                 styles.choiceText,
-                reason === opt && styles.choiceTextSelected,
+                isSelected && styles.choiceTextSelected,
               ]}
             >
               {opt}
@@ -1333,17 +1464,17 @@ if (step === 'unsatisfiedReason') {
 
       {/* CONTINUE */}
       <Pressable
-        disabled={!reason}
-        onPressIn={() => reason && Haptics.selectionAsync()}
+        disabled={reason.length === 0}
+        onPressIn={() => reason.length > 0 && Haptics.selectionAsync()}
         style={[
           styles.continueButton,
-          !reason && styles.continueButtonDisabled
+          reason.length === 0 && styles.continueButtonDisabled
         ]}
         onPress={() => setStepIndex(stepIndex + 1)}
       >
         <Text style={[
           styles.continueButtonText,
-          !reason && styles.continueButtonTextDisabled
+          reason.length === 0 && styles.continueButtonTextDisabled
         ]}>
           Continue
         </Text>
@@ -1354,6 +1485,8 @@ if (step === 'unsatisfiedReason') {
 }
 // ——— STEP 7: Which do you most align with? ———
   if (step === 'alignment') {
+  const canContinue = hasInteractedWithAlignment || alignmentTimerComplete;
+  const buttonText = hasEnteredInformation ? 'Continue' : 'Skip';
   return (
     <AnimatedSafeAreaView style={[styles.container, { backgroundColor: '#000' }]}>
       {/* HEADER */}
@@ -1385,65 +1518,393 @@ if (step === 'unsatisfiedReason') {
         </View>
       </View>
 
-      {/* QUESTION */}
-      <Text style={styles.title3}>Which do you most align with?</Text>
+      {/* Scrollable Content */}
+      <TouchableWithoutFeedback onPress={() => {
+        markAlignmentInteraction();
+        Keyboard.dismiss();
+      }}>
+        <ScrollView
+          style={{ flex: 1, width: '100%' }}
+          contentContainerStyle={{ paddingBottom: 20 }}
+          showsVerticalScrollIndicator={false}
+          onScrollBeginDrag={Keyboard.dismiss}
+          keyboardShouldPersistTaps="handled"
+        >
+        {/* Title & Subtitle */}
+        <Text style={styles.title1}>Demographic Indicators</Text>
+        <Text style={styles.subtitleText}>
+          We use this information to tell you exactly how certain policies and political actions impact you specifically. You can fill out as little or as much as you want, or skip it entirely.
+        </Text>
 
-      {/* OPTIONS */}
-      {alignmentOptions.map((opt, idx) => {
-        const anim = alignmentScaleAnims[idx];
+        {/* State Code Input */}
+        <View style={styles.stateCodeWrapper}>
+          <View style={styles.stateCodeContainer}>
+            <Text style={styles.stateCodeLabel}>State Code</Text>
+            <TextInput
+              style={styles.stateCodeInput}
+              placeholder="Ex: WA"
+              placeholderTextColor="#666"
+              value={stateCode}
+            onChangeText={(text) => {
+              markAlignmentInteraction();
+              // Only allow letters, max 2 characters, auto-capitalize
+              const filtered = text.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 2);
+              setStateCode(filtered);
+              if (filtered.length > 0) {
+                setHasEnteredInformation(true);
+              }
+            }}
+              maxLength={2}
+              autoCapitalize="characters"
+              keyboardType="default"
+              blurOnSubmit={true}
+            />
+          </View>
+          {stateCode.length === 2 && !isValidStateCode(stateCode) && (
+            <Text style={styles.stateCodeError}>Invalid state code</Text>
+          )}
+        </View>
+
+        {/* Political Standing Label */}
+        <Text style={styles.educationLabel}>Political Standing</Text>
+
+        {/* Political Standing Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['Democrat', 'Republican', 'Centrist', 'Left Leaning', 'Right Leaning', 'Other'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={politicalStanding === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = politicalStanding === word ? '' : word;
+                setPoliticalStanding(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Education Level Label */}
+        <Text style={styles.educationLabel}>Highest Education Level</Text>
+
+        {/* Education Level Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['None', 'High School', 'College/University In Progress', 'Bachelors/Associates', 'Masters/PHD'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={educationLevel === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = educationLevel === word ? '' : word;
+                setEducationLevel(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Employment Status Label */}
+        <Text style={styles.educationLabel}>Employment Status</Text>
+
+        {/* Employment Status Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['Employed full-time', 'Part-time', 'Gig / Freelance work', 'Student', 'Unemployed', 'Retired'].map((option) => {
+            const isSelected = employmentStatus.includes(option);
         return (
-          <AnimatedPressable
-            key={opt}
-            onPress={() => setAlignment(opt)}
-            onPressIn={() => {
-              Haptics.selectionAsync();
-              Animated.spring(anim, {
-                toValue: 0.85,
-                friction: 6,
-                useNativeDriver: true,
-              }).start();
-            }}
-            onPressOut={() => {
-              Animated.spring(anim, {
-                toValue: 1,
-                friction: 6,
-                useNativeDriver: true,
-              }).start();
-            }}
-            style={[
-              styles.choice6,
-              { transform: [{ scale: anim }], paddingLeft: 24 },
-              alignment === opt && styles.choiceSelected,
-            ]}
-          >
-            <Text
-              style={[
-                styles.choiceText,
-                alignment === opt && styles.choiceTextSelected,
-              ]}
-            >
-              {opt}
-            </Text>
-          </AnimatedPressable>
-        );
-        
-      })}
+              <SearchFilterButton
+                key={option}
+                word={option}
+                isSelected={isSelected}
+                onPress={(word) => {
+                  markAlignmentInteraction();
+                  if (isSelected) {
+                    setEmploymentStatus(employmentStatus.filter(item => item !== word));
+                  } else {
+                    setEmploymentStatus([...employmentStatus, word]);
+                    setHasEnteredInformation(true);
+                  }
+                }}
+              />
+            );
+          })}
+        </View>
+
+        {/* Income Level Label */}
+        <Text style={styles.educationLabel}>Income Level</Text>
+
+        {/* Income Level Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['Under $25,000', '$25,000 – $49,999', '$50,000 – $99,999', '$100k – $199,999', '$200k or more'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={incomeLevel === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = incomeLevel === word ? '' : word;
+                setIncomeLevel(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Race & Ethnicity Label */}
+        <Text style={styles.educationLabel}>Race & Ethnicity</Text>
+
+        {/* Race & Ethnicity Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['Black or African American', 'White', 'Hispanic or Latino', 'Asian', 'Middle Eastern or North African', 'Native American or Alaska Native', 'Islander', 'Multiracial'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={raceEthnicity === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = raceEthnicity === word ? '' : word;
+                setRaceEthnicity(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Dependent Status Label */}
+        <Text style={styles.educationLabel}>Dependent Status</Text>
+
+        {/* Dependent Status Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['Children', 'Elderly family member', 'Disabled Dependent', 'No Dependents'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={dependentStatus === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = dependentStatus === word ? '' : word;
+                setDependentStatus(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Military Status Label */}
+        <Text style={styles.educationLabel}>Military Status</Text>
+
+        {/* Military Status Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['No military affiliation', 'Active duty', 'National Guard or Reserve', 'Veteran', 'Military Dependent'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={militaryStatus === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = militaryStatus === word ? '' : word;
+                setMilitaryStatus(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Immigration Status Label */}
+        <Text style={styles.educationLabel}>Immigration Status</Text>
+
+        {/* Immigration Status Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['U.S. Citizen', 'Green Card', 'Visa Holder', 'Non-Citizen Status'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={immigrationStatus === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = immigrationStatus === word ? '' : word;
+                setImmigrationStatus(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Government Benefits Label */}
+        <Text style={styles.educationLabel}>Government Benefits</Text>
+
+        {/* Government Benefits Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['None', 'SNAP / Food Assistance', 'Medicaid or Medicare', 'SSI / SSDI', 'Housing', 'Unemployment', 'Education', 'Other Assistance'].map((option) => {
+            const isSelected = governmentBenefits.includes(option);
+            return (
+              <SearchFilterButton
+                key={option}
+                word={option}
+                isSelected={isSelected}
+                onPress={(word) => {
+                  markAlignmentInteraction();
+                  if (isSelected) {
+                    setGovernmentBenefits(governmentBenefits.filter(item => item !== word));
+                  } else {
+                    setGovernmentBenefits([...governmentBenefits, word]);
+                    setHasEnteredInformation(true);
+                  }
+                }}
+              />
+            );
+          })}
+        </View>
+
+        {/* Sexual Orientation Label */}
+        <Text style={styles.educationLabel}>Sexual Orientation</Text>
+
+        {/* Sexual Orientation Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['Heterosexual', 'Homosexual', 'Bisexual', 'Asexual', 'Other'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={sexualOrientation === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = sexualOrientation === word ? '' : word;
+                setSexualOrientation(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Voter Eligibility Label */}
+        <Text style={styles.educationLabel}>Voter Eligibility</Text>
+
+        {/* Voter Eligibility Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['Registered and Eligible', 'Eligible, Not Registered', 'Not Eligible'].map((option) => (
+            <SearchFilterButton
+              key={option}
+              word={option}
+              isSelected={voterEligibility === option}
+              onPress={(word) => {
+                markAlignmentInteraction();
+                const newValue = voterEligibility === word ? '' : word;
+                setVoterEligibility(newValue);
+                if (newValue.length > 0) {
+                  setHasEnteredInformation(true);
+                }
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Disability Status Label */}
+        <Text style={styles.educationLabel}>Disability Status</Text>
+
+        {/* Disability Status Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['None', 'Physical Disability', 'Cognitive or Learning Disability', 'Mental Health Condition', 'Multiple Disabilities'].map((option) => {
+            const isSelected = disabilityStatus.includes(option);
+            return (
+              <SearchFilterButton
+                key={option}
+                word={option}
+                isSelected={isSelected}
+                onPress={(word) => {
+                  markAlignmentInteraction();
+                  if (isSelected) {
+                    setDisabilityStatus(disabilityStatus.filter(item => item !== word));
+                  } else {
+                    setDisabilityStatus([...disabilityStatus, word]);
+                    setHasEnteredInformation(true);
+                  }
+                }}
+              />
+            );
+          })}
+        </View>
+
+        {/* Industry of Work or Study Label */}
+        <Text style={styles.educationLabel}>Industry of Work or Study</Text>
+
+        {/* Industry of Work or Study Filter Buttons */}
+        <View style={styles.educationButtonsContainer}>
+          {['Healthcare', 'Technology', 'Education', 'Finance / Business', 'Government', 'Public Sector', 'Military / Defense', 'Manufacturing', 'Trades', 'Politics', 'Service / Hospitality', 'Retail', 'Transportation', 'Logistics', 'Creative', 'Agriculture / Environment', 'Other'].map((option) => {
+            const isSelected = industryOfWork.includes(option);
+            return (
+              <SearchFilterButton
+                key={option}
+                word={option}
+                isSelected={isSelected}
+                onPress={(word) => {
+                  markAlignmentInteraction();
+                  if (isSelected) {
+                    setIndustryOfWork(industryOfWork.filter(item => item !== word));
+                  } else {
+                    setIndustryOfWork([...industryOfWork, word]);
+                    setHasEnteredInformation(true);
+                  }
+                }}
+              />
+            );
+          })}
+        </View>
+
+        {/* Additional Information Label */}
+        <Text style={styles.educationLabel}>Additional Information</Text>
+
+        {/* Additional Information Text Input */}
+        <TextInput
+          style={styles.additionalInfoInput}
+          placeholder="This helps improve how accurate we are in determining how political events personally impact you."
+          placeholderTextColor="#666"
+          value={additionalInformation}
+          onChangeText={(text) => {
+            markAlignmentInteraction();
+            setAdditionalInformation(text);
+            if (text.length > 0) {
+              setHasEnteredInformation(true);
+            }
+          }}
+          multiline={true}
+          textAlignVertical="top"
+          blurOnSubmit={true}
+        />
+        </ScrollView>
+      </TouchableWithoutFeedback>
 
       {/* CONTINUE */}
       <Pressable
-        disabled={!alignment}
-        onPressIn={() => alignment && Haptics.selectionAsync()}
+        disabled={!canContinue}
+        onPressIn={() => canContinue && Haptics.selectionAsync()}
         style={[
           styles.continueButton,
-          !alignment && styles.continueButtonDisabled
+          !canContinue && styles.continueButtonDisabled
         ]}
         onPress={() => setStepIndex(stepIndex + 1)}
       >
         <Text style={[
           styles.continueButtonText,
-          !alignment && styles.continueButtonTextDisabled
+          !canContinue && styles.continueButtonTextDisabled
         ]}>
-          Continue
+          {buttonText}
         </Text>
       </Pressable>
     </AnimatedSafeAreaView>
@@ -2047,14 +2508,7 @@ if (step === 'paymentPlan') {
               console.log('   - plan:', plan);
               console.log('   - cycle:', cycle);
 
-              if (plan !== 'plus') {
-                // Free/basic flow stays unchanged
-                await saveOnboardData(user.id, onboardData, plan, cycle);
-                router.replace('/(tabs)/home');
-                return;
-              }
-
-              // Plus flow: trigger IAP
+              // Both Basic and Plus now require IAP purchase
               if (!isIAPAvailable()) {
                 Alert.alert(
                   'In-App Purchases Unavailable',
@@ -2068,11 +2522,21 @@ if (step === 'paymentPlan') {
                 setIsPurchasing(true);
                 await iapService.initialize();
 
-                const productId = cycle === 'quarterly'
-                  ? SUBSCRIPTION_PRODUCTS.PLUS_QUARTERLY
-                  : SUBSCRIPTION_PRODUCTS.PLUS_MONTHLY;
+                // Determine product ID based on plan and cycle
+                let productId: string;
+                if (plan === 'basic') {
+                  // Basic is monthly only (product ID: execudex.basic)
+                  productId = SUBSCRIPTION_PRODUCTS.BASIC_MONTHLY;
+                } else if (plan === 'plus') {
+                  // Plus has monthly and quarterly options
+                  productId = cycle === 'quarterly'
+                    ? SUBSCRIPTION_PRODUCTS.PLUS_QUARTERLY
+                    : SUBSCRIPTION_PRODUCTS.PLUS_MONTHLY;
+                } else {
+                  throw new Error('Invalid plan selected');
+                }
 
-                await iapService.purchaseSubscription(productId);
+                await iapService.purchaseSubscription(productId as any);
                 // Success path handled by purchase listener (save + navigate)
               } catch (purchaseErr: any) {
                 console.error('Purchase failed:', purchaseErr);
@@ -2104,7 +2568,7 @@ if (step === 'paymentPlan') {
       <ProfileLoadingIndicator
         visible={isPurchasing}
         title={purchaseError ? 'Purchase Error' : 'Processing purchase...'}
-        subtitle={purchaseError || 'Confirm with Apple Pay to finish your Plus signup.'}
+        subtitle={purchaseError || 'Confirm with Apple Pay to finish your subscription signup.'}
         error={purchaseError}
         onCancel={() => {
           setIsPurchasing(false);
@@ -2731,5 +3195,70 @@ choice6:           {
   termsLink: {
     color: '#fff',
     fontWeight: 'bold',
+  },
+  stateCodeWrapper: {
+    width: '90%',
+    alignSelf: 'center',
+    marginVertical: '2%',
+  },
+  stateCodeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stateCodeLabel: {
+    color: '#fff',
+    fontSize: 18,
+    marginRight: 10,
+    minWidth: 100,
+  },
+  stateCodeInput: {
+    width: 100,
+    backgroundColor: '#090909',
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 20,
+    paddingHorizontal: 0,
+    color: '#fff',
+    height: 50,
+    fontSize: 18,
+    textAlign: 'center',
+  },
+  stateCodeError: {
+    color: '#ff4444',
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 0,
+  },
+  educationLabel: {
+    color: '#fff',
+    fontSize: 18,
+    width: '90%',
+    alignSelf: 'center',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  educationButtonsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    width: '90%',
+    alignSelf: 'center',
+    marginBottom: 10,
+  },
+  additionalInfoInput: {
+    width: '90%',
+    alignSelf: 'center',
+    backgroundColor: '#090909',
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    color: '#fff',
+    fontSize: 16,
+    minHeight: 240,
+    marginTop: 10,
+    marginBottom: 200,
   },
 });

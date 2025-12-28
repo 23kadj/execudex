@@ -6,7 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const BASIC_WEEKLY_LIMIT = 5;
+const BASIC_WEEKLY_LIMIT = 10;
 const WARNING_THRESHOLDS = [2, 1];
 
 serve(async (req) => {
@@ -99,26 +99,118 @@ serve(async (req) => {
     
     let lastReset = userData.last_reset ? new Date(userData.last_reset) : null;
 
-    // Helper function to get the most recent Sunday at 00:00:00 EST
-    function getMostRecentSunday(date: Date): Date {
-      const d = new Date(date);
-      // Convert to EST (UTC-5)
-      d.setHours(d.getHours() - 5);
-      const day = d.getDay();
-      const diff = day; // Days since Sunday
-      d.setDate(d.getDate() - diff);
-      d.setHours(0, 0, 0, 0);
-      return d;
+    // Helper function to get Eastern Time components and day of week from a UTC date
+    function getEasternTimeInfo(date: Date): { year: number; month: number; day: number; dayOfWeek: number } {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        weekday: 'short'
+      });
+      
+      const parts = formatter.formatToParts(date);
+      const year = parseInt(parts.find(p => p.type === 'year')!.value);
+      const month = parseInt(parts.find(p => p.type === 'month')!.value) - 1; // 0-indexed
+      const day = parseInt(parts.find(p => p.type === 'day')!.value);
+      
+      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const weekdayPart = parts.find(p => p.type === 'weekday')!.value;
+      const dayOfWeek = dayNames.indexOf(weekdayPart);
+      
+      return { year, month, day, dayOfWeek };
     }
 
-    // Helper function to get next Sunday date for display
+    // Helper function to create a Date object for a specific date/time in Eastern Time
+    // Tests both EST (UTC-5) and EDT (UTC-4) to find the correct one
+    function createDateInEasternTime(year: number, month: number, day: number, hour: number, minute: number, second: number): Date {
+      // Try EST first (UTC-5)
+      const estCandidate = new Date(Date.UTC(year, month, day, hour + 5, minute, second));
+      // Try EDT (UTC-4)
+      const edtCandidate = new Date(Date.UTC(year, month, day, hour + 4, minute, second));
+      
+      // Format both in Eastern Time and extract components to see which matches our target
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      const estParts = formatter.formatToParts(estCandidate);
+      const edtParts = formatter.formatToParts(edtCandidate);
+      
+      const estYear = parseInt(estParts.find(p => p.type === 'year')!.value);
+      const estMonth = parseInt(estParts.find(p => p.type === 'month')!.value) - 1;
+      const estDay = parseInt(estParts.find(p => p.type === 'day')!.value);
+      const estHour = parseInt(estParts.find(p => p.type === 'hour')!.value);
+      const estMinute = parseInt(estParts.find(p => p.type === 'minute')!.value);
+      const estSecond = parseInt(estParts.find(p => p.type === 'second')!.value);
+      
+      const edtYear = parseInt(edtParts.find(p => p.type === 'year')!.value);
+      const edtMonth = parseInt(edtParts.find(p => p.type === 'month')!.value) - 1;
+      const edtDay = parseInt(edtParts.find(p => p.type === 'day')!.value);
+      const edtHour = parseInt(edtParts.find(p => p.type === 'hour')!.value);
+      const edtMinute = parseInt(edtParts.find(p => p.type === 'minute')!.value);
+      const edtSecond = parseInt(edtParts.find(p => p.type === 'second')!.value);
+      
+      // Compare components to target
+      const matchesEST = estYear === year && estMonth === month && estDay === day && 
+                        estHour === hour && estMinute === minute && estSecond === second;
+      const matchesEDT = edtYear === year && edtMonth === month && edtDay === day && 
+                        edtHour === hour && edtMinute === minute && edtSecond === second;
+      
+      // Return the one that matches
+      if (matchesEST) return estCandidate;
+      if (matchesEDT) return edtCandidate;
+      
+      // Fallback: return EST (shouldn't happen, but safe fallback)
+      return estCandidate;
+    }
+
+    // Helper function to get the most recent Sunday at 00:00:00 Eastern Time
+    function getMostRecentSunday(date: Date): Date {
+      const eastern = getEasternTimeInfo(date);
+      const daysSinceSunday = eastern.dayOfWeek; // 0 = Sunday
+      
+      // Create a date representing the current Eastern Time date
+      const currentEasternDate = createDateInEasternTime(eastern.year, eastern.month, eastern.day, 0, 0, 0);
+      
+      // Subtract days in milliseconds
+      const sundayDate = new Date(currentEasternDate.getTime() - (daysSinceSunday * 24 * 60 * 60 * 1000));
+      
+      // Extract Eastern Time components from the result
+      const sundayEastern = getEasternTimeInfo(sundayDate);
+      
+      // Create date for Sunday at midnight Eastern Time
+      return createDateInEasternTime(sundayEastern.year, sundayEastern.month, sundayEastern.day, 0, 0, 0);
+    }
+
+    // Helper function to get next Sunday date for display (in Eastern Time)
     function getNextSunday(date: Date): string {
-      const d = new Date(date);
-      d.setHours(d.getHours() - 5); // EST adjustment
-      const day = d.getDay();
-      const daysUntilSunday = day === 0 ? 7 : 7 - day;
-      d.setDate(d.getDate() + daysUntilSunday);
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const eastern = getEasternTimeInfo(date);
+      const daysUntilSunday = eastern.dayOfWeek === 0 ? 7 : 7 - eastern.dayOfWeek;
+      
+      // Create a date representing the current Eastern Time date
+      const currentEasternDate = createDateInEasternTime(eastern.year, eastern.month, eastern.day, 0, 0, 0);
+      
+      // Add days in milliseconds
+      const nextSundayDateObj = new Date(currentEasternDate.getTime() + (daysUntilSunday * 24 * 60 * 60 * 1000));
+      
+      // Extract Eastern Time components from the result
+      const nextSundayEastern = getEasternTimeInfo(nextSundayDateObj);
+      
+      // Create date for next Sunday at midnight Eastern Time and format for display
+      const nextSundayDate = createDateInEasternTime(nextSundayEastern.year, nextSundayEastern.month, nextSundayEastern.day, 0, 0, 0);
+      return nextSundayDate.toLocaleDateString('en-US', { 
+        timeZone: 'America/New_York',
+        month: 'short', 
+        day: 'numeric' 
+      });
     }
 
     // Check if weekly reset is needed (check on any day, not just Sunday)
@@ -312,7 +404,7 @@ serve(async (req) => {
     if (isBasicPlan) {
       remaining = BASIC_WEEKLY_LIMIT - newLength;
       // Show warning when user is at or below warning thresholds (2 or 1 remaining)
-      // This means warnings show at profiles 3 and 4 (out of 5)
+      // This means warnings show at profiles 8 and 9 (out of 10)
       if (WARNING_THRESHOLDS.includes(remaining)) {
         showWarning = true;
         console.log(`Warning triggered for basic plan: ${remaining} profile(s) remaining`);

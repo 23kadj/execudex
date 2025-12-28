@@ -86,8 +86,11 @@ serve(async (req) => {
 
     // Update user subscription status
     const subscription = validSubscriptions[0]; // Use most recent valid subscription
-    const plan = 'plus';
-    const cycle = subscription.product_id === 'execudex.plus.quarterly' ? 'quarterly' : 'monthly';
+    const productId = subscription.product_id;
+    // Determine plan from product ID
+    const plan = productId === 'execudex.basic' ? 'basic' : 'plus';
+    // Determine cycle from product ID (Basic is monthly only)
+    const cycle = productId === 'execudex.plus.quarterly' ? 'quarterly' : 'monthly';
 
     const { error: updateError } = await supabaseClient
       .from('users')
@@ -192,7 +195,7 @@ async function verifyReceiptWithApple(receiptData: string): Promise<ReceiptValid
  * Find valid Execudex subscriptions from receipt data
  */
 function findValidExecudexSubscriptions(inAppPurchases: any[]): any[] {
-  const execudexProducts = ['execudex.plus.monthly', 'execudex.plus.quarterly'];
+  const execudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
   const now = Date.now();
 
   return inAppPurchases

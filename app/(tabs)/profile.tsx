@@ -19,6 +19,7 @@ export default function Profile() {
   const accountCard4Scale = useRef(new Animated.Value(1)).current;
   const historyCardScale = useRef(new Animated.Value(1)).current;
   const signOutScale = useRef(new Animated.Value(1)).current;
+  const demographicCardScale = useRef(new Animated.Value(1)).current;
 
   const handleSignOut = async () => {
     Alert.alert(
@@ -76,7 +77,7 @@ export default function Profile() {
     <SafeAreaView style={styles.container}>
       {/* Fixed Account Header */}
       <View style={styles.fixedHeaderContainer}>
-        <Text style={styles.headerTitle}>Account</Text>
+        <Text style={styles.headerTitle}>Settings</Text>
       </View>
 
       <ScrollView 
@@ -175,6 +176,28 @@ export default function Profile() {
                </View>
              </AnimatedPressable>
 
+             {/* Account Settings Card - Demographics */}
+             <AnimatedPressable
+               onPress={() => {
+                 Haptics.selectionAsync();
+                 router.push('/demographics');
+               }}
+               style={styles.accountCardNew}
+             >
+               <View style={styles.accountCardContent}>
+                 <View style={styles.accountTopRow}>
+                   <Image 
+                     source={require('../../assets/demographic.png')} 
+                     style={styles.accountCardIcon}
+                   />
+                   <Text style={styles.accountTitleNew}>Demographics</Text>
+                 </View>
+                 <View style={styles.accountBottomRow}>
+                   <Text style={styles.accountSubtitleNew}>View and edit your demographic indicators</Text>
+                 </View>
+               </View>
+             </AnimatedPressable>
+
              {/* Account Settings Card 5 - Legal */}
              <AnimatedPressable
                onPress={() => {
@@ -256,7 +279,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 0,
-    paddingTop: 70,
+    paddingTop: 55,
     paddingBottom: 20,
   },
   fixedHeaderContainer: {

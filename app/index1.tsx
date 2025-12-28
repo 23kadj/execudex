@@ -1104,6 +1104,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     minHeight: 46,
     width: 120,
+    marginBottom: 8,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#2f2f2f',

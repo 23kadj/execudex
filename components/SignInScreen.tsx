@@ -159,12 +159,15 @@ export default function SignInScreen() {
       // This ensures IAP is only initialized after UI is fully mounted
       await initIap();
       const purchases = await restorePurchases();
+      const allExecudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
       const matchingPurchase = purchases?.find(p =>
-        ['execudex.plus.monthly', 'execudex.plus.quarterly'].includes(p.productId)
+        allExecudexProducts.includes(p.productId)
       );
 
       if (matchingPurchase) {
-        const cycle = matchingPurchase.productId.includes('quarterly') ? 'quarterly' : 'monthly';
+        const productId = matchingPurchase.productId;
+        const plan = productId === 'execudex.basic' ? 'basic' : 'plus';
+        const cycle = productId.includes('quarterly') ? 'quarterly' : 'monthly';
 
         // Update user subscription using the Edge Function
         const { data: { user } } = await getSupabaseClient().auth.getUser();
@@ -173,12 +176,13 @@ export default function SignInScreen() {
           await getSupabaseClient().functions.invoke('update_subscription_status', {
             body: {
               userId: user.id,
-              plan: 'plus',
+              plan,
               cycle,
             }
           });
         }
-        Alert.alert('Restored', 'Your Plus plan has been restored!');
+        const planName = plan === 'basic' ? 'Basic' : 'Plus';
+        Alert.alert('Restored', `Your ${planName} plan has been restored!`);
       } else {
         Alert.alert('No purchases found', 'We couldn\'t find prior subscriptions for this Apple ID.');
       }

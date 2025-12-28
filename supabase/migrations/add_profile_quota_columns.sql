@@ -14,5 +14,5 @@ CREATE INDEX IF NOT EXISTS idx_users_plan ON users(plan);
 -- Add comment to document the columns
 COMMENT ON COLUMN users.week_profiles IS 'Comma-separated string with profile IDs (format: "123ppl,329ppl,11legi") accessed by user in current week';
 COMMENT ON COLUMN users.last_reset IS 'Timestamp of last weekly reset (Sunday)';
-COMMENT ON COLUMN users.plan IS 'User subscription plan: "basic" (5 profiles/week) or other (unlimited)';
+COMMENT ON COLUMN users.plan IS 'User subscription plan: "basic" (10 profiles/week) or other (unlimited)';
 

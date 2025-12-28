@@ -29,6 +29,7 @@ export interface SubscriptionUpdateData {
 }
 
 export const SUBSCRIPTION_PRODUCTS = {
+  BASIC_MONTHLY: 'execudex.basic',
   PLUS_MONTHLY: 'execudex.plus.monthly',
   PLUS_QUARTERLY: 'execudex.plus.quarterly',
 } as const;

@@ -214,6 +214,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     alignItems: 'center',
     marginTop: 'auto',
+    marginBottom: 8,
   },
   closeButtonText: {
     fontSize: 18,

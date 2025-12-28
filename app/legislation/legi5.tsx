@@ -39,6 +39,7 @@ function InfoSection({
   linkStyles,
   cardContent,
   cardIndexData,
+  impactData,
   visible,
   handleLinkPress
 }: {
@@ -60,6 +61,7 @@ function InfoSection({
     screen?: string;
     category?: string;
   } | null;
+  impactData: string | null;
   visible: boolean;
   handleLinkPress: (url: string) => void;
 }) {
@@ -87,6 +89,15 @@ function InfoSection({
         <View style={styles.listContainer}>
           <Text style={listStyle.text}>
             {cardContent?.tldr || '130 - 140 characters'}
+          </Text>
+        </View>
+      </View>
+      {/* Personal Impact Grid Card */}
+      <View style={tldrStyle.container}>
+        <Text style={tldrStyle.text}>Personal Impact</Text>
+        <View style={styles.listContainer}>
+          <Text style={listStyle.text}>
+            {impactData || 'No Data Available'}
           </Text>
         </View>
       </View>
@@ -179,6 +190,10 @@ export default function Legi5() {
   
   // State for profile slug (fetched from ppl_index or legi_index)
   const [profileSlug, setProfileSlug] = useState<string | null>(null);
+
+  // State for impact data
+  const [impactData, setImpactData] = useState<string | null>(null);
+  const [isLoadingImpact, setIsLoadingImpact] = useState(false);
 
   // Sheet actions (same logic as previous header icons)
   const handleSheetInfoPress = () => {
@@ -451,6 +466,74 @@ export default function Legi5() {
     fetchProfileSlug();
   }, [cardIndexData?.owner_id, cardIndexData?.is_ppl]);
 
+  // Fetch impact data from impact table
+  useEffect(() => {
+    const fetchImpactData = async () => {
+      if (!cardId || !user?.id) {
+        setImpactData(null);
+        setIsLoadingImpact(false);
+        return;
+      }
+      
+      console.log('[LEGI5] Checkpoint: Starting impact data fetch');
+      
+      // Validate cardId is a valid number before parsing
+      const parsedCardId = parseInt(cardId, 10);
+      if (isNaN(parsedCardId) || parsedCardId <= 0) {
+        console.error('[LEGI5] Invalid cardId for impact fetch:', cardId);
+        setImpactData(null);
+        setIsLoadingImpact(false);
+        return;
+      }
+      
+      setIsLoadingImpact(true);
+      try {
+        const result = await safeNativeCall(
+          'supabase',
+          'impact.select',
+          { card_id: parsedCardId, user_id: user.id },
+          async () => {
+            const supabase = getSupabaseClient();
+            const { data, error } = await supabase
+              .from('impact')
+              .select('impact')
+              .eq('card_id', parsedCardId)
+              .eq('user_id', user.id)
+              .maybeSingle();
+            
+            // Handle errors gracefully - don't throw to prevent TurboModule crash
+            if (error) {
+              // PGRST116 = no rows returned (expected, not an error)
+              if (error.code === 'PGRST116') {
+                return null;
+              }
+              // For other errors, log but return null instead of throwing
+              console.error('[LEGI5] Impact query error:', error);
+              return null;
+            }
+            
+            return data;
+          }
+        );
+        
+        if (result && result.impact) {
+          console.log('[LEGI5] Impact data fetched successfully');
+          setImpactData(result.impact);
+        } else {
+          console.log('[LEGI5] No impact data found');
+          setImpactData(null);
+        }
+      } catch (error) {
+        console.error('[LEGI5] Error in fetchImpactData:', error);
+        setImpactData(null);
+      } finally {
+        setIsLoadingImpact(false);
+      }
+    };
+    
+    fetchImpactData();
+  }, [cardId, user?.id]);
+
   // Helper function to capitalize first letter of each word
   const capitalizeWords = (str: string) => {
     return str.replace(/\b\w/g, (char) => char.toUpperCase());
@@ -618,24 +701,30 @@ export default function Legi5() {
         </View>
 
         {/* InfoSections */}
-        {isLoadingContent || isLoadingIndex ? (
+        {isLoadingContent || isLoadingIndex || isLoadingImpact ? (
           <View style={styles.contentSection}>
             <View style={styles.gridContainer}>
               <Text style={styles.title1}>Loading...</Text>
               <Text style={styles.info1}>Loading content...</Text>
             </View>
-            <View style={styles.gridContainer2}>
-              <Text style={styles.tldr1}>TLDR</Text>
-              <View style={styles.listContainer}>
-                <Text style={styles.list1}>Loading...</Text>
-              </View>
-            </View>
-            <View style={styles.gridContainer2}>
-              <Text style={styles.tldr1}>Direct Quotes</Text>
-              <View style={styles.listContainer}>
-                <Text style={styles.list1}>Loading...</Text>
-              </View>
-            </View>
+             <View style={styles.gridContainer2}>
+               <Text style={styles.tldr1}>TLDR</Text>
+               <View style={styles.listContainer}>
+                 <Text style={styles.list1}>Loading...</Text>
+               </View>
+             </View>
+             <View style={styles.gridContainer2}>
+               <Text style={styles.tldr1}>Personal Impact</Text>
+               <View style={styles.listContainer}>
+                 <Text style={styles.list1}>Loading...</Text>
+               </View>
+             </View>
+             <View style={styles.gridContainer2}>
+               <Text style={styles.tldr1}>Direct Quotes</Text>
+               <View style={styles.listContainer}>
+                 <Text style={styles.list1}>Loading...</Text>
+               </View>
+             </View>
           </View>
         ) : !cardContent && !cardIndexData ? (
           <View style={styles.contentSection}>
@@ -645,7 +734,7 @@ export default function Legi5() {
             </View>
           </View>
         ) : (
-          <InfoSection {...infoSectionStyle} cardContent={cardContent} cardIndexData={cardIndexData} visible={true} handleLinkPress={handleLinkPress} />
+          <InfoSection {...infoSectionStyle} cardContent={cardContent} cardIndexData={cardIndexData} impactData={impactData} visible={true} handleLinkPress={handleLinkPress} />
         )}
       </ScrollView>
 
@@ -870,6 +959,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     minHeight: 46,
     width: 120,
+    marginBottom: 8,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#2f2f2f',

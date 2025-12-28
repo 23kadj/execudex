@@ -14,8 +14,8 @@ import { getSupabaseClient } from '../utils/supabase';
 // Subscription box content - EDIT THESE TO CHANGE TEXT
 const BOX_1_CONTENT = {
   title: 'Execudex Basic',
-  feature1: 'Access 5 profiles a week',
-  feature2: 'Free of Charge',
+  feature1: 'Access 10 profiles a week',
+  feature2: '3 Day Trial then $4.99 a month',
 };
 
 const BOX_2_CONTENT = {
@@ -26,7 +26,7 @@ const BOX_2_CONTENT = {
 
 const BOX_3_CONTENT = {
   title: 'Execudex Basic 3 Month Plan',
-  feature1: 'Access 5 profiles a week',
+  feature1: 'Access 10 profiles a week',
   feature2: '$12.99 every 3 months',
 };
 
@@ -216,9 +216,10 @@ export default function Subscription() {
     setIsRestoring(true);
     try {
       const purchases = await restorePurchases();
-      // If we see ANY Execudex Plus purchase, restore Plus (and derive the billing cycle from the SKU).
+      // Check for all Execudex subscriptions (Basic and Plus), prioritize Plus if both exist
+      const allExecudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
       const matchingPurchases = (purchases ?? []).filter((p: any) =>
-        ['execudex.plus.monthly', 'execudex.plus.quarterly'].includes(p?.productId)
+        allExecudexProducts.includes(p?.productId)
       );
 
       const parseTs = (p: any): number => {
@@ -232,17 +233,29 @@ export default function Subscription() {
         return Number.isFinite(n) ? n : 0;
       };
 
+      // Separate Plus and Basic purchases, prioritize Plus
+      const plusPurchases = matchingPurchases.filter((p: any) => 
+        p?.productId?.includes('plus')
+      );
+      const basicPurchases = matchingPurchases.filter((p: any) => 
+        p?.productId === 'execudex.basic'
+      );
+
+      // Use Plus if available, otherwise Basic
+      const purchasesToCheck = plusPurchases.length > 0 ? plusPurchases : basicPurchases;
       const bestPurchase =
-        matchingPurchases
+        purchasesToCheck
           .slice()
           .sort((a: any, b: any) => parseTs(b) - parseTs(a))[0] ?? null;
 
       if (bestPurchase) {
-        const cycle = String(bestPurchase.productId).includes('quarterly') ? 'quarterly' : 'monthly';
+        const productId = bestPurchase.productId;
+        const plan = productId === 'execudex.basic' ? 'basic' : 'plus';
+        const cycle = String(productId).includes('quarterly') ? 'quarterly' : 'monthly';
 
         // Update user subscription using the Edge Function (Supabase is the source of truth)
         await iapService.updateUserSubscription(user.id, {
-          plan: 'plus',
+          plan,
           cycle,
           transactionId: bestPurchase?.transactionId,
           purchaseDate: bestPurchase?.transactionDate
@@ -585,23 +598,23 @@ export default function Subscription() {
                   <>
                     {/* Basic Plan Display */}
                     <Text style={styles.usageCount}>
-                      {profileUsage.profilesUsed} / 5 profiles 
+                      {profileUsage.profilesUsed} / 10 profiles 
                     </Text>
                     <View style={styles.progressBarContainer}>
                       <View 
                         style={[
                           styles.progressBar, 
                           { 
-                            width: `${(profileUsage.profilesUsed / 5) * 100}%`,
-                            backgroundColor: profileUsage.profilesUsed >= 4 ? '#ef4444' : '#22c55e'
+                            width: `${(profileUsage.profilesUsed / 10) * 100}%`,
+                            backgroundColor: profileUsage.profilesUsed >= 8 ? '#ef4444' : '#22c55e'
                           }
                         ]} 
                       />
                     </View>
                     <Text style={styles.usageSubtext}>
-                      {profileUsage.profilesUsed >= 5 
+                      {profileUsage.profilesUsed >= 10 
                         ? 'You\'ve reached your weekly limit. Resets on Sunday.' 
-                        : `${5 - profileUsage.profilesUsed} profile${5 - profileUsage.profilesUsed === 1 ? '' : 's'} remaining this week.`}
+                        : `${10 - profileUsage.profilesUsed} profile${10 - profileUsage.profilesUsed === 1 ? '' : 's'} remaining this week.`}
                     </Text>
                   </>
                 ) : (
