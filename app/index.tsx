@@ -25,6 +25,7 @@ import { useAuth } from '../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../components/ProfileLoadingIndicator';
 import { SearchFilterButton } from '../components/SearchFilterButton';
 import { Typography } from '../constants/Typography';
+import { initIap, restorePurchases } from '../iap.apple';
 import { iapService } from '../services/iapService';
 import { SUBSCRIPTION_PRODUCTS } from '../types/iapTypes';
 import { isIAPAvailable } from '../utils/iapAvailability';
@@ -262,16 +263,39 @@ const step: StepKey = steps[stepIndex];
             throw new Error('No authenticated user found');
           }
 
-          // Save onboard data immediately after purchase
-          const onboardData = buildOnboardData();
+          // Get receipt data for verification
+          const receiptData = purchase.transactionReceipt;
+          if (!receiptData) {
+            throw new Error('Receipt data not available. Please contact support.');
+          }
+
+          // Verify receipt with Apple BEFORE saving onboard data or showing success
+          console.log('🔐 Verifying receipt with Apple...');
+          const verificationResult = await iapService.verifyReceiptAndUpdateSubscription(
+            user.id,
+            receiptData
+          );
+
+          if (!verificationResult.success) {
+            throw new Error(verificationResult.error || 'Receipt verification failed. Please contact support.');
+          }
+
+          // Save onboard data after receipt verification
+          // Use the ref value captured when Continue was pressed (includes all demographics)
+          let onboardData = onboardDataRef.current;
+          if (!onboardData) {
+            console.warn('⚠️ onboardDataRef is empty, building onboard data (may have stale demographics)');
+            onboardData = buildOnboardData();
+          }
           const currentPlan = selectedPlanRef.current || 'basic';
           const currentCycle = selectedCycleRef.current === 'quarterly' ? 'quarterly' : 'monthly';
+          console.log('💾 Saving onboard data after purchase:', onboardData);
           await saveOnboardData(user.id, onboardData, currentPlan, currentCycle);
 
           // Navigate to home
           router.replace('/(tabs)/home');
 
-          // Show success alert
+          // Show success alert ONLY after receipt verification
           iapService.showPurchaseSuccess();
         } catch (error: any) {
           console.error('❌ Error processing purchase:', error);
@@ -280,10 +304,143 @@ const step: StepKey = steps[stepIndex];
           setIsPurchasing(false);
         }
       },
-      (error) => {
+      async (error) => {
         console.error('Purchase error:', error);
-        setPurchaseError(error.message || 'Purchase failed. Please try again.');
-        iapService.showPurchaseError(error);
+        
+        // Check if error is "already owned" - this happens when Apple ID already owns the subscription
+        const isAlreadyOwned = 
+          error.alreadyOwned ||
+          error.code === 'E_ALREADY_OWNED' ||
+          error.code === 'E_ITEM_UNAVAILABLE' ||
+          error.message?.toLowerCase().includes('already owned') ||
+          error.message?.toLowerCase().includes('already purchased') ||
+          error.message?.toLowerCase().includes('item already owned');
+        
+        if (isAlreadyOwned) {
+          console.log('🔄 Item already owned - automatically restoring purchases...');
+          
+          try {
+            // Initialize IAP if needed
+            await initIap();
+            
+            // Automatically restore purchases when item is already owned
+            const purchases = await restorePurchases();
+            const allExecudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
+            const matchingPurchases = (purchases ?? []).filter((p: any) =>
+              allExecudexProducts.includes(p?.productId)
+            );
+
+            const parseTs = (p: any): number => {
+              const raw =
+                p?.transactionDate ??
+                p?.originalTransactionDate ??
+                p?.purchaseDate ??
+                p?.purchaseTime ??
+                0;
+              const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
+              return Number.isFinite(n) ? n : 0;
+            };
+
+            // Separate Plus and Basic purchases, prioritize Plus
+            const plusPurchases = matchingPurchases.filter((p: any) => 
+              p?.productId?.includes('plus')
+            );
+            const basicPurchases = matchingPurchases.filter((p: any) => 
+              p?.productId === 'execudex.basic'
+            );
+
+            // Use Plus if available, otherwise Basic
+            const purchasesToCheck = plusPurchases.length > 0 ? plusPurchases : basicPurchases;
+            const bestPurchase =
+              purchasesToCheck
+                .slice()
+                .sort((a: any, b: any) => parseTs(b) - parseTs(a))[0] ?? null;
+
+            if (bestPurchase) {
+              const supabase = getSupabaseClient();
+              const { data: { user } } = await supabase.auth.getUser();
+              if (!user) {
+                throw new Error('No authenticated user found');
+              }
+
+              // CRITICAL: Prioritize originalTransactionId for ownership tracking
+              // originalTransactionId stays constant across renewals
+              const transactionId = bestPurchase.originalTransactionId || bestPurchase.transactionId;
+              
+              // CRITICAL: Check if this transaction belongs to another user
+              // This prevents one user from accessing another user's subscription on the same device
+              const ownershipCheck = await iapService.checkTransactionOwnership(user.id, transactionId);
+              
+              if (ownershipCheck.belongsToOtherUser) {
+                // Transaction belongs to a different user - don't grant access
+                console.warn('⚠️ Transaction ownership check failed - subscription belongs to different user');
+                setPurchaseError('This subscription belongs to a different account. Please sign in with the account that made the purchase, or purchase a new subscription.');
+                Alert.alert(
+                  'Subscription Not Available',
+                  'This subscription belongs to a different account. Please sign in with the account that made the purchase, or purchase a new subscription.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+
+              // Process the restored purchase as if it was a new purchase
+              console.log('✅ Found existing purchase available for this user, linking to account:', bestPurchase);
+              
+              // Verify receipt before granting access
+              const receiptData = bestPurchase.transactionReceipt;
+              if (receiptData) {
+                const verificationResult = await iapService.verifyReceiptAndUpdateSubscription(
+                  user.id,
+                  receiptData
+                );
+                
+                if (!verificationResult.success) {
+                  throw new Error(verificationResult.error || 'Receipt verification failed');
+                }
+              }
+              
+              // Determine plan and cycle from product ID
+              const productId = bestPurchase.productId;
+              const plan = productId === 'execudex.basic' ? 'basic' : 'plus';
+              const cycle = productId.includes('quarterly') ? 'quarterly' : 'monthly';
+              
+              // Update selected plan refs to match restored purchase
+              selectedPlanRef.current = plan;
+              selectedCycleRef.current = cycle;
+              
+              // Save onboard data with restored subscription
+              let onboardData = onboardDataRef.current;
+              if (!onboardData) {
+                console.warn('⚠️ onboardDataRef is empty, building onboard data (may have stale demographics)');
+                onboardData = buildOnboardData();
+              }
+              console.log('💾 Saving onboard data after restored purchase:', onboardData);
+              await saveOnboardData(user.id, onboardData, plan, cycle);
+
+              // Navigate to home
+              router.replace('/(tabs)/home');
+
+              // Show success alert
+              Alert.alert(
+                'Subscription Restored',
+                'Your existing subscription has been linked to this account.'
+              );
+            } else {
+              // No matching purchase found, show error
+              setPurchaseError(error.message || 'Purchase failed. Please try again.');
+              iapService.showPurchaseError(error);
+            }
+          } catch (restoreError: any) {
+            console.error('❌ Error restoring purchases:', restoreError);
+            setPurchaseError(error.message || 'Purchase failed. Please try again.');
+            iapService.showPurchaseError(error);
+          }
+        } else {
+          // For other errors, show the error normally
+          setPurchaseError(error.message || 'Purchase failed. Please try again.');
+          iapService.showPurchaseError(error);
+        }
+        
         setIsPurchasing(false);
       }
     );
@@ -595,6 +752,7 @@ const [reason, setReason] = useState<string[]>([]);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const selectedPlanRef = useRef<string>('');
   const selectedCycleRef = useRef<string>('');
+  const onboardDataRef = useRef<string>('');
   
   // Animation refs for subscription boxes
   const box1Scale = useRef(new Animated.Value(1)).current;
@@ -610,6 +768,60 @@ const [reason, setReason] = useState<string[]>([]);
     setCycle(selectedCycle);
     selectedPlanRef.current = selectedPlan;
     selectedCycleRef.current = selectedCycle;
+  };
+
+  // Test function to simulate a purchase (for testing in Expo Go)
+  const handleTestPurchase = async () => {
+    if (!plan || !cycle) {
+      Alert.alert('Error', 'Please select a plan and cycle first');
+      return;
+    }
+
+    try {
+      setIsPurchasing(true);
+      setPurchaseError(null);
+      
+      const supabase = getSupabaseClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        throw new Error('No authenticated user found');
+      }
+
+      // Build onboard data
+      const onboardData = buildOnboardData();
+      onboardDataRef.current = onboardData;
+      
+      // Update subscription directly in Supabase (skip receipt verification)
+      const testTransactionId = `test_${Date.now()}`;
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          plan: plan,
+          cycle: cycle,
+          last_transaction_id: testTransactionId,
+          last_purchase_date: new Date().toISOString(),
+          receipt_validated: false // Mark as test purchase
+        })
+        .eq('uuid', user.id);
+
+      if (updateError) {
+        throw new Error(`Failed to update subscription: ${updateError.message}`);
+      }
+
+      // Save onboard data
+      console.log('💾 Saving onboard data after test purchase:', onboardData);
+      await saveOnboardData(user.id, onboardData, plan, cycle);
+
+      // Navigate to home
+      router.replace('/(tabs)/home');
+
+      Alert.alert('Test Purchase Complete', `Successfully activated ${plan} ${cycle} subscription for testing.`);
+    } catch (error: any) {
+      console.error('❌ Error in test purchase:', error);
+      Alert.alert('Test Purchase Error', error?.message || 'Failed to simulate purchase. Please try again.');
+      setIsPurchasing(false);
+    }
   };
 
   // Referral code validation function
@@ -2566,6 +2778,24 @@ if (step === 'paymentPlan') {
           </Text>
         </View>
 
+        {/* TEST BUTTON - For testing in Expo Go */}
+        <Pressable
+          onPress={handleTestPurchase}
+          disabled={!plan || !cycle || isPurchasing}
+          style={({ pressed }) => [
+            styles.testButton,
+            (!plan || !cycle || isPurchasing) && styles.testButtonDisabled,
+            pressed && styles.testButtonPressed
+          ]}
+        >
+          <Text style={[
+            styles.testButtonText,
+            (!plan || !cycle || isPurchasing) && styles.testButtonTextDisabled
+          ]}>
+            {isPurchasing ? 'Processing...' : 'Test'}
+          </Text>
+        </Pressable>
+
         {/* Spacer to push terms text down */}
         <View style={{ flex: 1 }} />
       </View>
@@ -2601,9 +2831,12 @@ if (step === 'paymentPlan') {
             
             if (user) {
               const onboardData = buildOnboardData();
+              // Store onboardData in ref so purchase listener can access it with current demographics
+              onboardDataRef.current = onboardData;
               console.log('📋 Continue button pressed!');
               console.log('📋 Current plan state:', plan);
               console.log('📋 Current cycle state:', cycle);
+              console.log('📋 Onboard data:', onboardData);
               console.log('📤 About to call saveOnboardData with:');
               console.log('   - plan:', plan);
               console.log('   - cycle:', cycle);
@@ -2931,6 +3164,35 @@ description: {
   textAlign: 'center',
   marginBottom: 0,
 },
+
+  testButton: {
+    backgroundColor: '#1a1a1a',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 20,
+    width: '90%',
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 15,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  testButtonDisabled: {
+    opacity: 0.4,
+  },
+  testButtonPressed: {
+    opacity: 0.7,
+  },
+  testButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  testButtonTextDisabled: {
+    opacity: 0.5,
+  },
 
   // — STEP 1 Styles —
   mockupRow:          { 

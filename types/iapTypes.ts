@@ -19,6 +19,7 @@ export interface PurchaseError {
   code: string;
   message: string;
   userCancelled?: boolean;
+  alreadyOwned?: boolean;
 }
 
 export interface SubscriptionUpdateData {

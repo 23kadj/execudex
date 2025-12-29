@@ -86,6 +86,7 @@ class IAPService {
   private purchaseUpdateSubscription: any = null;
   private purchaseErrorSubscription: any = null;
   private isInitialized = false;
+  private processedTransactions: Set<string> = new Set();
 
   /**
    * Initialize the IAP service
@@ -248,28 +249,56 @@ class IAPService {
   ): () => void {
     // Lazy-load IAP module only when this function is called
     lazyLoadIAPModule();
-    
+
     if (!isIAPAvailable() || !purchaseUpdatedListener || !purchaseErrorListener) {
       console.log('ℹ️ IAP not available (Expo Go mode) - listeners not set up');
       // Return a no-op cleanup function
       return () => {};
     }
 
+    // Clean up any existing listeners before setting up new ones
+    this.cleanupExistingListeners();
+
     // Purchase update listener
     this.purchaseUpdateSubscription = purchaseUpdatedListener(
       async (purchase: Purchase) => {
         try {
           console.log('Purchase updated:', purchase);
-          
+
+          // Use transaction ID to prevent duplicate processing
+          const transactionId = purchase.originalTransactionId || purchase.transactionId;
+          if (!transactionId) {
+            console.error('❌ No transaction ID found in purchase');
+            onPurchaseError({
+              code: 'MISSING_TRANSACTION_ID',
+              message: 'Purchase missing transaction ID'
+            });
+            return;
+          }
+
+          // Check if we've already processed this transaction
+          if (this.processedTransactions.has(transactionId)) {
+            console.log('⚠️ Transaction already processed, ignoring duplicate:', transactionId);
+            return;
+          }
+
+          // Mark this transaction as being processed
+          this.processedTransactions.add(transactionId);
+
+          // Clean up the transaction ID from our set after a delay
+          setTimeout(() => {
+            this.processedTransactions.delete(transactionId);
+          }, 30000); // Keep track for 30 seconds
+
           // Finish the transaction
           const receipt = purchase.transactionReceipt;
           if (receipt) {
             await finishTransaction({ purchase, isConsumable: false });
           }
-          
+
           // Call success handler
           await onPurchaseSuccess(purchase);
-          
+
         } catch (error) {
           console.error('❌ Error handling purchase update:', error);
           onPurchaseError({
@@ -284,27 +313,31 @@ class IAPService {
     this.purchaseErrorSubscription = purchaseErrorListener(
       (error: any) => {
         console.error('Purchase error:', error);
-        
+
+        // Check if this is an "already owned" error
+        const isAlreadyOwned =
+          error.code === 'E_ALREADY_OWNED' ||
+          error.code === 'E_ITEM_UNAVAILABLE' ||
+          error.code === 'SKErrorPaymentInvalid' ||
+          error.message?.toLowerCase().includes('already owned') ||
+          error.message?.toLowerCase().includes('already purchased') ||
+          error.message?.toLowerCase().includes('item already owned') ||
+          error.message?.toLowerCase().includes('this in-app purchase has already been bought');
+
         const purchaseError: PurchaseError = {
           code: error.code || 'UNKNOWN_ERROR',
           message: error.message || 'An unknown error occurred',
-          userCancelled: error.code === 'E_USER_CANCELLED'
+          userCancelled: error.code === 'E_USER_CANCELLED',
+          alreadyOwned: isAlreadyOwned
         };
-        
+
         onPurchaseError(purchaseError);
       }
     );
 
     // Return cleanup function
     return () => {
-      if (this.purchaseUpdateSubscription) {
-        this.purchaseUpdateSubscription.remove();
-        this.purchaseUpdateSubscription = null;
-      }
-      if (this.purchaseErrorSubscription) {
-        this.purchaseErrorSubscription.remove();
-        this.purchaseErrorSubscription = null;
-      }
+      this.cleanupExistingListeners();
     };
   }
 
@@ -379,6 +412,93 @@ class IAPService {
   }
 
   /**
+   * Verify receipt with Apple and update subscription
+   * Returns true if verification successful, false otherwise
+   */
+  async verifyReceiptAndUpdateSubscription(
+    userId: string,
+    receiptData: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      console.log('🔐 Verifying receipt with Apple...');
+      
+      const { data, error } = await getSupabaseClient().functions.invoke('verify_receipt', {
+        body: {
+          receiptData,
+          userId
+        }
+      });
+
+      if (error) {
+        console.error('❌ Receipt verification failed:', error);
+        return { success: false, error: error.message || 'Receipt verification failed' };
+      }
+
+      if (!data?.success) {
+        console.error('❌ Receipt verification returned failure:', data);
+        return { success: false, error: data?.error || 'Receipt verification failed' };
+      }
+
+      console.log('✅ Receipt verified successfully');
+      return { success: true };
+    } catch (error: any) {
+      console.error('❌ Error verifying receipt:', error);
+      return { success: false, error: error.message || 'Failed to verify receipt' };
+    }
+  }
+
+  /**
+   * Check if a transaction ID belongs to another user
+   * Returns { belongsToOtherUser: boolean, ownerUserId?: string }
+   * This prevents subscription sharing between accounts
+   */
+  async checkTransactionOwnership(
+    userId: string,
+    transactionId: string
+  ): Promise<{ belongsToOtherUser: boolean; ownerUserId?: string }> {
+    try {
+      const supabase = getSupabaseClient();
+      
+      // Check if this transaction ID is associated with ANY user
+      const { data, error } = await supabase
+        .from('users')
+        .select('uuid, last_transaction_id')
+        .eq('last_transaction_id', transactionId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('❌ Error checking transaction ownership:', error);
+        // On error, be safe and assume it belongs to another user
+        return { belongsToOtherUser: true };
+      }
+
+      // If no user has this transaction ID, it's available
+      if (!data) {
+        console.log('✅ Transaction ID not found in database - available for this user');
+        return { belongsToOtherUser: false };
+      }
+
+      // If transaction belongs to current user, allow access
+      if (data.uuid === userId) {
+        console.log('✅ Transaction belongs to current user');
+        return { belongsToOtherUser: false };
+      }
+
+      // Transaction belongs to a different user - deny access
+      console.warn('⚠️ Transaction ownership conflict:', {
+        currentUserId: userId,
+        transactionId,
+        ownerUserId: data.uuid
+      });
+      return { belongsToOtherUser: true, ownerUserId: data.uuid };
+    } catch (error) {
+      console.error('❌ Error checking transaction ownership:', error);
+      // On error, be safe and assume it belongs to another user
+      return { belongsToOtherUser: true };
+    }
+  }
+
+  /**
    * Show purchase success alert
    */
   showPurchaseSuccess(): void {
@@ -390,23 +510,30 @@ class IAPService {
   }
 
   /**
+   * Clean up existing listeners
+   */
+  private cleanupExistingListeners(): void {
+    if (this.purchaseUpdateSubscription) {
+      this.purchaseUpdateSubscription.remove();
+      this.purchaseUpdateSubscription = null;
+    }
+    if (this.purchaseErrorSubscription) {
+      this.purchaseErrorSubscription.remove();
+      this.purchaseErrorSubscription = null;
+    }
+  }
+
+  /**
    * Clean up and disconnect
    * Only loads IAP module when this function is called (lazy loading)
    */
   async cleanup(): Promise<void> {
     // Lazy-load IAP module only when this function is called
     lazyLoadIAPModule();
-    
+
     try {
-      if (this.purchaseUpdateSubscription) {
-        this.purchaseUpdateSubscription.remove();
-        this.purchaseUpdateSubscription = null;
-      }
-      if (this.purchaseErrorSubscription) {
-        this.purchaseErrorSubscription.remove();
-        this.purchaseErrorSubscription = null;
-      }
-      
+      this.cleanupExistingListeners();
+
       if (endConnection) {
         await endConnection();
       }

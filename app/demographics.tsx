@@ -49,6 +49,8 @@ export default function Demographics() {
   const [saving, setSaving] = useState(false);
 
   // State variables
+  const [age, setAge] = useState<string>('');
+  const [gender, setGender] = useState<string>('');
   const [stateCode, setStateCode] = useState<string>('');
   const [politicalStanding, setPoliticalStanding] = useState<string>('');
   const [educationLevel, setEducationLevel] = useState<string>('');
@@ -88,6 +90,8 @@ export default function Demographics() {
           const parsed = parseOnboardData(data.onboard);
           
           // Set state from parsed data
+          if (parsed['Age']) setAge(parsed['Age']);
+          if (parsed['Gender']) setGender(parsed['Gender']);
           if (parsed['State Code']) setStateCode(parsed['State Code']);
           if (parsed['Political Standing']) setPoliticalStanding(parsed['Political Standing']);
           if (parsed['Highest Education Level']) setEducationLevel(parsed['Highest Education Level']);
@@ -119,6 +123,8 @@ export default function Demographics() {
     const parts: string[] = [];
     
     // Demographic indicators section
+    if (age) parts.push(`Age: ${age}`);
+    if (gender) parts.push(`Gender: ${gender}`);
     if (stateCode) parts.push(`State Code: ${stateCode}`);
     if (politicalStanding) parts.push(`Political Standing: ${politicalStanding}`);
     if (educationLevel) parts.push(`Highest Education Level: ${educationLevel}`);
@@ -163,7 +169,7 @@ export default function Demographics() {
       if (existingData?.onboard) {
         const existingParts = existingData.onboard.split(' | ');
         const demographicKeys = [
-          'State Code', 'Political Standing', 'Highest Education Level', 'Employment Status',
+          'Age', 'Gender', 'State Code', 'Political Standing', 'Highest Education Level', 'Employment Status',
           'Income Level', 'Race & Ethnicity', 'Dependent Status', 'Military Status',
           'Immigration Status', 'Government Benefits', 'Sexual Orientation', 'Voter Eligibility',
           'Disability Status', 'Industry of Work or Study', 'Additional Information'
@@ -273,6 +279,35 @@ export default function Demographics() {
             {stateCode.length === 2 && !isValidStateCode(stateCode) && (
               <Text style={styles.stateCodeError}>Invalid state code</Text>
             )}
+          </View>
+
+          {/* Age & Gender Label */}
+          <Text style={styles.educationLabel}>Age & Gender</Text>
+
+          {/* Age & Gender Filter Buttons */}
+          <View style={styles.educationButtonsContainer}>
+            {/* Age Options */}
+            {['Below 24', '25-35', '36-48', '49+'].map((option) => (
+              <SearchFilterButton
+                key={option}
+                word={option}
+                isSelected={age === option}
+                onPress={(word) => {
+                  setAge(age === word ? '' : word);
+                }}
+              />
+            ))}
+            {/* Gender Options */}
+            {['Male', 'Female', 'Other'].map((option) => (
+              <SearchFilterButton
+                key={option}
+                word={option}
+                isSelected={gender === option}
+                onPress={(word) => {
+                  setGender(gender === word ? '' : word);
+                }}
+              />
+            ))}
           </View>
 
           {/* Political Standing Label */}

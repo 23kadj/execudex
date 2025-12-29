@@ -92,12 +92,25 @@ serve(async (req) => {
     // Determine cycle from product ID (Basic is monthly only)
     const cycle = productId === 'execudex.plus.quarterly' ? 'quarterly' : 'monthly';
 
+    // CRITICAL: Use original_transaction_id for ownership tracking
+    // original_transaction_id stays constant across renewals, transaction_id changes each renewal
+    const transactionId = subscription.original_transaction_id || subscription.transaction_id;
+    
+    console.log(`💾 Saving transaction ID for user ${userId}:`, {
+      transactionId,
+      original_transaction_id: subscription.original_transaction_id,
+      transaction_id: subscription.transaction_id,
+      productId,
+      plan,
+      cycle
+    });
+
     const { error: updateError } = await supabaseClient
       .from('users')
       .update({ 
         plan, 
         cycle,
-        last_transaction_id: subscription.transaction_id,
+        last_transaction_id: transactionId,
         last_purchase_date: new Date(parseInt(subscription.purchase_date_ms)).toISOString(),
         receipt_validated: true
       })
@@ -123,7 +136,7 @@ serve(async (req) => {
         subscription: {
           plan,
           cycle,
-          transactionId: subscription.transaction_id,
+          transactionId: transactionId,
           purchaseDate: new Date(parseInt(subscription.purchase_date_ms)).toISOString(),
           expiresDate: subscription.expires_date_ms ? new Date(parseInt(subscription.expires_date_ms)).toISOString() : null
         }

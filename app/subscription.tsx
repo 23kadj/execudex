@@ -53,8 +53,6 @@ export default function Subscription() {
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<string | null>(null);
   
-  // Flag to prevent duplicate purchase processing
-  const [isProcessingPurchase, setIsProcessingPurchase] = useState(false);
   
   // Animation values for bounce effect
   const box1Scale = useRef(new Animated.Value(1)).current;
@@ -150,43 +148,119 @@ export default function Subscription() {
     // Set up purchase listeners
     const cleanup = iapService.setupPurchaseListeners(
       async (purchase) => {
-        // Prevent duplicate processing
-        if (isProcessingPurchase) {
-          console.log('⚠️ Already processing a purchase, ignoring duplicate');
-          return;
-        }
-        
-        setIsProcessingPurchase(true);
-        
         try {
           console.log('Purchase successful:', purchase);
-          
+
           if (!user?.id) {
             throw new Error('User not authenticated');
           }
-          
+
           // Parse transaction data from Apple
           await handlePurchaseSuccess(purchase);
-          
+
         } catch (error) {
           console.error('❌ Error processing purchase:', error);
           Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
         } finally {
           setIsPurchasing(false);
-          // Reset processing flag after a delay to prevent rapid retriggers
-          setTimeout(() => setIsProcessingPurchase(false), 2000);
         }
       },
-      (error) => {
+      async (error) => {
         console.error('Purchase error:', error);
-        iapService.showPurchaseError(error);
+        
+        // Check if error is "already owned" - this happens when Apple ID already owns the subscription
+        const isAlreadyOwned = 
+          error.alreadyOwned ||
+          error.code === 'E_ALREADY_OWNED' ||
+          error.code === 'E_ITEM_UNAVAILABLE' ||
+          error.message?.toLowerCase().includes('already owned') ||
+          error.message?.toLowerCase().includes('already purchased') ||
+          error.message?.toLowerCase().includes('item already owned');
+        
+        if (isAlreadyOwned) {
+          console.log('🔄 Item already owned - automatically restoring purchases...');
+          
+          try {
+            // Automatically restore purchases when item is already owned
+            const purchases = await restorePurchases();
+            const allExecudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
+            const matchingPurchases = (purchases ?? []).filter((p: any) =>
+              allExecudexProducts.includes(p?.productId)
+            );
+
+            const parseTs = (p: any): number => {
+              const raw =
+                p?.transactionDate ??
+                p?.originalTransactionDate ??
+                p?.purchaseDate ??
+                p?.purchaseTime ??
+                0;
+              const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
+              return Number.isFinite(n) ? n : 0;
+            };
+
+            // Separate Plus and Basic purchases, prioritize Plus
+            const plusPurchases = matchingPurchases.filter((p: any) => 
+              p?.productId?.includes('plus')
+            );
+            const basicPurchases = matchingPurchases.filter((p: any) => 
+              p?.productId === 'execudex.basic'
+            );
+
+            // Use Plus if available, otherwise Basic
+            const purchasesToCheck = plusPurchases.length > 0 ? plusPurchases : basicPurchases;
+            const bestPurchase =
+              purchasesToCheck
+                .slice()
+                .sort((a: any, b: any) => parseTs(b) - parseTs(a))[0] ?? null;
+
+            if (bestPurchase && user?.id) {
+              // CRITICAL: Prioritize originalTransactionId for ownership tracking
+              // originalTransactionId stays constant across renewals
+              const transactionId = bestPurchase.originalTransactionId || bestPurchase.transactionId;
+              
+              // CRITICAL: Check if this transaction belongs to another user
+              // This prevents one user from accessing another user's subscription on the same device
+              const ownershipCheck = await iapService.checkTransactionOwnership(user.id, transactionId);
+              
+              if (ownershipCheck.belongsToOtherUser) {
+                // Transaction belongs to a different user - don't grant access
+                console.warn('⚠️ Transaction ownership check failed - subscription belongs to different user');
+                Alert.alert(
+                  'Subscription Not Available',
+                  'This subscription belongs to a different account. Please sign in with the account that made the purchase, or purchase a new subscription.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+
+              // Transaction is available for this user - process the restored purchase
+              console.log('✅ Found existing purchase available for this user, linking to account:', bestPurchase);
+              await handlePurchaseSuccess(bestPurchase);
+              Alert.alert(
+                'Subscription Restored',
+                'Your existing subscription has been linked to this account.'
+              );
+            } else {
+              // No matching purchase found, show error
+              iapService.showPurchaseError(error);
+            }
+          } catch (restoreError: any) {
+            console.error('❌ Error restoring purchases:', restoreError);
+            iapService.showPurchaseError(error);
+          }
+        } else {
+          // For other errors, show the error normally
+          iapService.showPurchaseError(error);
+        }
+        
         setIsPurchasing(false);
         setIsProcessingPurchase(false);
       }
     );
 
     return cleanup;
-  }, [user]);
+  }, [user?.id]); // Only re-run when user ID changes
 
 
   const handlePurchase = async (productId: string) => {
@@ -249,19 +323,50 @@ export default function Subscription() {
           .sort((a: any, b: any) => parseTs(b) - parseTs(a))[0] ?? null;
 
       if (bestPurchase) {
+        const transactionId = bestPurchase.transactionId || bestPurchase.originalTransactionId;
+        
+        // CRITICAL: Check if this transaction belongs to another user
+        // This prevents one user from accessing another user's subscription
+        const ownershipCheck = await iapService.checkTransactionOwnership(user.id, transactionId);
+        
+        if (ownershipCheck.belongsToOtherUser) {
+          // Transaction belongs to a different user - don't grant access
+          console.warn('⚠️ Transaction ownership check failed - subscription belongs to different user');
+          Alert.alert(
+            'Subscription Not Available',
+            'This subscription belongs to a different account. Please sign in with the account that made the purchase.',
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+
         const productId = bestPurchase.productId;
         const plan = productId === 'execudex.basic' ? 'basic' : 'plus';
         const cycle = String(productId).includes('quarterly') ? 'quarterly' : 'monthly';
 
-        // Update user subscription using the Edge Function (Supabase is the source of truth)
-        await iapService.updateUserSubscription(user.id, {
-          plan,
-          cycle,
-          transactionId: bestPurchase?.transactionId,
-          purchaseDate: bestPurchase?.transactionDate
-            ? new Date(parseTs(bestPurchase)).toISOString()
-            : undefined,
-        });
+        // Verify receipt before restoring
+        const receiptData = bestPurchase.transactionReceipt;
+        if (receiptData) {
+          const verificationResult = await iapService.verifyReceiptAndUpdateSubscription(
+            user.id,
+            receiptData
+          );
+          
+          if (!verificationResult.success) {
+            Alert.alert('Restore Failed', verificationResult.error || 'Failed to verify receipt. Please contact support.');
+            return;
+          }
+        } else {
+          // If no receipt, use the update function (for backward compatibility)
+          await iapService.updateUserSubscription(user.id, {
+            plan,
+            cycle,
+            transactionId: bestPurchase?.transactionId,
+            purchaseDate: bestPurchase?.transactionDate
+              ? new Date(parseTs(bestPurchase)).toISOString()
+              : undefined,
+          });
+        }
         
         Alert.alert('Restored', 'Your subscription has been restored.');
         
@@ -319,15 +424,34 @@ export default function Subscription() {
     try {
       // Parse Apple transaction data
       const productId = purchase.productId;
-      const transactionId = purchase.transactionId || purchase.originalTransactionId;
+      // CRITICAL: Prioritize originalTransactionId for ownership tracking
+      // originalTransactionId stays constant across renewals
+      const transactionId = purchase.originalTransactionId || purchase.transactionId;
+      const receiptData = purchase.transactionReceipt;
       
+      if (!receiptData) {
+        throw new Error('Receipt data not available. Please contact support.');
+      }
+
+      // Verify receipt with Apple BEFORE updating subscription
+      console.log('🔐 Verifying receipt with Apple...');
+      const verificationResult = await iapService.verifyReceiptAndUpdateSubscription(
+        user.id,
+        receiptData
+      );
+
+      if (!verificationResult.success) {
+        throw new Error(verificationResult.error || 'Receipt verification failed. Please contact support.');
+      }
+
       // Determine cycle from product ID
       const newCycle = productId.includes('quarterly') ? 'quarterly' : 'monthly';
       
       // Update Supabase - Only Basic → Plus upgrades allowed
+      // Note: verify_receipt function already updates the subscription, but we'll update cycle if needed
       await updateSubscriptionInSupabase(newCycle, transactionId, purchase);
 
-      // Show success alert
+      // Show success alert ONLY after receipt verification
       Alert.alert(
         'Purchase Successful',
         'Your subscription has been activated! You now have access to unlimited profiles.',

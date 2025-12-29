@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Image, Linking, Pressable, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, AppState, Image, Linking, Pressable, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../components/AuthProvider';
 import { Typography } from '../constants/Typography';
@@ -53,8 +53,6 @@ export default function Subs() {
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<string | null>(null);
   
-  // Flag to prevent duplicate purchase processing
-  const [isProcessingPurchase, setIsProcessingPurchase] = useState(false);
   
   // Animation values for bounce effect
   const box1Scale = useRef(new Animated.Value(1)).current;
@@ -150,43 +148,239 @@ export default function Subs() {
     // Set up purchase listeners
     const cleanup = iapService.setupPurchaseListeners(
       async (purchase) => {
-        // Prevent duplicate processing
-        if (isProcessingPurchase) {
-          console.log('⚠️ Already processing a purchase, ignoring duplicate');
-          return;
-        }
-        
-        setIsProcessingPurchase(true);
-        
         try {
           console.log('Purchase successful:', purchase);
-          
+
           if (!user?.id) {
             throw new Error('User not authenticated');
           }
-          
+
           // Parse transaction data from Apple
           await handlePurchaseSuccess(purchase);
-          
+
         } catch (error) {
           console.error('❌ Error processing purchase:', error);
           Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
         } finally {
           setIsPurchasing(false);
-          // Reset processing flag after a delay to prevent rapid retriggers
-          setTimeout(() => setIsProcessingPurchase(false), 2000);
         }
       },
-      (error) => {
+      async (error) => {
         console.error('Purchase error:', error);
-        iapService.showPurchaseError(error);
+        
+        // Check if error is "already owned" - this happens when Apple ID already owns the subscription
+        const isAlreadyOwned = 
+          error.alreadyOwned ||
+          error.code === 'E_ALREADY_OWNED' ||
+          error.code === 'E_ITEM_UNAVAILABLE' ||
+          error.message?.toLowerCase().includes('already owned') ||
+          error.message?.toLowerCase().includes('already purchased') ||
+          error.message?.toLowerCase().includes('item already owned');
+        
+        if (isAlreadyOwned) {
+          console.log('🔄 Item already owned - automatically restoring purchases...');
+          
+          try {
+            // Automatically restore purchases when item is already owned
+            const purchases = await restorePurchases();
+            const allExecudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
+            const matchingPurchases = (purchases ?? []).filter((p: any) =>
+              allExecudexProducts.includes(p?.productId)
+            );
+
+            const parseTs = (p: any): number => {
+              const raw =
+                p?.transactionDate ??
+                p?.originalTransactionDate ??
+                p?.purchaseDate ??
+                p?.purchaseTime ??
+                0;
+              const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
+              return Number.isFinite(n) ? n : 0;
+            };
+
+            // Separate Plus and Basic purchases, prioritize Plus
+            const plusPurchases = matchingPurchases.filter((p: any) => 
+              p?.productId?.includes('plus')
+            );
+            const basicPurchases = matchingPurchases.filter((p: any) => 
+              p?.productId === 'execudex.basic'
+            );
+
+            // Use Plus if available, otherwise Basic
+            const purchasesToCheck = plusPurchases.length > 0 ? plusPurchases : basicPurchases;
+            const bestPurchase =
+              purchasesToCheck
+                .slice()
+                .sort((a: any, b: any) => parseTs(b) - parseTs(a))[0] ?? null;
+
+            if (bestPurchase && user?.id) {
+              // CRITICAL: Prioritize originalTransactionId for ownership tracking
+              // originalTransactionId stays constant across renewals
+              const transactionId = bestPurchase.originalTransactionId || bestPurchase.transactionId;
+              
+              // CRITICAL: Check if this transaction belongs to another user
+              // This prevents one user from accessing another user's subscription on the same device
+              const ownershipCheck = await iapService.checkTransactionOwnership(user.id, transactionId);
+              
+              if (ownershipCheck.belongsToOtherUser) {
+                // Transaction belongs to a different user - don't grant access
+                console.warn('⚠️ Transaction ownership check failed - subscription belongs to different user');
+                Alert.alert(
+                  'Subscription Not Available',
+                  'This subscription belongs to a different account. Please sign in with the account that made the purchase, or purchase a new subscription.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+
+              // Transaction is available for this user - process the restored purchase
+              console.log('✅ Found existing purchase available for this user, linking to account:', bestPurchase);
+              await handlePurchaseSuccess(bestPurchase);
+              // Note: handlePurchaseSuccess already shows an alert and redirects, so we don't need another alert here
+            } else {
+              // No matching purchase found, show error
+              iapService.showPurchaseError(error);
+            }
+          } catch (restoreError: any) {
+            console.error('❌ Error restoring purchases:', restoreError);
+            iapService.showPurchaseError(error);
+          }
+        } else {
+          // For other errors, show the error normally
+          iapService.showPurchaseError(error);
+        }
+        
         setIsPurchasing(false);
-        setIsProcessingPurchase(false);
       }
     );
 
     return cleanup;
-  }, [user]);
+  }, [user?.id]); // Only re-run when user ID changes
+
+  // Check subscription status and redirect if valid subscription detected
+  // This handles server notifications that update the database
+  const checkSubscriptionAndRedirect = useCallback(async () => {
+    if (!user?.id) return;
+
+    try {
+      const supabase = getSupabaseClient();
+      const { data: userData, error } = await supabase
+        .from('users')
+        .select('plan, cycle')
+        .eq('uuid', user.id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error checking subscription status:', error);
+        return;
+      }
+
+      // If user has a valid subscription (basic or plus), redirect to home
+      if (userData?.plan && (userData.plan === 'basic' || userData.plan === 'plus')) {
+        console.log('✅ Valid subscription detected, redirecting to home');
+        
+        // Small delay to ensure UI is ready
+        setTimeout(() => {
+          router.replace('/(tabs)/home');
+        }, 500);
+      }
+    } catch (error) {
+      console.error('Error in checkSubscriptionAndRedirect:', error);
+    }
+  }, [user?.id, router]);
+
+  // Set up realtime subscription to listen for subscription changes from server notifications
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const supabase = getSupabaseClient();
+    
+    // Subscribe to changes in the user's subscription
+    const subscription = supabase
+      .channel(`subscription_changes_${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'users',
+          filter: `uuid=eq.${user.id}`,
+        },
+        async (payload) => {
+          console.log('📡 Subscription status changed via server notification:', payload.new);
+          
+          const newData = payload.new as { plan?: string; cycle?: string };
+          
+          // If subscription was activated (basic or plus), redirect to home
+          if (newData.plan && (newData.plan === 'basic' || newData.plan === 'plus')) {
+            // Refresh usage data
+            try {
+              const usage = await getWeeklyProfileUsage(user.id);
+              setProfileUsage({
+                profilesUsed: usage.profilesUsed,
+                plan: usage.plan,
+                cycle: usage.cycle,
+              });
+            } catch (error) {
+              console.error('Error refreshing usage after server notification:', error);
+            }
+
+            // Show alert and redirect
+            Alert.alert(
+              'Subscription Updated',
+              'Your subscription status has been updated.',
+              [{ 
+                text: 'OK',
+                onPress: () => {
+                  router.replace('/(tabs)/home');
+                }
+              }],
+              { cancelable: false }
+            );
+
+            // Also redirect after a short delay
+            setTimeout(() => {
+              router.replace('/(tabs)/home');
+            }, 100);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [user?.id, router]);
+
+  // Check subscription status when page comes into focus (handles server notifications)
+  useFocusEffect(
+    useCallback(() => {
+      // Check subscription status when page is focused
+      // This catches server notifications that may have updated the database
+      const timer = setTimeout(() => {
+        checkSubscriptionAndRedirect();
+      }, 1000); // Small delay to allow any pending updates to complete
+
+      return () => clearTimeout(timer);
+    }, [checkSubscriptionAndRedirect])
+  );
+
+  // Also check when app comes to foreground (handles background server notifications)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        // App came to foreground, check subscription status
+        setTimeout(() => {
+          checkSubscriptionAndRedirect();
+        }, 500);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [checkSubscriptionAndRedirect]);
 
 
   const handlePurchase = async (productId: string) => {
@@ -263,8 +457,6 @@ export default function Subs() {
             : undefined,
         });
         
-        Alert.alert('Restored', 'Your subscription has been restored.');
-        
         // Refresh profile usage
         const usage = await getWeeklyProfileUsage(user.id);
         setProfileUsage({
@@ -272,6 +464,25 @@ export default function Subs() {
           plan: usage.plan,
           cycle: usage.cycle,
         });
+
+        // Show success alert and redirect to home page after restore
+        Alert.alert(
+          'Restored', 
+          'Your subscription has been restored.',
+          [{ 
+            text: 'OK',
+            onPress: () => {
+              // Redirect to home page after restore
+              router.replace('/(tabs)/home');
+            }
+          }],
+          { cancelable: false } // Prevent dismissing without redirecting
+        );
+
+        // Also redirect after a short delay in case alert is dismissed
+        setTimeout(() => {
+          router.replace('/(tabs)/home');
+        }, 100);
       } else {
         Alert.alert('No purchases found', 'We couldn\'t find prior subscriptions for this Apple ID.');
       }
@@ -309,20 +520,33 @@ export default function Subs() {
     try {
       // Parse Apple transaction data
       const productId = purchase.productId;
-      const transactionId = purchase.transactionId || purchase.originalTransactionId;
+      // CRITICAL: Prioritize originalTransactionId for ownership tracking
+      // originalTransactionId stays constant across renewals
+      const transactionId = purchase.originalTransactionId || purchase.transactionId;
+      const receiptData = purchase.transactionReceipt;
       
-      // Determine cycle from product ID
+      if (!receiptData) {
+        throw new Error('Receipt data not available. Please contact support.');
+      }
+
+      // Verify receipt with Apple BEFORE updating subscription
+      console.log('🔐 Verifying receipt with Apple...');
+      const verificationResult = await iapService.verifyReceiptAndUpdateSubscription(
+        user.id,
+        receiptData
+      );
+
+      if (!verificationResult.success) {
+        throw new Error(verificationResult.error || 'Receipt verification failed. Please contact support.');
+      }
+
+      // Determine plan and cycle from product ID
+      const newPlan = productId === 'execudex.basic' ? 'basic' : 'plus';
       const newCycle = productId.includes('quarterly') ? 'quarterly' : 'monthly';
       
-      // Update Supabase - Only Basic → Plus upgrades allowed
-      await updateSubscriptionInSupabase(newCycle, transactionId, purchase);
-
-      // Show success alert
-      Alert.alert(
-        'Purchase Successful',
-        'Your subscription has been activated! You now have access to unlimited profiles.',
-        [{ text: 'OK' }]
-      );
+      // Update Supabase with the selected plan
+      // Note: verify_receipt function already updates the subscription, but we'll ensure plan and cycle are correct
+      await updateSubscriptionInSupabase(newPlan, newCycle, transactionId, purchase);
 
       // Refresh usage data
       const usage = await getWeeklyProfileUsage(user.id);
@@ -336,6 +560,25 @@ export default function Subs() {
       setSelectedPlan(null);
       setSelectedCycle(null);
 
+      // Show success alert and redirect to home page after purchase
+      Alert.alert(
+        'Purchase Successful',
+        'Your subscription has been activated!',
+        [{ 
+          text: 'OK',
+          onPress: () => {
+            // Redirect to home page after purchase
+            router.replace('/(tabs)/home');
+          }
+        }],
+        { cancelable: false } // Prevent dismissing without redirecting
+      );
+
+      // Also redirect after a short delay in case alert is dismissed
+      setTimeout(() => {
+        router.replace('/(tabs)/home');
+      }, 100);
+
     } catch (error) {
       console.error('❌ Error in handlePurchaseSuccess:', error);
       throw error;
@@ -343,6 +586,7 @@ export default function Subs() {
   };
 
   const updateSubscriptionInSupabase = async (
+    newPlan: string,
     newCycle: string,
     transactionId: string,
     purchase: any
@@ -352,19 +596,38 @@ export default function Subs() {
     const supabase = getSupabaseClient();
     
     try {
-      // Upgrade: Basic → Plus (immediate)
+      // Get current plan to determine if this is an upgrade or new subscription
+      const { data: currentUserData } = await supabase
+        .from('users')
+        .select('plan')
+        .eq('uuid', user.id)
+        .single();
+      
+      const currentPlan = currentUserData?.plan || null;
+      const isNewSubscription = !currentPlan || currentPlan === '';
+      const isUpgrade = currentPlan === 'basic' && newPlan === 'plus';
+      
+      // Update subscription
       const { error } = await supabase
         .from('users')
         .update({
-          plan: 'plus' as const,
+          plan: newPlan as 'basic' | 'plus',
           cycle: newCycle as 'monthly' | 'quarterly',
           plus_til: null,
-          last_transaction_id: transactionId
+          last_transaction_id: transactionId,
+          last_purchase_date: new Date().toISOString()
         })
         .eq('uuid', user.id);
 
       if (error) throw error;
-      console.log('✅ Upgraded to Plus');
+      
+      if (isNewSubscription) {
+        console.log(`✅ New subscription activated: ${newPlan} ${newCycle}`);
+      } else if (isUpgrade) {
+        console.log(`✅ Upgraded to Plus ${newCycle}`);
+      } else {
+        console.log(`✅ Subscription updated: ${newPlan} ${newCycle}`);
+      }
 
       // Log to sub_logs
       const currentLogs = (await supabase
@@ -373,7 +636,13 @@ export default function Subs() {
         .eq('uuid', user.id)
         .single()).data?.sub_logs || '';
 
-      const newLog = `${new Date().toISOString()} | UPGRADE | Basic → Plus ${newCycle} | TxnID: ${transactionId}`;
+      const logMessage = isNewSubscription 
+        ? `NEW_SUBSCRIPTION | ${newPlan} ${newCycle}`
+        : isUpgrade
+        ? `UPGRADE | Basic → Plus ${newCycle}`
+        : `UPDATE | ${currentPlan} → ${newPlan} ${newCycle}`;
+      
+      const newLog = `${new Date().toISOString()} | ${logMessage} | TxnID: ${transactionId}`;
       const updatedLogs = currentLogs ? `${currentLogs}\n${newLog}` : newLog;
 
       await supabase
@@ -392,10 +661,11 @@ export default function Subs() {
         const { error: retryError } = await supabase
           .from('users')
           .update({
-            plan: 'plus' as const,
+            plan: newPlan as 'basic' | 'plus',
             cycle: newCycle as 'monthly' | 'quarterly',
             plus_til: null,
-            last_transaction_id: transactionId
+            last_transaction_id: transactionId,
+            last_purchase_date: new Date().toISOString()
           })
           .eq('uuid', user.id);
 
@@ -419,10 +689,11 @@ export default function Subs() {
       return;
     }
 
-    const currentPlan = profileUsage?.plan || 'basic';
+    const currentPlan = profileUsage?.plan;
+    const hasNoSubscription = !currentPlan || currentPlan === '';
 
-    // ONLY allow Basic → Plus upgrades
-    if (currentPlan !== 'basic') {
+    // If user has an existing subscription (not null/empty), only allow upgrades via App Store
+    if (!hasNoSubscription && currentPlan !== 'basic') {
       Alert.alert(
         'Manage Subscription',
         'To make changes to your subscription, please use the "Manage Subscription" button to go to the App Store.',
@@ -431,8 +702,8 @@ export default function Subs() {
       return;
     }
 
-    // User is on Basic, only allow Plus selection
-    if (selectedPlan !== 'plus') {
+    // If user is on Basic, only allow Plus upgrades
+    if (currentPlan === 'basic' && selectedPlan !== 'plus') {
       Alert.alert(
         'Invalid Selection',
         'Please select a Plus subscription to upgrade.',
@@ -440,6 +711,9 @@ export default function Subs() {
       );
       return;
     }
+
+    // If user has no subscription, allow any plan selection
+    // (This is the main fix - users without subscriptions can choose any plan)
 
     if (!isIAPAvailable()) {
       Alert.alert(
@@ -452,10 +726,16 @@ export default function Subs() {
     setIsPurchasing(true);
     
     try {
-      // Determine product ID based on cycle
-      const productId = selectedCycle === 'quarterly' 
-        ? 'execudex.plus.quarterly' 
-        : 'execudex.plus.monthly';
+      // Determine product ID based on selected plan and cycle
+      let productId: string;
+      if (selectedPlan === 'basic') {
+        productId = 'execudex.basic';
+      } else {
+        // Plus plan
+        productId = selectedCycle === 'quarterly' 
+          ? 'execudex.plus.quarterly' 
+          : 'execudex.plus.monthly';
+      }
 
       console.log('🛒 Initiating purchase for:', productId);
       
@@ -471,6 +751,79 @@ export default function Subs() {
       if (error.message !== 'Purchase was cancelled by user') {
         Alert.alert('Purchase Error', error.message || 'Purchase failed. Please try again.');
       }
+    }
+  };
+
+  // Test function to simulate a purchase (for testing in Expo Go)
+  const handleTestPurchase = async () => {
+    if (!selectedPlan || !selectedCycle) {
+      Alert.alert('Error', 'Please select a plan and cycle first');
+      return;
+    }
+
+    if (!user?.id) {
+      Alert.alert('Error', 'You must be logged in to make a purchase.');
+      return;
+    }
+
+    try {
+      setIsPurchasing(true);
+      
+      const supabase = getSupabaseClient();
+
+      // Update subscription directly in Supabase (skip receipt verification)
+      const testTransactionId = `test_${Date.now()}`;
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          plan: selectedPlan,
+          cycle: selectedCycle,
+          last_transaction_id: testTransactionId,
+          last_purchase_date: new Date().toISOString(),
+          receipt_validated: false, // Mark as test purchase
+          plus_til: null
+        })
+        .eq('uuid', user.id);
+
+      if (updateError) {
+        throw new Error(`Failed to update subscription: ${updateError.message}`);
+      }
+
+      // Refresh usage data
+      const usage = await getWeeklyProfileUsage(user.id);
+      setProfileUsage({
+        profilesUsed: usage.profilesUsed,
+        plan: usage.plan,
+        cycle: usage.cycle,
+      });
+
+      // Clear selection
+      setSelectedPlan(null);
+      setSelectedCycle(null);
+
+      // Show success alert and redirect to home page after test purchase
+      Alert.alert(
+        'Test Purchase Complete', 
+        `Successfully activated ${selectedPlan} ${selectedCycle} subscription for testing.`,
+        [{ 
+          text: 'OK',
+          onPress: () => {
+            // Redirect to home page after test purchase
+            router.replace('/(tabs)/home');
+          }
+        }],
+        { cancelable: false } // Prevent dismissing without redirecting
+      );
+
+      // Also redirect after a short delay in case alert is dismissed
+      setTimeout(() => {
+        router.replace('/(tabs)/home');
+      }, 100);
+    } catch (error: any) {
+      console.error('❌ Error in test purchase:', error);
+      Alert.alert('Test Purchase Error', error?.message || 'Failed to simulate purchase. Please try again.');
+    } finally {
+      setIsPurchasing(false);
     }
   };
 
@@ -620,6 +973,24 @@ export default function Subs() {
             </Text>
           )}
         </TouchableOpacity>
+
+        {/* TEST BUTTON - For testing in Expo Go */}
+        <Pressable
+          onPress={handleTestPurchase}
+          disabled={!selectedPlan || !selectedCycle || isPurchasing}
+          style={({ pressed }) => [
+            styles.testButton,
+            (!selectedPlan || !selectedCycle || isPurchasing) && styles.testButtonDisabled,
+            pressed && styles.testButtonPressed
+          ]}
+        >
+          <Text style={[
+            styles.testButtonText,
+            (!selectedPlan || !selectedCycle || isPurchasing) && styles.testButtonTextDisabled
+          ]}>
+            {isPurchasing ? 'Processing...' : 'Test'}
+          </Text>
+        </Pressable>
 
         {/* Manage Subscription Button */}
         <TouchableOpacity
@@ -814,6 +1185,32 @@ const styles = StyleSheet.create({
   },
   submitButtonTextDisabled: {
     color: '#666',
+  },
+
+  // TEST BUTTON
+  testButton: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  testButtonDisabled: {
+    opacity: 0.4,
+  },
+  testButtonPressed: {
+    opacity: 0.7,
+  },
+  testButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  testButtonTextDisabled: {
+    opacity: 0.5,
   },
 
   // HEADER - No back button
