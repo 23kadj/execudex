@@ -56,6 +56,45 @@ export default function SignInScreen() {
     if (passwordError) setPasswordError('');
   };
 
+  // Helper function to check if subscription is expired
+  const isSubscriptionExpired = (userData: any): boolean => {
+    // Plan is null/empty
+    if (!userData?.plan || userData.plan === '' || userData.plan === null) {
+      return true;
+    }
+    
+    // If last_purchase_date exists, check if plus_til has passed (for Plus subscriptions)
+    if (userData.last_purchase_date && userData.plus_til) {
+      const plusTilDate = new Date(userData.plus_til);
+      const now = new Date();
+      if (now >= plusTilDate) {
+        return true;
+      }
+    }
+    
+    return false;
+  };
+
+  // Helper function to check if subscription is valid
+  const hasValidSubscription = (userData: any): boolean => {
+    // Plan must be non-null and non-empty
+    if (!userData?.plan || userData.plan === '' || userData.plan === null) {
+      return false;
+    }
+    
+    // Cycle must be non-null or non-empty
+    if (!userData?.cycle || userData.cycle === '' || userData.cycle === null) {
+      return false;
+    }
+    
+    return true;
+  };
+
+  // Helper function to check if onboarding data exists
+  const hasOnboardingData = (userData: any): boolean => {
+    return !!(userData?.onboard && userData.onboard.trim() !== '');
+  };
+
   const handleEmailAuth = async () => {
     // Clear previous errors
     setEmailError('');
@@ -86,20 +125,23 @@ export default function SignInScreen() {
     try {
       const user = await signInWithEmail(email, password);
       
-      // Check if user has completed onboarding (has a plan)
       if (user) {
         const { data: userData, error: userError } = await getSupabaseClient()
           .from('users')
-          .select('plan, onboard')
+          .select('plan, onboard, cycle, plus_til, last_purchase_date')
           .eq('uuid', user.id)
           .maybeSingle();
 
         if (userError) {
-          console.error('Error checking user plan:', userError);
+          console.error('Error checking user data:', userError);
         }
 
-        // If no user data or no plan selected, redirect to onboarding
-        if (!userData || !userData.plan || userData.plan === '' || userData.plan === null) {
+        const hasOnboarding = hasOnboardingData(userData);
+        const hasValidSub = hasValidSubscription(userData);
+        const isExpired = isSubscriptionExpired(userData);
+
+        // Scenario 1: Missing BOTH onboarding AND subscription data
+        if (!hasOnboarding && (!hasValidSub || isExpired)) {
           Alert.alert(
             'Complete Onboarding',
             'Please complete your onboarding and select a subscription plan to continue.',
@@ -108,10 +150,40 @@ export default function SignInScreen() {
           router.replace('/');
           return;
         }
-      }
 
-      // User has a plan, proceed to home
-      router.replace('/(tabs)/home');
+        // Scenario 2: Missing onboarding data BUT has valid subscription
+        if (!hasOnboarding && hasValidSub && !isExpired) {
+          Alert.alert(
+            'Onboarding Data Missing',
+            'Your onboarding data is missing. You can navigate to the Demographics page in Settings to update it.',
+            [{ 
+              text: 'OK',
+              onPress: () => {
+                router.replace('/(tabs)/home');
+              }
+            }]
+          );
+          return;
+        }
+
+        // Scenario 3: Missing subscription data BUT has onboarding
+        if (hasOnboarding && (!hasValidSub || isExpired)) {
+          Alert.alert(
+            'Subscription Required',
+            'You need to choose a subscription plan to continue.',
+            [{ 
+              text: 'OK',
+              onPress: () => {
+                router.replace('/subs');
+              }
+            }]
+          );
+          return;
+        }
+
+        // User has both onboarding and valid subscription, proceed to home
+        router.replace('/(tabs)/home');
+      }
     } catch (error: any) {
       console.error('Email auth error:', error);
       Alert.alert(

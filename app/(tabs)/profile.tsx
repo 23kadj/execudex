@@ -265,6 +265,21 @@ export default function Profile() {
                  </View>
                </View>
              </AnimatedPressable>
+
+             {/* Test Button - Navigate to subs page */}
+             <AnimatedPressable
+               onPress={() => {
+                 Haptics.selectionAsync();
+                 router.push('/subs');
+               }}
+               style={styles.signOutCard}
+             >
+               <View style={styles.accountCardContent}>
+                 <View style={styles.accountTopRow}>
+                   <Text style={styles.signOutTitle}>test123</Text>
+                 </View>
+               </View>
+             </AnimatedPressable>
           </View>
         </View>
       </ScrollView>

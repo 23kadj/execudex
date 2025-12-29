@@ -83,7 +83,7 @@ const step: StepKey = steps[stepIndex];
   const [age, setAge]       = useState<string>('');
   const [gender, setGender] = useState<string>('');
   const [involvement, setInvolvement] = useState<string>('');
-  const { signUpWithEmail } = useAuth();
+  const { signUpWithEmail, signInWithEmail } = useAuth();
   
   // Sign-up form state
   const [signUpEmail, setSignUpEmail] = useState('');
@@ -305,6 +305,45 @@ const step: StepKey = steps[stepIndex];
     return '';
   };
 
+  // Helper function to check if subscription is expired
+  const isSubscriptionExpired = (userData: any): boolean => {
+    // Plan is null/empty
+    if (!userData?.plan || userData.plan === '' || userData.plan === null) {
+      return true;
+    }
+    
+    // If last_purchase_date exists, check if plus_til has passed (for Plus subscriptions)
+    if (userData.last_purchase_date && userData.plus_til) {
+      const plusTilDate = new Date(userData.plus_til);
+      const now = new Date();
+      if (now >= plusTilDate) {
+        return true;
+      }
+    }
+    
+    return false;
+  };
+
+  // Helper function to check if subscription is valid
+  const hasValidSubscription = (userData: any): boolean => {
+    // Plan must be non-null and non-empty
+    if (!userData?.plan || userData.plan === '' || userData.plan === null) {
+      return false;
+    }
+    
+    // Cycle must be non-null or non-empty
+    if (!userData?.cycle || userData.cycle === '' || userData.cycle === null) {
+      return false;
+    }
+    
+    return true;
+  };
+
+  // Helper function to check if onboarding data exists
+  const hasOnboardingData = (userData: any): boolean => {
+    return !!(userData?.onboard && userData.onboard.trim() !== '');
+  };
+
   // Handle email sign up
   const handleEmailSignUp = async () => {
     // Clear previous errors
@@ -344,11 +383,72 @@ const step: StepKey = steps[stepIndex];
       setStepIndex(stepIndex + 1);
     } catch (error: any) {
       console.error('Sign up error:', error);
-      Alert.alert(
-        'Sign Up Error',
-        error.message || 'Failed to create account. Please try again.',
-        [{ text: 'OK' }]
-      );
+      
+      // Check if error is due to existing account
+      const isExistingAccountError = error.message?.includes('already registered') || 
+                                     error.message?.includes('already exists') ||
+                                     error.message?.includes('User already registered');
+      
+      if (isExistingAccountError) {
+        // Try to sign in with the provided credentials
+        try {
+          const user = await signInWithEmail(signUpEmail, signUpPassword);
+          
+          if (user) {
+            // Check if account is missing both onboarding and subscription data
+            const { data: userData, error: userError } = await getSupabaseClient()
+              .from('users')
+              .select('plan, onboard, cycle, plus_til, last_purchase_date')
+              .eq('uuid', user.id)
+              .maybeSingle();
+
+            if (userError) {
+              console.error('Error checking user data:', userError);
+              Alert.alert(
+                'Sign Up Error',
+                'Failed to check account status. Please try again.',
+                [{ text: 'OK' }]
+              );
+              return;
+            }
+
+            const hasOnboarding = hasOnboardingData(userData);
+            const hasValidSub = hasValidSubscription(userData);
+            const isExpired = isSubscriptionExpired(userData);
+
+            // If account is missing BOTH onboarding AND subscription data, allow overwrite
+            if (!hasOnboarding && (!hasValidSub || isExpired)) {
+              // Mark account as created and proceed with onboarding
+              setAccountCreated(true);
+              setSignUpEmail('');
+              setSignUpPassword('');
+              setStepIndex(stepIndex + 1);
+              return;
+            } else {
+              // Account has some data, show error
+              Alert.alert(
+                'Account Exists',
+                'An account with this email already exists. Please sign in instead.',
+                [{ text: 'OK' }]
+              );
+            }
+          }
+        } catch (signInError: any) {
+          // Sign in failed - wrong password or other error
+          Alert.alert(
+            'Sign Up Error',
+            signInError.message || 'An account with this email already exists. Please sign in instead.',
+            [{ text: 'OK' }]
+          );
+        }
+      } else {
+        // Other error
+        Alert.alert(
+          'Sign Up Error',
+          error.message || 'Failed to create account. Please try again.',
+          [{ text: 'OK' }]
+        );
+      }
     } finally {
       setIsSignUpLoading(false);
     }
