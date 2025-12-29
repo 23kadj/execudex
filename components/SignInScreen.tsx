@@ -13,9 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ProfileLoadingIndicator } from './ProfileLoadingIndicator';
-import { initIap, restorePurchases } from '../iap.apple';
-import { isIAPAvailable } from '../utils/iapAvailability';
-import { getSupabaseClient } from '../utils/supabase';
+// Removed IAP imports - no longer needed for sign-in flow
 import { useAuth } from './AuthProvider';
 
 export default function SignInScreen() {
@@ -26,13 +24,10 @@ export default function SignInScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
   const router = useRouter();
   const params = useLocalSearchParams<{ fromSignOut?: string }>();
 
-  // Removed early IAP initialization - IAP will only initialize when user clicks "Restore Purchase"
-  // This prevents crashes in release builds from initializing IAP too early
+  // Removed IAP initialization - no longer needed in sign-in flow
 
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -219,52 +214,6 @@ export default function SignInScreen() {
     }
   };
 
-  const onRestore = async () => {
-    if (!isIAPAvailable()) {
-      return;
-    }
-
-    try {
-      setBusy(true);
-      setRestoreError(null);
-      // Initialize IAP only when user clicks restore (user-driven action)
-      // This ensures IAP is only initialized after UI is fully mounted
-      await initIap();
-      const purchases = await restorePurchases();
-      const allExecudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
-      const matchingPurchase = purchases?.find(p =>
-        allExecudexProducts.includes(p.productId)
-      );
-
-      if (matchingPurchase) {
-        const productId = matchingPurchase.productId;
-        const plan = productId === 'execudex.basic' ? 'basic' : 'plus';
-        const cycle = productId.includes('quarterly') ? 'quarterly' : 'monthly';
-
-        // Update user subscription using the Edge Function
-        const { data: { user } } = await getSupabaseClient().auth.getUser();
-        if (user) {
-          // Use the update_subscription_status function instead of direct DB update
-          await getSupabaseClient().functions.invoke('update_subscription_status', {
-            body: {
-              userId: user.id,
-              plan,
-              cycle,
-            }
-          });
-        }
-        const planName = plan === 'basic' ? 'Basic' : 'Plus';
-        Alert.alert('Restored', `Your ${planName} plan has been restored!`);
-      } else {
-        Alert.alert('No purchases found', 'We couldn\'t find prior subscriptions for this Apple ID.');
-      }
-    } catch (e: any) {
-      setRestoreError(e?.message ?? 'Please try again.');
-      Alert.alert('Restore failed', e?.message ?? 'Please try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
 
 
   return (
@@ -349,9 +298,6 @@ export default function SignInScreen() {
           <View style={styles.authOptions}>
             <Pressable onPress={handlePasswordReset}>
               <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-            </Pressable>
-            <Pressable onPress={onRestore} disabled={busy}>
-              <Text style={[styles.forgotPasswordText, busy && { opacity: 0.6 }]}>Restore Purchase</Text>
             </Pressable>
           </View>
         </View>

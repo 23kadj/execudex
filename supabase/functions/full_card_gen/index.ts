@@ -19,6 +19,333 @@ function isNumericString(s: string | null): boolean {
   return !!s && /^\d+$/.test(s);
 }
 
+/** Match demographics from card content using keyword patterns */
+function matchCardDemographics(opts: {
+  title: string;
+  subtext: string;
+  body: string;
+  excerpt: string;
+}): string {
+  const content = `${opts.title} ${opts.subtext} ${opts.body} ${opts.excerpt}`.toLowerCase();
+  const matches: string[] = [];
+
+  // Age patterns - direct and inferred - more inclusive
+  const agePatterns = {
+    'Below 24': /\b(young(er)?|teen|under 24|below 24|18-23|college student|high school|student|young people|millennial|gen z|generation z|youth|adolescent)\b/i,
+    '25-35': /\b(25-35|25 to 35|mid-20s|late-20s|early-30s|25-34|30-35|young adult|adult|young professional|millennial)\b/i,
+    '36-48': /\b(36-48|36 to 48|mid-30s|late-30s|early-40s|mid-40s|35-48|middle-aged|adult|professional)\b/i,
+    '49+': /\b(49\+|50\+|senior|elderly|retirement|over 49|above 49|older adult|retiree|senior citizen|aging|boomer|baby boomer|retired)\b/i
+  };
+
+  for (const [age, pattern] of Object.entries(agePatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Age: ${age}`);
+    }
+  }
+
+  // Gender patterns
+  const genderPatterns = {
+    'Male': /\b(men|male|man|boys|father|husband|gentleman)\b/i,
+    'Female': /\b(women|female|woman|girls|mother|wife|lady)\b/i,
+    'Other': /\b(non-binary|gender non-conforming|transgender|gender fluid|two-spirit)\b/i
+  };
+
+  for (const [gender, pattern] of Object.entries(genderPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Gender: ${gender}`);
+    }
+  }
+
+  // State Code patterns - look for state names/mentions
+  const stateMentions = content.match(/\b(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|district of columbia)\b/gi);
+  if (stateMentions) {
+    const stateCodes: { [key: string]: string } = {
+      'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR', 'california': 'CA',
+      'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE', 'florida': 'FL', 'georgia': 'GA',
+      'hawaii': 'HI', 'idaho': 'ID', 'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA',
+      'kansas': 'KS', 'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+      'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS', 'missouri': 'MO',
+      'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ',
+      'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND',
+      'ohio': 'OH', 'oklahoma': 'OK', 'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI',
+      'south carolina': 'SC', 'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX',
+      'utah': 'UT', 'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
+      'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC'
+    };
+    const uniqueStates = [...new Set(stateMentions.map(s => stateCodes[s.toLowerCase()]))];
+    uniqueStates.forEach(state => matches.push(`State Code: ${state}`));
+  }
+
+  // Political Standing patterns - more inclusive
+  const politicalPatterns = {
+    'Democrat': /\b(democrat|democratic|liberal|progressive|left-wing|blue state|environmental|climate|green party|social justice|equality)\b/i,
+    'Republican': /\b(republican|gop|conservative|right-wing|red state|traditional|patriot|second amendment|pro-life)\b/i,
+    'Centrist': /\b(centrist|moderate|independent|middle ground|balanced|bipartisan|compromise)\b/i,
+    'Left Leaning': /\b(left-leaning|left leaning|leaning left|progressive|liberal|environmental protection|climate action|social equity)\b/i,
+    'Right Leaning': /\b(right-leaning|right leaning|leaning right|conservative|traditional values|fiscal responsibility)\b/i
+  };
+
+  for (const [political, pattern] of Object.entries(politicalPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Political Standing: ${political}`);
+    }
+  }
+
+  // Education Level patterns
+  const educationPatterns = {
+    'None': /\b(no education|illiterate|uneducated)\b/i,
+    'High School': /\b(high school|hs diploma|secondary education)\b/i,
+    'College/University In Progress': /\b(college student|university student|undergraduate|in college)\b/i,
+    'Bachelors/Associates': /\b(bachelor|associate|college degree|undergraduate degree)\b/i,
+    'Masters/PHD': /\b(master|phd|doctorate|graduate degree|postgraduate)\b/i
+  };
+
+  for (const [education, pattern] of Object.entries(educationPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Highest Education Level: ${education}`);
+    }
+  }
+
+  // Employment Status patterns (multi-select)
+  const employmentPatterns = {
+    'Employed full-time': /\b(full-time|full time|employed full|full employment)\b/i,
+    'Part-time': /\b(part-time|part time|employed part)\b/i,
+    'Gig / Freelance work': /\b(gig|freelance|independent contractor|uber|lyft|doordash)\b/i,
+    'Student': /\b(student|studying|academic|enrolled)\b/i,
+    'Unemployed': /\b(unemployed|jobless|out of work|seeking employment)\b/i,
+    'Retired': /\b(retired|retirement|pension|retiree)\b/i
+  };
+
+  for (const [employment, pattern] of Object.entries(employmentPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Employment Status: ${employment}`);
+    }
+  }
+
+  // Income Level patterns - more inclusive for economic topics
+  const incomePatterns = {
+    'Under $25,000': /\b(under 25k|below 25k|low income|poverty|poor|destitute|minimum wage|food insecurity|homeless|low-wage)\b/i,
+    '$25,000 – $49,999': /\b(25k-49k|25,000-49,999|middle class|working class|moderate income|average income)\b/i,
+    '$50,000 – $99,999': /\b(50k-99k|50,000-99,999|middle income|upper middle|comfortable|professional income)\b/i,
+    '$100k – $199,999': /\b(100k-199k|100,000-199,999|high income|wealthy|rich|upper class|executive)\b/i,
+    '$200k or more': /\b(over 200k|above 200k|millionaire|ultra wealthy|high net worth|luxury|elite)\b/i
+  };
+
+  for (const [income, pattern] of Object.entries(incomePatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Income Level: ${income}`);
+    }
+  }
+
+  // Race & Ethnicity patterns
+  const racePatterns = {
+    'Black or African American': /\b(black|african american|afro|ebony)\b/i,
+    'White': /\b(white|caucasian|european american)\b/i,
+    'Hispanic or Latino': /\b(hispanic|latino|latinx|mexican|puerto rican|cuban)\b/i,
+    'Asian': /\b(asian|chinese|japanese|korean|indian|vietnamese|filipino)\b/i,
+    'Middle Eastern or North African': /\b(middle eastern|north african|arab|iranian|egyptian|moroccan)\b/i,
+    'Native American or Alaska Native': /\b(native american|indigenous|alaska native|first nation)\b/i,
+    'Islander': /\b(pacific islander|hawaiian|samoan|tahitian)\b/i,
+    'Multiracial': /\b(multiracial|mixed race|biracial|interracial)\b/i
+  };
+
+  for (const [race, pattern] of Object.entries(racePatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Race & Ethnicity: ${race}`);
+    }
+  }
+
+  // Dependent Status patterns
+  const dependentPatterns = {
+    'Children': /\b(children|kids|child|family with children|parent|mother|father)\b/i,
+    'Elderly family member': /\b(elderly|aging parent|senior family|grandparent)\b/i,
+    'Disabled Dependent': /\b(disabled dependent|family member with disability)\b/i,
+    'No Dependents': /\b(single|no dependents|no children|childless)\b/i
+  };
+
+  for (const [dependent, pattern] of Object.entries(dependentPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Dependent Status: ${dependent}`);
+    }
+  }
+
+  // Military Status patterns
+  const militaryPatterns = {
+    'Active duty': /\b(active duty|military service|serving military)\b/i,
+    'National Guard or Reserve': /\b(national guard|reserve|reservist)\b/i,
+    'Veteran': /\b(veteran|ex-military|former military|discharged)\b/i,
+    'Military Dependent': /\b(military family|military spouse|military child|dependent of military)\b/i
+  };
+
+  for (const [military, pattern] of Object.entries(militaryPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Military Status: ${military}`);
+    }
+  }
+
+  // Immigration Status patterns - much more inclusive for immigration-related cards
+  const immigrationPatterns = {
+    'U.S. Citizen': /\b(us citizen|american citizen|naturalized citizen|citizen|american|native-born)\b/i,
+    'Green Card': /\b(green card|permanent resident|legal permanent resident|pr card|lawful permanent resident)\b/i,
+    'Visa Holder': /\b(visa|work visa|student visa|h1b|f1|temporary visa|work permit|student permit|tourist visa|visitor visa)\b/i,
+    'Non-Citizen Status': /\b(immigrant|undocumented|illegal immigrant|asylum seeker|refugee|migrant|migration|border|deportation|naturalization|citizenship|non-citizen|foreign national|alien|asylum)\b/i
+  };
+
+  for (const [immigration, pattern] of Object.entries(immigrationPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Immigration Status: ${immigration}`);
+    }
+  }
+
+  // Government Benefits patterns (multi-select)
+  const benefitPatterns = {
+    'SNAP / Food Assistance': /\b(snap|food stamp|food assistance|food benefit|ebt)\b/i,
+    'Medicaid or Medicare': /\b(medicaid|medicare|medicaid expansion)\b/i,
+    'SSI / SSDI': /\b(ssi|ssdi|social security disability|disability benefit)\b/i,
+    'Housing': /\b(housing assistance|section 8|public housing|housing voucher)\b/i,
+    'Unemployment': /\b(unemployment|unemployment benefit|jobless benefit)\b/i,
+    'Education': /\b(pell grant|education assistance|student loan|fafsa)\b/i,
+    'Other Assistance': /\b(welfare|tanf|public assistance|government aid)\b/i
+  };
+
+  for (const [benefit, pattern] of Object.entries(benefitPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Government Benefits: ${benefit}`);
+    }
+  }
+
+  // Sexual Orientation patterns
+  const orientationPatterns = {
+    'Heterosexual': /\b(heterosexual|straight|hetero)\b/i,
+    'Homosexual': /\b(homosexual|gay|lesbian|lgbt|lgbtq|gay rights|same-sex)\b/i,
+    'Bisexual': /\b(bisexual|bi)\b/i,
+    'Asexual': /\b(asexual|ace)\b/i,
+    'Other': /\b(lgbtqia|queer|non-heterosexual|sexual minority)\b/i
+  };
+
+  for (const [orientation, pattern] of Object.entries(orientationPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Sexual Orientation: ${orientation}`);
+    }
+  }
+
+  // Voter Eligibility patterns
+  const voterPatterns = {
+    'Registered and Eligible': /\b(registered voter|voting|ballot|electorate)\b/i,
+    'Eligible, Not Registered': /\b(eligible voter|voting age|citizen voting)\b/i,
+    'Not Eligible': /\b(non-citizen|felon|disenfranchised|ineligible voter)\b/i
+  };
+
+  for (const [voter, pattern] of Object.entries(voterPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Voter Eligibility: ${voter}`);
+    }
+  }
+
+  // Disability Status patterns (multi-select) - more inclusive
+  const disabilityPatterns = {
+    'Physical Disability': /\b(physical disability|mobility impairment|wheelchair|amputee|disability|accessible|accessibility|handicap)\b/i,
+    'Cognitive or Learning Disability': /\b(cognitive disability|learning disability|dyslexia|autism|adhd|developmental disability|intellectual disability)\b/i,
+    'Mental Health Condition': /\b(mental health|depression|anxiety|bipolar|schizophrenia|ptsd|therapy|counseling|psychological)\b/i,
+    'Multiple Disabilities': /\b(multiple disabilities|severely disabled|complex disability|chronic condition)\b/i
+  };
+
+  for (const [disability, pattern] of Object.entries(disabilityPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Disability Status: ${disability}`);
+    }
+  }
+
+  // Industry of Work or Study patterns (multi-select) - more inclusive
+  const industryPatterns = {
+    'Healthcare': /\b(healthcare|hospital|doctor|nurse|medical|pharma|health|nursing|clinic|therapy|mental health)\b/i,
+    'Technology': /\b(tech|technology|software|it|computer|engineer|programmer|developer|data|ai|artificial intelligence|cyber|digital)\b/i,
+    'Education': /\b(education|teacher|school|university|professor|student|academic|research|teaching|learning|schooling)\b/i,
+    'Finance / Business': /\b(finance|bank|business|corporate|accounting|investment|financial|banking|investment|startup|entrepreneur)\b/i,
+    'Government': /\b(government|public sector|civil service|federal|state|policy|policymaking|administration)\b/i,
+    'Public Sector': /\b(public sector|government worker|public employee|civil servant|public service)\b/i,
+    'Military / Defense': /\b(military|defense|army|navy|air force|pentagon|soldier|veteran|combat)\b/i,
+    'Manufacturing': /\b(manufacturing|factory|industrial|production|assembly|machining|fabrication)\b/i,
+    'Trades': /\b(trade|construction|electrician|plumber|carpenter|mechanic|welding|repair|maintenance|contractor)\b/i,
+    'Politics': /\b(politics|policymaker|lobbyist|political|campaign|election|legislation|lawmaking)\b/i,
+    'Service / Hospitality': /\b(service|hospitality|restaurant|hotel|tourism|customer service|retail service)\b/i,
+    'Retail': /\b(retail|store|sales|shopping|commerce|salesperson|cashier|merchandise)\b/i,
+    'Transportation': /\b(transportation|truck|driver|logistics|shipping|delivery|driving|automotive|rail)\b/i,
+    'Logistics': /\b(logistics|supply chain|warehouse|distribution|shipping|freight|inventory)\b/i,
+    'Creative': /\b(creative|art|design|media|entertainment|artist|graphic design|marketing|advertising|film|music)\b/i,
+    'Agriculture / Environment': /\b(agriculture|farm|farmer|environment|environmental|conservation|climate|ecology|sustainability|green|renewable|nature)\b/i
+  };
+
+  for (const [industry, pattern] of Object.entries(industryPatterns)) {
+    if (pattern.test(content)) {
+      matches.push(`Industry of Work or Study: ${industry}`);
+    }
+  }
+
+  // Intelligent contextual matching - add relevant demographics based on card topics
+  const contentLower = content.toLowerCase();
+
+  // Healthcare topics → could affect people with disabilities
+  if (contentLower.includes('healthcare') || contentLower.includes('medical') || contentLower.includes('health insurance')) {
+    if (!matches.some(m => m.includes('Disability Status'))) {
+      matches.push('Disability Status: Physical Disability', 'Disability Status: Mental Health Condition');
+    }
+  }
+
+  // Education topics → could affect students and young people
+  if (contentLower.includes('education') || contentLower.includes('school') || contentLower.includes('student loan')) {
+    if (!matches.some(m => m.includes('Employment Status: Student'))) {
+      matches.push('Employment Status: Student');
+    }
+    if (!matches.some(m => m.includes('Age: Below 24'))) {
+      matches.push('Age: Below 24');
+    }
+  }
+
+  // Climate/environment topics → could affect environmental workers and young progressives
+  if (contentLower.includes('climate') || contentLower.includes('environment') || contentLower.includes('green') || contentLower.includes('sustainability')) {
+    if (!matches.some(m => m.includes('Industry of Work or Study: Agriculture / Environment'))) {
+      matches.push('Industry of Work or Study: Agriculture / Environment');
+    }
+    if (!matches.some(m => m.includes('Political Standing: Left Leaning'))) {
+      matches.push('Political Standing: Left Leaning');
+    }
+    if (!matches.some(m => m.includes('Age: Below 24'))) {
+      matches.push('Age: Below 24');
+    }
+  }
+
+  // Economic/financial topics → could affect low-income people
+  if (contentLower.includes('economic') || contentLower.includes('poverty') || contentLower.includes('welfare') || contentLower.includes('minimum wage')) {
+    if (!matches.some(m => m.includes('Income Level: Under $25,000'))) {
+      matches.push('Income Level: Under $25,000');
+    }
+  }
+
+  // Immigration topics → ensure immigration status is flagged
+  if (contentLower.includes('immigration') || contentLower.includes('immigrant') || contentLower.includes('migrant') || contentLower.includes('border')) {
+    if (!matches.some(m => m.includes('Immigration Status'))) {
+      matches.push('Immigration Status: Non-Citizen Status');
+    }
+  }
+
+  // Veterans/military topics → could affect veterans and military families
+  if (contentLower.includes('veteran') || contentLower.includes('military') || contentLower.includes('defense')) {
+    if (!matches.some(m => m.includes('Military Status: Veteran'))) {
+      matches.push('Military Status: Veteran');
+    }
+  }
+
+  // LGBTQ+ topics → ensure sexual orientation is flagged
+  if (contentLower.includes('lgbt') || contentLower.includes('gay') || contentLower.includes('lesbian') || contentLower.includes('transgender') || contentLower.includes('queer')) {
+    if (!matches.some(m => m.includes('Sexual Orientation'))) {
+      matches.push('Sexual Orientation: Homosexual');
+    }
+  }
+
+  return matches.join(', ');
+}
+
 function isValidUuid(s: string | null): boolean {
   if (!s) return false;
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -746,7 +1073,7 @@ Deno.serve(async (req) => {
     // 6) Generate body_text + tldr with Mistral (and impact in parallel if user_id provided)
     // Use request isPpl if provided, otherwise fall back to database value
     const isPpl = requestIsPpl !== null ? requestIsPpl : (card.is_ppl === true);
-    
+
     // Start both generation tasks in parallel
     const bodyGenPromise = mistralBodyAndTldr({
       title: String(card.title || ""),
@@ -758,6 +1085,14 @@ Deno.serve(async (req) => {
 
     // Wait for body generation first (we need body_text for impact generation)
     const { body, tldr } = await bodyGenPromise;
+
+    // 6.5) Match demographics from all available content now that we have the body
+    const demographics = matchCardDemographics({
+      title: String(card.title || ""),
+      subtext: String(card.subtext || ""),
+      body: body,
+      excerpt: excerpt
+    });
 
     if (!body) {
       return new Response(JSON.stringify({ error: "Model returned empty body" }), {
@@ -913,7 +1248,8 @@ Deno.serve(async (req) => {
         body_text: body,
         tldr: tldr,
         link1: link1 || null,
-        excerpt: excerpt
+        excerpt: excerpt,
+        demographics: demographics
       };
       const { error: upErr } = await supabase
         .from("card_content")
@@ -936,6 +1272,7 @@ Deno.serve(async (req) => {
         tldr: tldr,
         link1: link1 || null,
         excerpt: excerpt,
+        demographics: demographics,
         created_at: new Date().toISOString()
       };
       const { data: ins, error: insErr } = await supabase

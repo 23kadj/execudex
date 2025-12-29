@@ -147,11 +147,21 @@ export async function getWeeklyProfileUsage(userId: string): Promise<{
       weekProfiles = [];
     }
 
+    // If plan is null/empty, treat as new user with basic access
+    if (!userData.plan || userData.plan === '') {
+      return {
+        profilesUsed: 0,
+        profileIds: [],
+        plan: '',  // Empty string indicates no subscription
+        cycle: undefined,
+      };
+    }
+
     return {
       profilesUsed: weekProfiles.length,
       profileIds: weekProfiles,
-      plan: userData.plan || 'basic',
-      cycle: userData.cycle || 'monthly',
+      plan: userData.plan,
+      cycle: userData.cycle,
     };
   } catch (error) {
     console.error('Exception in getWeeklyProfileUsage:', error);

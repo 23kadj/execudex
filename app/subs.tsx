@@ -48,7 +48,9 @@ export default function Subs() {
   const [loadingUsage, setLoadingUsage] = useState(true);
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
-  
+  const [purchaseInitiated, setPurchaseInitiated] = useState(false);
+  const [iapStatus, setIapStatus] = useState<'loading' | 'available' | 'unavailable'>('loading');
+
   // State for selected subscription (for switching)
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<string | null>(null);
@@ -62,28 +64,42 @@ export default function Subs() {
   // Initialize IAP service and fetch usage data
   // Delay IAP initialization slightly to ensure UI is fully mounted (prevents release crashes)
   useEffect(() => {
+    const checkIAP = async () => {
+      try {
+        // Try to initialize IAP
+        await iapService.initialize();
+        setIapStatus('available');
+        console.log('✅ IAP service available');
+      } catch (error) {
+        console.warn('IAP unavailable:', error);
+        setIapStatus('unavailable');
+      }
+    };
+
     const initializeIAP = async () => {
       // Small delay to ensure UI is fully mounted before initializing IAP
       // This prevents crashes in release builds from initializing too early
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
       try {
-        await iapService.initialize();
         await initIap(); // Initialize the MVP IAP module
-        console.log('✅ IAP service initialized');
+        console.log('✅ IAP module initialized');
       } catch (error) {
-        console.error('❌ Failed to initialize IAP service:', error);
+        console.error('❌ Failed to initialize IAP module:', error);
       }
     };
 
+    checkIAP();
+    initializeIAP();
+
     const checkAndEnforceDowngrade = async () => {
       if (!user?.id) return;
-      
+
       try {
         const supabase = getSupabaseClient();
         const { data: userData, error } = await supabase
           .from('users')
-          .select('plus_til, plan')
+          .select('plus_til, plan, cycle, last_transaction_id, last_purchase_date')
           .eq('uuid', user.id)
           .single();
 
@@ -92,33 +108,35 @@ export default function Subs() {
           return;
         }
 
-        // If plus_til is set and current time has passed it, enforce downgrade
+        // If plus_til exists and has passed, clear ALL subscription data
         if (userData?.plus_til) {
           const plusTilDate = new Date(userData.plus_til);
           const now = new Date();
-          
-          if (now >= plusTilDate && userData.plan === 'plus') {
-            console.log('🔽 Enforcing automatic downgrade to basic');
-            
-            // Update user to basic plan
+
+          if (now >= plusTilDate) {
+            console.log('⏰ Subscription expired, clearing subscription data');
+
+            // Clear subscription data but preserve account data
             const { error: updateError } = await supabase
               .from('users')
               .update({
-                plan: 'basic',
-                plus_til: null,
-                cycle: null
+                plan: null,  // Clear plan to treat as new user
+                cycle: null, // Clear cycle
+                plus_til: null, // Clear expiry date
+                // DO NOT clear last_transaction_id - preserve for potential restore
+                // DO NOT clear last_purchase_date - preserve for records
               })
               .eq('uuid', user.id);
 
             if (updateError) {
-              console.error('Error enforcing downgrade:', updateError);
+              console.error('Error clearing expired subscription:', updateError);
             } else {
-              console.log('✅ Automatic downgrade completed');
+              console.log('✅ Expired subscription data cleared');
             }
           }
         }
       } catch (error) {
-        console.error('Error in downgrade enforcement:', error);
+        console.error('Error in checkAndEnforceDowngrade:', error);
       }
     };
 
@@ -151,6 +169,12 @@ export default function Subs() {
         try {
           console.log('Purchase successful:', purchase);
 
+          // Only process purchase if it was actually initiated by user
+          if (!purchaseInitiated) {
+            console.log('⚠️ Ignoring purchase callback - purchase not initiated by user');
+            return;
+          }
+
           if (!user?.id) {
             throw new Error('User not authenticated');
           }
@@ -160,9 +184,17 @@ export default function Subs() {
 
         } catch (error) {
           console.error('❌ Error processing purchase:', error);
-          Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
+
+          // Only show alert if purchase was initiated by user
+          if (purchaseInitiated) {
+            Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
+          }
         } finally {
-          setIsPurchasing(false);
+          // Only reset purchasing state if purchase was initiated by user
+          if (purchaseInitiated) {
+            setIsPurchasing(false);
+          }
+          setPurchaseInitiated(false); // Reset for next attempt
         }
       },
       async (error) => {
@@ -215,27 +247,8 @@ export default function Subs() {
                 .sort((a: any, b: any) => parseTs(b) - parseTs(a))[0] ?? null;
 
             if (bestPurchase && user?.id) {
-              // CRITICAL: Prioritize originalTransactionId for ownership tracking
-              // originalTransactionId stays constant across renewals
-              const transactionId = bestPurchase.originalTransactionId || bestPurchase.transactionId;
-              
-              // CRITICAL: Check if this transaction belongs to another user
-              // This prevents one user from accessing another user's subscription on the same device
-              const ownershipCheck = await iapService.checkTransactionOwnership(user.id, transactionId);
-              
-              if (ownershipCheck.belongsToOtherUser) {
-                // Transaction belongs to a different user - don't grant access
-                console.warn('⚠️ Transaction ownership check failed - subscription belongs to different user');
-                Alert.alert(
-                  'Subscription Not Available',
-                  'This subscription belongs to a different account. Please sign in with the account that made the purchase, or purchase a new subscription.',
-                  [{ text: 'OK' }]
-                );
-                return;
-              }
-
-              // Transaction is available for this user - process the restored purchase
-              console.log('✅ Found existing purchase available for this user, linking to account:', bestPurchase);
+              // Process the restored purchase - no ownership checking
+              console.log('✅ Found existing purchase, linking to account:', bestPurchase);
               await handlePurchaseSuccess(bestPurchase);
               // Note: handlePurchaseSuccess already shows an alert and redirects, so we don't need another alert here
             } else {
@@ -451,7 +464,7 @@ export default function Subs() {
         await iapService.updateUserSubscription(user.id, {
           plan,
           cycle,
-          transactionId: bestPurchase?.transactionId,
+          transactionId: bestPurchase.originalTransactionId || bestPurchase.transactionId,
           purchaseDate: bestPurchase?.transactionDate
             ? new Date(parseTs(bestPurchase)).toISOString()
             : undefined,
@@ -607,17 +620,18 @@ export default function Subs() {
       const isNewSubscription = !currentPlan || currentPlan === '';
       const isUpgrade = currentPlan === 'basic' && newPlan === 'plus';
       
-      // Update subscription
-      const { error } = await supabase
-        .from('users')
-        .update({
-          plan: newPlan as 'basic' | 'plus',
-          cycle: newCycle as 'monthly' | 'quarterly',
-          plus_til: null,
-          last_transaction_id: transactionId,
-          last_purchase_date: new Date().toISOString()
-        })
-        .eq('uuid', user.id);
+    // Update subscription - save transaction ID as pending initially
+    const { error } = await supabase
+      .from('users')
+      .update({
+        plan: newPlan as 'basic' | 'plus',
+        cycle: newCycle as 'monthly' | 'quarterly',
+        plus_til: null,
+        pending_transaction_id: transactionId, // Store as pending
+        last_purchase_date: new Date().toISOString(),
+        receipt_validated: true // Receipt validated, but transaction ID pending
+      })
+      .eq('uuid', user.id);
 
       if (error) throw error;
       
@@ -664,8 +678,9 @@ export default function Subs() {
             plan: newPlan as 'basic' | 'plus',
             cycle: newCycle as 'monthly' | 'quarterly',
             plus_til: null,
-            last_transaction_id: transactionId,
-            last_purchase_date: new Date().toISOString()
+            pending_transaction_id: transactionId, // Store as pending
+            last_purchase_date: new Date().toISOString(),
+            receipt_validated: true
           })
           .eq('uuid', user.id);
 
@@ -689,11 +704,12 @@ export default function Subs() {
       return;
     }
 
+    // Get current subscription status
     const currentPlan = profileUsage?.plan;
-    const hasNoSubscription = !currentPlan || currentPlan === '';
+    const hasActiveSubscription = currentPlan && currentPlan !== '';
 
-    // If user has an existing subscription (not null/empty), only allow upgrades via App Store
-    if (!hasNoSubscription && currentPlan !== 'basic') {
+    // Only apply "Basic only" restriction if user has ACTIVE subscription
+    if (hasActiveSubscription && currentPlan !== 'basic') {
       Alert.alert(
         'Manage Subscription',
         'To make changes to your subscription, please use the "Manage Subscription" button to go to the App Store.',
@@ -702,8 +718,8 @@ export default function Subs() {
       return;
     }
 
-    // If user is on Basic, only allow Plus upgrades
-    if (currentPlan === 'basic' && selectedPlan !== 'plus') {
+    // If user is on Basic and has active subscription, only allow Plus upgrades
+    if (hasActiveSubscription && currentPlan === 'basic' && selectedPlan !== 'plus') {
       Alert.alert(
         'Invalid Selection',
         'Please select a Plus subscription to upgrade.',
@@ -712,8 +728,7 @@ export default function Subs() {
       return;
     }
 
-    // If user has no subscription, allow any plan selection
-    // (This is the main fix - users without subscriptions can choose any plan)
+    // For users without active subscriptions (including expired/cleared), allow any plan
 
     if (!isIAPAvailable()) {
       Alert.alert(
@@ -724,7 +739,8 @@ export default function Subs() {
     }
 
     setIsPurchasing(true);
-    
+    setPurchaseInitiated(false); // Reset flag
+
     try {
       // Determine product ID based on selected plan and cycle
       let productId: string;
@@ -732,22 +748,26 @@ export default function Subs() {
         productId = 'execudex.basic';
       } else {
         // Plus plan
-        productId = selectedCycle === 'quarterly' 
-          ? 'execudex.plus.quarterly' 
+        productId = selectedCycle === 'quarterly'
+          ? 'execudex.plus.quarterly'
           : 'execudex.plus.monthly';
       }
 
       console.log('🛒 Initiating purchase for:', productId);
-      
+
       // Call the existing StoreKit purchase flow
       await iapService.purchaseSubscription(productId as any);
-      
+
+      // Mark purchase as initiated after successful call to Apple
+      setPurchaseInitiated(true);
+
       // Success/error handled by purchase listeners
-      
+
     } catch (error: any) {
       console.error('❌ Purchase failed:', error);
       setIsPurchasing(false);
-      
+      setPurchaseInitiated(false); // Reset flag
+
       if (error.message !== 'Purchase was cancelled by user') {
         Alert.alert('Purchase Error', error.message || 'Purchase failed. Please try again.');
       }
@@ -936,43 +956,67 @@ export default function Subs() {
 
         {/* Restore Purchases Button */}
         {isIAPAvailable() && (
+          <>
+            <Text style={styles.restoreText}>
+              If you previously purchased a subscription on this device, tap "Restore Purchases" to regain access.
+            </Text>
+            <TouchableOpacity
+              style={[styles.submitButton, isRestoring && styles.submitButtonDisabled]}
+              onPress={handleRestorePurchases}
+              disabled={isRestoring || isPurchasing}
+              activeOpacity={0.7}
+            >
+              {isRestoring ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.submitButtonText}>
+                  Restore Purchases
+                </Text>
+              )}
+            </TouchableOpacity>
+          </>
+        )}
+
+        {/* Purchase Subscription Button */}
+        {iapStatus === 'loading' ? (
+          <TouchableOpacity style={[styles.submitButton, styles.submitButtonDisabled]} disabled>
+            <ActivityIndicator size="small" color="#666" />
+            <Text style={styles.submitButtonTextDisabled}>Checking payment options...</Text>
+          </TouchableOpacity>
+        ) : iapStatus === 'unavailable' ? (
           <TouchableOpacity
-            style={[styles.submitButton, isRestoring && styles.submitButtonDisabled]}
-            onPress={handleRestorePurchases}
-            disabled={isRestoring || isPurchasing}
-            activeOpacity={0.7}
+            style={styles.submitButton}
+            onPress={handleTestPurchase}
+            disabled={!selectedPlan || !selectedCycle || isPurchasing}
           >
-            {isRestoring ? (
+            {isPurchasing ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <Text style={styles.submitButtonText}>
-                Restore Purchases
+              <Text style={styles.submitButtonText}>Continue with Test Purchase</Text>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[
+              styles.submitButton,
+              (!selectedPlan || !selectedCycle || isPurchasing) && styles.submitButtonDisabled
+            ]}
+            onPress={handlePurchaseButtonPress}
+            disabled={!selectedPlan || !selectedCycle || isPurchasing}
+            activeOpacity={0.7}
+          >
+            {isPurchasing ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={[
+                styles.submitButtonText,
+                (!selectedPlan || !selectedCycle) && styles.submitButtonTextDisabled
+              ]}>
+                Purchase Subscription
               </Text>
             )}
           </TouchableOpacity>
         )}
-
-        {/* Purchase Subscription Button */}
-        <TouchableOpacity
-          style={[
-            styles.submitButton, 
-            (!selectedPlan || !selectedCycle || isPurchasing) && styles.submitButtonDisabled
-          ]}
-          onPress={handlePurchaseButtonPress}
-          disabled={!selectedPlan || !selectedCycle || isPurchasing}
-          activeOpacity={0.7}
-        >
-          {isPurchasing ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={[
-              styles.submitButtonText,
-              (!selectedPlan || !selectedCycle) && styles.submitButtonTextDisabled
-            ]}>
-              Purchase Subscription
-            </Text>
-          )}
-        </TouchableOpacity>
 
         {/* TEST BUTTON - For testing in Expo Go */}
         <Pressable
@@ -1140,6 +1184,15 @@ const styles = StyleSheet.create({
     color: '#666',
     fontWeight: '400',
     lineHeight: 16,
+  },
+
+  restoreText: {
+    fontSize: 14,
+    color: '#888',
+    fontWeight: '400',
+    textAlign: 'center',
+    marginBottom: 10,
+    lineHeight: 20,
   },
 
   // PURCHASE BUTTON

@@ -447,56 +447,6 @@ class IAPService {
     }
   }
 
-  /**
-   * Check if a transaction ID belongs to another user
-   * Returns { belongsToOtherUser: boolean, ownerUserId?: string }
-   * This prevents subscription sharing between accounts
-   */
-  async checkTransactionOwnership(
-    userId: string,
-    transactionId: string
-  ): Promise<{ belongsToOtherUser: boolean; ownerUserId?: string }> {
-    try {
-      const supabase = getSupabaseClient();
-      
-      // Check if this transaction ID is associated with ANY user
-      const { data, error } = await supabase
-        .from('users')
-        .select('uuid, last_transaction_id')
-        .eq('last_transaction_id', transactionId)
-        .maybeSingle();
-
-      if (error) {
-        console.error('❌ Error checking transaction ownership:', error);
-        // On error, be safe and assume it belongs to another user
-        return { belongsToOtherUser: true };
-      }
-
-      // If no user has this transaction ID, it's available
-      if (!data) {
-        console.log('✅ Transaction ID not found in database - available for this user');
-        return { belongsToOtherUser: false };
-      }
-
-      // If transaction belongs to current user, allow access
-      if (data.uuid === userId) {
-        console.log('✅ Transaction belongs to current user');
-        return { belongsToOtherUser: false };
-      }
-
-      // Transaction belongs to a different user - deny access
-      console.warn('⚠️ Transaction ownership conflict:', {
-        currentUserId: userId,
-        transactionId,
-        ownerUserId: data.uuid
-      });
-      return { belongsToOtherUser: true, ownerUserId: data.uuid };
-    } catch (error) {
-      console.error('❌ Error checking transaction ownership:', error);
-      // On error, be safe and assume it belongs to another user
-      return { belongsToOtherUser: true };
-    }
-  }
 
   /**
    * Show purchase success alert

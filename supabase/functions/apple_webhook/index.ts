@@ -85,11 +85,12 @@ async function findUserByTransactionId(
   transactionId: string
 ): Promise<string | null> {
   try {
+    // Check both permanent and pending transaction ID fields
     const { data, error } = await supabase
       .from('users')
       .select('id')
-      .eq('last_transaction_id', transactionId)
-      .single()
+      .or(`last_transaction_id.eq.${transactionId},pending_transaction_id.eq.${transactionId}`)
+      .maybeSingle()
 
     if (error || !data) {
       console.warn('⚠️ User not found for transaction ID:', transactionId)
@@ -175,16 +176,59 @@ serve(async (req) => {
     const expiresDate = transactionInfo.expiresDate ? new Date(parseInt(transactionInfo.expiresDate)) : null
 
     switch (notificationType) {
+      case 'INITIAL_BUY':
+        // Initial subscription purchase - promote pending transaction ID
+        console.log('✅ Initial subscription purchase')
+
+        const initialBuyResult = await supabase
+          .from('users')
+          .update({
+            last_transaction_id: originalTransactionId, // Promote from pending to permanent
+            pending_transaction_id: null, // Clear pending
+            plan: 'plus',
+            plus_til: expiresDate?.toISOString() || null
+          })
+          .eq('pending_transaction_id', originalTransactionId)
+          .select();
+
+        if (initialBuyResult.data && initialBuyResult.data.length === 0) {
+          console.warn('⚠️ No pending transaction found for INITIAL_BUY, this may indicate a processing issue');
+        }
+
+        await logToSubLogs(
+          supabase,
+          userId,
+          'INITIAL_BUY',
+          `Subscription activated until ${expiresDate?.toISOString() || 'unknown'}`
+        )
+        break;
+
       case 'DID_RENEW':
         // Subscription renewed successfully
         console.log('✅ Subscription renewed')
-        await supabase
+
+        // Try to promote pending transaction ID first (in case this is actually initial activation)
+        const renewPromotionResult = await supabase
           .from('users')
           .update({
+            last_transaction_id: originalTransactionId,
+            pending_transaction_id: null,
             plan: 'plus',
-            plus_til: null // Clear any scheduled downgrade
+            plus_til: expiresDate?.toISOString() || null
           })
-          .eq('id', userId)
+          .eq('pending_transaction_id', originalTransactionId)
+          .select();
+
+        // If no pending transaction was promoted, this is a normal renewal
+        if (renewPromotionResult.data && renewPromotionResult.data.length === 0) {
+          await supabase
+            .from('users')
+            .update({
+              plan: 'plus',
+              plus_til: expiresDate?.toISOString() || null
+            })
+            .eq('id', userId);
+        }
         
         await logToSubLogs(
           supabase,

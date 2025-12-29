@@ -450,6 +450,9 @@ const exp1 = React.memo(() => {
     dismissKeyboard();
   }, [dismissKeyboard]);
   
+  // Animated scale values for recommended buttons
+  const recommendedCardsButtonScale = useRef(new Animated.Value(1)).current;
+  const recommendedProfilesButtonScale = useRef(new Animated.Value(1)).current;
   // Animated scale values for legislation cards (matching home.tsx format)
   const legislationCard1Scale = useRef(new Animated.Value(1)).current;
   const legislationCard2Scale = useRef(new Animated.Value(1)).current;
@@ -996,6 +999,84 @@ const exp1 = React.memo(() => {
 
 
           </ScrollView>
+
+          {/* Recommended Cards Button */}
+          <View style={styles.recommendedButtonsWrapper}>
+            <Animated.View
+              style={{
+                transform: [{ scale: recommendedCardsButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(recommendedCardsButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(recommendedCardsButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  router.push('/cards');
+                }}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Recommended Cards</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>View cards potentially matching your interests</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
+
+            {/* Recommended Profiles Button */}
+            <Animated.View
+              style={{
+                transform: [{ scale: recommendedProfilesButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(recommendedProfilesButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(recommendedProfilesButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  router.push('/profiles1');
+                }}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Recommended Profiles</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>View which profiles are relevant to you</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
+          </View>
       
       {/* Trending Legislation Text */}
       <View style={styles.sectionHeader}>
@@ -1470,9 +1551,33 @@ const styles = StyleSheet.create({
     color: '#aaa',
     fontSize: 15,
     marginBottom: 10,
-    marginTop: 40,
+    marginTop: 20,
     fontWeight: '400',
     textAlign: 'center',
+  },
+  recommendedButtonsWrapper: {
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 0,
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  recommendedButton: {
+    width: '95%',
+    height: 75,
+    backgroundColor: '#040404',
+    borderRadius: 22,
+    marginVertical: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#101010',
+  },
+  recommendedButtonContent: {
+    width: '100%',
+    paddingHorizontal: 20,
   },
   legislationCardsWrapper: {
     width: '100%',
