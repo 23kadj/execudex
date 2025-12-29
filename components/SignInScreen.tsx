@@ -12,9 +12,9 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ProfileLoadingIndicator } from './ProfileLoadingIndicator';
 // Removed IAP imports - no longer needed for sign-in flow
 import { useAuth } from './AuthProvider';
+import { getSupabaseClient } from '../utils/supabase';
 
 export default function SignInScreen() {
   const { signInWithEmail, resetPassword } = useAuth();
@@ -306,13 +306,6 @@ export default function SignInScreen() {
 
         </View>
       </TouchableWithoutFeedback>
-
-      <ProfileLoadingIndicator
-        visible={busy}
-        title={restoreError ? 'Restore failed' : 'Restoring purchases...'}
-        subtitle={restoreError || 'Checking your App Store subscriptions.'}
-        error={restoreError}
-      />
     </SafeAreaView>
   );
 }
