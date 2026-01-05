@@ -1004,19 +1004,7 @@ export default function Subs() {
             <ActivityIndicator size="small" color="#666" />
             <Text style={styles.submitButtonTextDisabled}>Checking payment options...</Text>
           </TouchableOpacity>
-        ) : iapStatus === 'unavailable' ? (
-          <TouchableOpacity
-            style={styles.submitButton}
-            onPress={handleTestPurchase}
-            disabled={!selectedPlan || !selectedCycle || isPurchasing}
-          >
-            {isPurchasing ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.submitButtonText}>Continue with Test Purchase</Text>
-            )}
-          </TouchableOpacity>
-        ) : (
+        ) : iapStatus === 'available' ? (
           <TouchableOpacity
             style={[
               styles.submitButton,
@@ -1037,25 +1025,7 @@ export default function Subs() {
               </Text>
             )}
           </TouchableOpacity>
-        )}
-
-        {/* TEST BUTTON - For testing in Expo Go */}
-        <Pressable
-          onPress={handleTestPurchase}
-          disabled={!selectedPlan || !selectedCycle || isPurchasing}
-          style={({ pressed }) => [
-            styles.testButton,
-            (!selectedPlan || !selectedCycle || isPurchasing) && styles.testButtonDisabled,
-            pressed && styles.testButtonPressed
-          ]}
-        >
-          <Text style={[
-            styles.testButtonText,
-            (!selectedPlan || !selectedCycle || isPurchasing) && styles.testButtonTextDisabled
-          ]}>
-            {isPurchasing ? 'Processing...' : 'Test'}
-          </Text>
-        </Pressable>
+        ) : null}
 
         {/* Manage Subscription Button */}
         <TouchableOpacity

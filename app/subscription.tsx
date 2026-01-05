@@ -280,7 +280,6 @@ export default function Subscription() {
         }
         
         setIsPurchasing(false);
-        setIsProcessingPurchase(false);
       }
     );
 
@@ -392,6 +391,77 @@ export default function Subscription() {
       Alert.alert('Restore failed', e?.message ?? 'Please try again.');
     } finally {
       setIsRestoring(false);
+    }
+  };
+
+  const handleTestPurchase = async () => {
+    if (!selectedPlan || !selectedCycle) {
+      Alert.alert('Error', 'Please select a plan and cycle first');
+      return;
+    }
+
+    if (!user?.id) {
+      Alert.alert('Error', 'You must be logged in to make a purchase.');
+      return;
+    }
+
+    try {
+      setIsPurchasing(true);
+      
+      const supabase = getSupabaseClient();
+
+      // Update subscription directly in Supabase (skip receipt verification)
+      const testTransactionId = `test_${Date.now()}`;
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          plan: selectedPlan,
+          cycle: selectedCycle,
+          last_transaction_id: testTransactionId,
+          last_purchase_date: new Date().toISOString(),
+          receipt_validated: false, // Mark as test purchase
+          plus_til: null
+        })
+        .eq('uuid', user.id);
+
+      if (updateError) {
+        throw new Error(`Failed to update subscription: ${updateError.message}`);
+      }
+
+      // Refresh usage data
+      const usage = await getWeeklyProfileUsage(user.id);
+      setProfileUsage({
+        profilesUsed: usage.profilesUsed,
+        plan: usage.plan,
+        cycle: usage.cycle,
+      });
+
+      // Clear selection
+      setSelectedPlan(null);
+      setSelectedCycle(null);
+
+      // Show success alert and redirect to home page after test purchase
+      Alert.alert(
+        'Test Purchase Complete', 
+        `Successfully activated ${selectedPlan} ${selectedCycle} subscription for testing.`,
+        [{ 
+          text: 'OK',
+          onPress: () => {
+            // Redirect to home page after test purchase
+            router.replace('/(tabs)/home');
+          }
+        }],
+        { cancelable: false } // Prevent dismissing without redirecting
+      );
+
+      // Also redirect after a short delay in case alert is dismissed
+      setTimeout(() => {
+        router.replace('/(tabs)/home');
+      }, 100);
+    } catch (error: any) {
+      console.error('❌ Error in test purchase:', error);
+      Alert.alert('Test Purchase Error', error?.message || 'Failed to simulate purchase. Please try again.');
+      setIsPurchasing(false);
     }
   };
 

@@ -2801,53 +2801,6 @@ if (step === 'paymentPlan') {
           </Text>
         </View>
 
-        {/* PURCHASE BUTTON - Dynamic based on IAP availability */}
-        {iapStatus === 'loading' ? (
-          <Pressable style={[styles.testButton, styles.testButtonDisabled]} disabled>
-            <ActivityIndicator size="small" color="#666" />
-            <Text style={styles.testButtonTextDisabled}>Checking payment options...</Text>
-          </Pressable>
-        ) : iapStatus === 'unavailable' ? (
-          <Pressable
-            onPress={handleTestPurchase}
-            disabled={!plan || !cycle || isPurchasing}
-            style={({ pressed }) => [
-              styles.testButton,
-              (!plan || !cycle || isPurchasing) && styles.testButtonDisabled,
-              pressed && styles.testButtonPressed
-            ]}
-          >
-            <Text style={[
-              styles.testButtonText,
-              (!plan || !cycle || isPurchasing) && styles.testButtonTextDisabled
-            ]}>
-              {isPurchasing ? 'Processing...' : 'Continue with Test Purchase'}
-            </Text>
-          </Pressable>
-        ) : (
-          <Pressable
-            onPress={() => {
-              // Trigger real purchase flow (handled by existing logic)
-              setPurchaseError(null);
-              setIsPurchasing(true);
-              setPurchaseInitiated(false);
-              // The rest is handled by the existing purchase logic
-            }}
-            disabled={!plan || !cycle || isPurchasing}
-            style={({ pressed }) => [
-              styles.testButton,
-              (!plan || !cycle || isPurchasing) && styles.testButtonDisabled,
-              pressed && styles.testButtonPressed
-            ]}
-          >
-            <Text style={[
-              styles.testButtonText,
-              (!plan || !cycle || isPurchasing) && styles.testButtonTextDisabled
-            ]}>
-              {isPurchasing ? 'Processing...' : 'Continue with Apple Pay'}
-            </Text>
-          </Pressable>
-        )}
 
         {/* Spacer to push terms text down */}
         <View style={{ flex: 1 }} />
