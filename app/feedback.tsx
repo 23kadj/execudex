@@ -14,14 +14,28 @@ export default function Feedback() {
   
   // Get source from route params (e.g., "ppl123", "legi456", "ppl123/789")
   const source = typeof params.source === 'string' ? params.source : null;
+  
+  // Get name and type from route params for placeholder text
+  const name = typeof params.name === 'string' ? params.name : null;
+  const type = typeof params.type === 'string' ? params.type : null;
 
   // Debug logging for user authentication and source
   console.log('Feedback component - User authentication status:', {
     isAuthenticated: !!user,
     userId: user?.id,
     userEmail: user?.email,
-    source: source || 'account page (no source)'
+    source: source || 'account page (no source)',
+    name: name || 'no name',
+    type: type || 'no type'
   });
+  
+  // Generate placeholder text based on type and name
+  let placeholderText = "Enter your feedback here...";
+  if (type === 'profile' && name) {
+    placeholderText = `Provide feedback on the ${name} profile.`;
+  } else if (type === 'card' && name) {
+    placeholderText = `Provide feedback on the ${name} info card`;
+  }
 
   // Ref for feedback input to handle keyboard dismissal
   const feedbackInputRef = useRef<TextInput>(null);
@@ -129,7 +143,7 @@ export default function Feedback() {
                 styles.textInput,
                 isSubmitted && styles.textInputDisabled
               ]}
-              placeholder="Enter your feedback here..."
+              placeholder={placeholderText}
               placeholderTextColor="#666"
               value={String(feedbackText ?? '')}
               onChangeText={(text) => setFeedbackText(String(text ?? ''))}

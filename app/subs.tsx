@@ -70,6 +70,15 @@ export default function Subs() {
         await iapService.initialize();
         setIapStatus('available');
         console.log('✅ IAP service available');
+        
+        // Validate products are available before allowing purchase
+        const products = await iapService.getAvailableSubscriptions();
+        if (products.length === 0) {
+          console.warn('⚠️ No subscription products available - IAP may not work');
+          setIapStatus('unavailable');
+        } else {
+          console.log(`✅ Found ${products.length} available subscription products`);
+        }
       } catch (error) {
         console.warn('IAP unavailable:', error);
         setIapStatus('unavailable');
@@ -167,6 +176,12 @@ export default function Subs() {
     const cleanup = iapService.setupPurchaseListeners(
       async (purchase) => {
         try {
+          console.log('🔵 [IAP] Purchase listener received', {
+            purchaseInitiated,
+            transactionId: purchase.originalTransactionId || purchase.transactionId,
+            productId: purchase.productId
+          });
+
           console.log('Purchase successful:', purchase);
 
           // Only process purchase if it was actually initiated by user
@@ -190,10 +205,7 @@ export default function Subs() {
             Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
           }
         } finally {
-          // Only reset purchasing state if purchase was initiated by user
-          if (purchaseInitiated) {
-            setIsPurchasing(false);
-          }
+          setIsPurchasing(false); // Always reset to prevent stuck spinner
           setPurchaseInitiated(false); // Reset for next attempt
         }
       },
@@ -730,10 +742,12 @@ export default function Subs() {
 
     // For users without active subscriptions (including expired/cleared), allow any plan
 
-    if (!isIAPAvailable()) {
+    if (!isIAPAvailable() || iapStatus === 'unavailable') {
       Alert.alert(
         'In-App Purchases Unavailable',
-        'Please switch to a production build to complete the purchase.'
+        iapStatus === 'unavailable' 
+          ? 'Subscription products are not available. Please check your connection and try again.'
+          : 'Please switch to a production build to complete the purchase.'
       );
       return;
     }
@@ -755,11 +769,18 @@ export default function Subs() {
 
       console.log('🛒 Initiating purchase for:', productId);
 
+      console.log('🔵 [IAP] Purchase button tapped', {
+        productId,
+        isIAPAvailable: isIAPAvailable(),
+        purchaseInitiated: purchaseInitiated,
+        isPurchasing: isPurchasing
+      });
+
+      // Mark purchase as initiated BEFORE calling Apple to prevent race condition
+      setPurchaseInitiated(true);
+
       // Call the existing StoreKit purchase flow
       await iapService.purchaseSubscription(productId as any);
-
-      // Mark purchase as initiated after successful call to Apple
-      setPurchaseInitiated(true);
 
       // Success/error handled by purchase listeners
 

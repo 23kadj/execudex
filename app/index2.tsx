@@ -1,6 +1,9 @@
+import * as Notifications from 'expo-notifications';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { registerPushToken } from '../services/pushTokenService';
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   Dimensions,
   Image,
@@ -15,7 +18,7 @@ import {
 import { useAuth } from '../components/AuthProvider';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { NavigationService } from '../services/navigationService';
-import { showLegislationAlertIfNeeded, showLegislationAlertForTesting, showWeakLegislationAlertIfNeeded, showWeakLegislationAlertForInfoButton } from '../utils/profileAlerts';
+import { showLegislationAlertForTesting, showLegislationAlertIfNeeded, showWeakLegislationAlertForInfoButton, showWeakLegislationAlertIfNeeded } from '../utils/profileAlerts';
 import { safeHapticsSelection } from '../utils/safeHaptics';
 import { getSupabaseClient } from '../utils/supabase';
 
@@ -294,12 +297,130 @@ export default function Index2({ navigation }: { navigation?: any }) {
       const profileId = params.index as string;
       if (profileSlug && profileId) {
         const source = `${profileSlug}/${profileId}`;
-        router.push(`/feedback?source=${source}`);
+        // Encode name and type for URL
+        const encodedName = encodeURIComponent(name);
+        router.push(`/feedback?source=${source}&name=${encodedName}&type=profile`);
       } else {
-        router.push('/feedback');
+        // Still pass name and type even if source is missing
+        const encodedName = encodeURIComponent(name);
+        router.push(`/feedback?name=${encodedName}&type=profile`);
       }
     } catch (error) {
       console.error('[INDEX2] Error navigating to feedback:', error);
+    } finally {
+      setIsMoreSheetVisible(false);
+    }
+  };
+
+  const handleSheetSubscribePress = async () => {
+    safeHapticsSelection();
+    
+    if (!user?.id) {
+      Alert.alert('Error', 'You must be signed in to subscribe to profiles.');
+      setIsMoreSheetVisible(false);
+      return;
+    }
+
+    const profileId = params.index as string | undefined;
+    if (!profileId) {
+      Alert.alert('Error', 'Unable to identify profile.');
+      setIsMoreSheetVisible(false);
+      return;
+    }
+
+    try {
+      // Check notification permissions
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      
+      if (existingStatus !== 'granted') {
+        // Show alert explaining notifications are required
+        Alert.alert(
+          'Notifications Required',
+          'Subscribing to a profile requires you to have notifications turned on.',
+          [
+            {
+              text: 'Got it',
+              onPress: async () => {
+                // Request notification permissions
+                const { status } = await Notifications.requestPermissionsAsync();
+                
+                if (status === 'granted') {
+                  // Proceed with subscription
+                  await subscribeToProfile(user.id, profileId, name);
+                } else {
+                  // User denied, do nothing
+                  setIsMoreSheetVisible(false);
+                }
+              }
+            }
+          ],
+          { cancelable: true }
+        );
+        return;
+      }
+
+      // Permissions already granted, proceed with subscription
+      await subscribeToProfile(user.id, profileId, name);
+    } catch (error) {
+      console.error('[INDEX2] Error in handleSheetSubscribePress:', error);
+      Alert.alert('Error', 'Failed to subscribe to profile. Please try again.');
+      setIsMoreSheetVisible(false);
+    }
+  };
+
+  const subscribeToProfile = async (userId: string, profileId: string, profileName: string) => {
+    try {
+      const supabase = getSupabaseClient();
+      const profileIdFormatted = `legi${profileId}`;
+
+      // Check if subscription already exists
+      const { data: existingSubscription, error: checkError } = await supabase
+        .from('subs')
+        .select('*')
+        .eq('user', userId)
+        .eq('profile_id', profileIdFormatted)
+        .single();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        // PGRST116 is "not found" which is expected if no subscription exists
+        throw checkError;
+      }
+
+      if (existingSubscription) {
+        // Already subscribed
+        Alert.alert('Already Subscribed', `You are already subscribed to the ${profileName} profile.`);
+        setIsMoreSheetVisible(false);
+        return;
+      }
+
+      // Insert subscription into subs table
+      const { error } = await supabase
+        .from('subs')
+        .insert({
+          user: userId,
+          profile_id: profileIdFormatted
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      // Register push token for notifications
+      if (user?.id) {
+        await registerPushToken(user.id).catch(err => {
+          console.error('[INDEX2] Error registering push token:', err);
+          // Don't show error to user - subscription still succeeded
+        });
+      }
+
+      // Show success message (different wording for legislation)
+      Alert.alert(
+        'Subscribed',
+        `You are now subscribed to the ${profileName} profile. You'll be notified of any new cards that are generated for this profile.`
+      );
+    } catch (error) {
+      console.error('[INDEX2] Error subscribing to profile:', error);
+      Alert.alert('Error', 'Failed to subscribe to profile. Please try again.');
     } finally {
       setIsMoreSheetVisible(false);
     }
@@ -504,6 +625,14 @@ export default function Index2({ navigation }: { navigation?: any }) {
               >
                 <Text style={styles.moreSheetActionText}>Feedback</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.moreSheetActionBtn}
+                activeOpacity={1}
+                onPress={handleSheetSubscribePress}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreSheetActionText}>Subscribe</Text>
+              </TouchableOpacity>
             </View>
 
             <View style={{ flex: 1 }} />
@@ -637,7 +766,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
   moreSheet: {
-    height: '28.75%',
+    height: '30.75%',
     backgroundColor: '#080808',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,

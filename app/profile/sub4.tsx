@@ -23,6 +23,8 @@ import { CardService } from '../../services/cardService';
 import { CardData, getCategoryFromTitle, getCategoryMapping, getScreenDisplayName } from '../../utils/cardData';
 import { filterCardsByWords, getMostCommonWords, shouldShowSearchAssistance } from '../../utils/searchAssistanceUtils';
 import { getSupabaseClient } from '../../utils/supabase';
+import { NotificationService } from '../../services/notificationService';
+import { useAuth } from '../../components/AuthProvider';
 
 // #region agent log - module level
 fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub4.tsx:MODULE',message:'Module loaded',data:{CardLoadingIndicator:typeof CardLoadingIndicator,SearchFilterButton:typeof SearchFilterButton,Pressable:typeof Pressable,ScrollView:typeof ScrollView},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
@@ -136,6 +138,7 @@ export default function Sub4() {
   fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub4.tsx:ENTRY',message:'Sub4 component entered',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
   // #endregion
   const router = useRouter();
+  const { user } = useAuth();
   const params = useLocalSearchParams();
   // #region agent log - params
   fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub4.tsx:PARAMS',message:'Params received',data:{paramsKeys:Object.keys(params),buttonText:params.buttonText,profileIndex:params.profileIndex},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
@@ -542,6 +545,19 @@ export default function Sub4() {
           message,
           [{ text: 'OK' }]
         );
+
+        // Send notifications to subscribed users
+        if (generatedCategoryScreenPairs.length > 0 && cardsGenerated > 0) {
+          NotificationService.handleCardGenerationNotification(
+            ownerId,
+            true, // isPpl
+            profileName,
+            generatedCategoryScreenPairs,
+            user?.id
+          ).catch(error => {
+            console.error('Error sending notifications:', error);
+          });
+        }
         
         // Refresh cards after generation
         const fetchAllCards = async () => {

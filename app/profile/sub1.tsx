@@ -3,9 +3,11 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useAuth } from '../../components/AuthProvider';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
+import { NotificationService } from '../../services/notificationService';
 import { CardData, fetchCardsByScreen, getCardIndexScreenForPage, getCategoryMapping, getScreenDisplayName, searchCardsForPage } from '../../utils/cardData';
 import { getSupabaseClient } from '../../utils/supabase';
 
@@ -26,6 +28,7 @@ if (__DISABLE_HAPTICS_FOR_CRASH_TEST) {
 
 export default function Sub1({ scrollY, name, position, goToTab, index, scrollRef, cardRefreshTrigger }: { scrollY: Animated.Value; name: string; position: string; goToTab?: (idx: number) => void; index?: number; scrollRef?: React.RefObject<ScrollView>; cardRefreshTrigger?: number }) {
   const router = useRouter();
+  const { user } = useAuth();
   
   // State for profile data
   const [tier, setTier] = useState<string>('');
@@ -308,6 +311,19 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
           message,
           [{ text: 'OK' }]
         );
+
+        // Send notifications to subscribed users
+        if (generatedCategoryScreenPairs.length > 0 && cardsGenerated > 0) {
+          NotificationService.handleCardGenerationNotification(
+            ownerId,
+            true, // isPpl
+            name,
+            generatedCategoryScreenPairs,
+            user?.id
+          ).catch(error => {
+            console.error('Error sending notifications:', error);
+          });
+        }
       }
     } catch (error) {
       // Don't log error if it was an abort

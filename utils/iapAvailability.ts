@@ -3,10 +3,13 @@ import Constants from 'expo-constants';
 // Track if IAP module has been successfully loaded
 let iapModuleLoaded = false;
 let iapModuleLoadAttempted = false;
+// Track if critical purchase API is available
+let purchaseAPIReady = false;
 
 /**
  * Check if IAP is available in the current environment
  * IAP only works in EAS builds, not in Expo Go
+ * Only returns true if module is loaded AND purchase API is ready
  */
 export const isIAPAvailable = (): boolean => {
   // Check if we're in Expo Go (which doesn't support native modules)
@@ -17,15 +20,15 @@ export const isIAPAvailable = (): boolean => {
     return false;
   }
   
-  // If module has been loaded successfully, it's available
-  if (iapModuleLoaded) {
+  // Only return true if module is loaded AND purchase API is ready
+  // This prevents optimistic "true" when module hasn't been attempted yet
+  if (iapModuleLoaded && purchaseAPIReady) {
     return true;
   }
   
-  // If we haven't tried loading yet, assume it might be available
-  // (the actual load attempt will happen in lazyLoadIAPModule)
+  // If we haven't tried loading yet, return false (not optimistic)
   if (!iapModuleLoadAttempted) {
-    return true; // Optimistically return true, let the actual load determine availability
+    return false;
   }
   
   // If we tried and failed, it's not available
@@ -39,6 +42,18 @@ export const isIAPAvailable = (): boolean => {
 export const markIAPModuleLoaded = (loaded: boolean): void => {
   iapModuleLoaded = loaded;
   iapModuleLoadAttempted = true;
+  // Reset purchase API ready state when module load status changes
+  if (!loaded) {
+    purchaseAPIReady = false;
+  }
+};
+
+/**
+ * Mark purchase API as ready (requestPurchase is available)
+ * Called after module loads and critical APIs are verified
+ */
+export const markPurchaseAPIReady = (ready: boolean): void => {
+  purchaseAPIReady = ready;
 };
 
 /**

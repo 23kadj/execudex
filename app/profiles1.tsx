@@ -242,7 +242,6 @@ export default function Profiles1() {
         >
           <Image source={require('../assets/back1.png')} style={styles.headerIcon} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Recommended Profiles</Text>
       </View>
       
       {/* Search Bar */}

@@ -684,10 +684,10 @@ async function insertCards(opts: {
   const { data: inserted, error: insErr } = await supabase
     .from("card_index")
     .insert(capped)
-    .select("id");
+    .select("id, category, screen");
   if (insErr) throw insErr;
 
-  return { inserted: inserted.length, details: inserted };
+  return { inserted: inserted.length, details: inserted, insertedCards: capped.map(c => ({ category: c.category, screen: c.screen })) };
 }
 
 /** ========================== MAIN ========================== */
@@ -745,6 +745,7 @@ Deno.serve(async (req) => {
     const allCards1 = results1.flat().filter(Boolean) as RawCard[];
 
     let totalInserted = 0;
+    let allInsertedCards: any[] = [];
     if (allCards1.length) {
       const res1 = await insertCards({
         ownerId: id,
@@ -755,6 +756,9 @@ Deno.serve(async (req) => {
         rawCards: allCards1,
       });
       totalInserted += res1.inserted;
+      if (res1.insertedCards) {
+        allInsertedCards.push(...res1.insertedCards);
+      }
     }
 
     // (6) Second wave if needed (< PASS_MIN_CARDS) — scaled by slider
@@ -781,6 +785,9 @@ Deno.serve(async (req) => {
           rawCards: allCards2,
         });
         totalInserted += res2.inserted;
+        if (res2.insertedCards) {
+          allInsertedCards.push(...res2.insertedCards);
+        }
       }
     }
 
@@ -810,6 +817,123 @@ Deno.serve(async (req) => {
     const remaining = parts.filter(p => !usedAfter.has(p.part)).length;
 
     const elapsed = Date.now() - t0;
+
+    // Send notifications to subscribed users (fire-and-forget)
+    if (totalInserted > 0 && allInsertedCards.length > 0) {
+      (async () => {
+        try {
+          const profileIdFormatted = `legi${id}`;
+          
+          // Get all users subscribed to this profile
+          const { data: subscriptions } = await supabase
+            .from('subs')
+            .select('user')
+            .eq('profile_id', profileIdFormatted);
+          
+          if (subscriptions && subscriptions.length > 0) {
+            // Filter users with notifications enabled
+            const subscribedUserIds = subscriptions.map(sub => sub.user);
+            const { data: usersWithNotifications } = await supabase
+              .from('users')
+              .select('uuid')
+              .in('uuid', subscribedUserIds)
+              .eq('notifications_enabled', true);
+            
+            const enabledUserIds = (usersWithNotifications || []).map(u => u.uuid);
+            
+            if (enabledUserIds.length === 0) {
+              console.log(`[bill_cards] No users with notifications enabled for profile ${profileIdFormatted}`);
+              return;
+            }
+            
+            // Extract unique category-screen pairs
+            const categoryScreenPairs = new Map<string, { category: string; screen: string }>();
+            for (const card of allInsertedCards) {
+              const category = card.category || '';
+              const screen = card.screen || '';
+              const key = `${category}:${screen}`;
+              if (category && screen && !categoryScreenPairs.has(key)) {
+                categoryScreenPairs.set(key, { category, screen });
+              }
+            }
+            
+            const uniquePairs = Array.from(categoryScreenPairs.values());
+            if (uniquePairs.length > 0) {
+              // Map categories to display names
+              const categoryMap: Record<string, string> = {
+                'action': 'Action', 'scope': 'Scope', 'process': 'Process', 'exceptions': 'Exceptions',
+                'sectors': 'Sectors', 'demographics': 'Demographics', 'regions': 'Regions',
+                'aftermath': 'Aftermath', 'backers': 'Backers', 'opposers': 'Opposers',
+                'narratives': 'Narratives', 'coverage': 'Coverage'
+              };
+              const screenMap: Record<string, string> = {
+                'agenda_legi': 'Agenda', 'impact': 'Impact', 'discourse': 'Discourse'
+              };
+              
+              const categoryDisplayNames = uniquePairs.map(({ category, screen }) => {
+                return categoryMap[category] || category;
+              }).filter(Boolean);
+              
+              const message = `New cards have been generated for the ${bill.name} profile. The new cards can be found in the categories and pages below`;
+              
+              // Insert notifications for users with notifications enabled
+              const notificationRecords = enabledUserIds.map(userId => ({
+                user_id: userId,
+                profile_id: profileIdFormatted,
+                profile_name: bill.name,
+                is_ppl: false,
+                message: message,
+                categories: categoryDisplayNames
+              }));
+              
+              await supabase.from('notifications').insert(notificationRecords);
+              console.log(`[bill_cards] Created notifications for ${enabledUserIds.length} users`);
+              
+              // Send push notifications via Expo API
+              const profileTypeText = `the ${bill.name}`;
+              const title = `New Cards for ${profileTypeText} Profile`;
+              const body = `New cards for the ${bill.name} profile have been generated, come check them out!`;
+              
+              // Fetch push tokens for users with notifications enabled
+              const { data: pushTokens } = await supabase
+                .from('user_push_tokens')
+                .select('push_token, user_id')
+                .in('user_id', enabledUserIds);
+              
+              if (pushTokens && pushTokens.length > 0) {
+                // Send push notifications
+                const pushMessages = pushTokens.map(tokenData => ({
+                  to: tokenData.push_token,
+                  sound: 'notification.wav',
+                  title: title,
+                  body: body,
+                  data: { navigateTo: 'notifications' },
+                  badge: 1,
+                }));
+                
+                // Send all push notifications in parallel
+                const pushPromises = pushMessages.map(message => 
+                  fetch('https://exp.host/--/api/v2/push/send', {
+                    method: 'POST',
+                    headers: {
+                      Accept: 'application/json',
+                      'Accept-Encoding': 'gzip, deflate',
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(message),
+                  })
+                );
+                
+                await Promise.all(pushPromises);
+                console.log(`[bill_cards] Sent ${pushTokens.length} push notifications`);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[bill_cards] Error sending notifications:', err);
+        }
+      })();
+    }
 
     // ===== Tiny-profile mode signal when no cards were inserted =====
     if (totalInserted === 0) {

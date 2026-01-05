@@ -6,7 +6,7 @@ import {
     type SubscriptionProductId,
     type SubscriptionUpdateData
 } from '../types/iapTypes';
-import { isIAPAvailable, markIAPModuleLoaded } from '../utils/iapAvailability';
+import { isIAPAvailable, markIAPModuleLoaded, markPurchaseAPIReady } from '../utils/iapAvailability';
 import { getSupabaseClient } from '../utils/supabase';
 
 // Lazy-load IAP module to avoid top-level require() that can crash release builds
@@ -65,8 +65,17 @@ function lazyLoadIAPModule() {
     requestPurchase = iapModule.requestPurchase;
     purchaseErrorListener = iapModule.purchaseErrorListener;
     purchaseUpdatedListener = iapModule.purchaseUpdatedListener;
-    markIAPModuleLoaded(true);
-    console.log('✅ IAP module loaded successfully');
+    
+    // Only mark as loaded if critical purchase API is present
+    if (requestPurchase && initConnection) {
+      markIAPModuleLoaded(true);
+      markPurchaseAPIReady(true);
+      console.log('✅ IAP module loaded successfully with purchase API ready');
+    } else {
+      console.warn('⚠️ IAP module loaded but critical APIs missing (requestPurchase or initConnection)');
+      markIAPModuleLoaded(false);
+      markPurchaseAPIReady(false);
+    }
   } catch (error) {
     console.warn('⚠️ IAP module not available:', error);
     RNIap = null;
@@ -79,6 +88,7 @@ function lazyLoadIAPModule() {
     purchaseErrorListener = null;
     purchaseUpdatedListener = null;
     markIAPModuleLoaded(false);
+    markPurchaseAPIReady(false);
   }
 }
 
@@ -99,6 +109,7 @@ class IAPService {
     
     if (!isIAPAvailable() || !initConnection) {
       console.log('ℹ️ IAP not available (Expo Go mode)');
+      markPurchaseAPIReady(false);
       return;
     }
 
@@ -108,10 +119,19 @@ class IAPService {
       const result = await initConnection();
       console.log('IAP connection result:', result);
       
+      // Verify requestPurchase is still available after initialization
+      if (!requestPurchase) {
+        console.warn('⚠️ requestPurchase not available after initialization');
+        markPurchaseAPIReady(false);
+        return;
+      }
+      
       this.isInitialized = true;
+      markPurchaseAPIReady(true);
       console.log('✅ IAP service initialized successfully');
     } catch (error) {
       console.warn('⚠️ Failed to initialize IAP service (may be Expo Go):', error);
+      markPurchaseAPIReady(false);
       // Don't throw - allow app to continue in Expo Go
     }
   }
@@ -179,10 +199,15 @@ class IAPService {
 
       // Optional: fetch product to surface misconfigured SKUs early
       if (fetchProducts) {
+        console.log('🔵 [IAP] About to fetch product', { productId });
         const products = await fetchProducts({ skus: [productId], type: 'subs' });
         const found =
           products?.find((p: any) => p?.id === productId || p?.productId === productId) ??
           products?.[0];
+        console.log('🔵 [IAP] Product fetch result', { 
+          found: !!found, 
+          productId: found?.id || found?.productId 
+        });
         if (!found) {
           throw new Error(
             `Product ${productId} is not available from the App Store. Verify it exists in App Store Connect and is approved for sale.`
@@ -191,6 +216,7 @@ class IAPService {
       }
 
       // v14+ uses requestPurchase for both in-app products and subscriptions
+      console.log('🔵 [IAP] About to call requestPurchase', { productId, type: 'subs' });
       await requestPurchase({
         type: 'subs',
         request: {
@@ -199,6 +225,7 @@ class IAPService {
           android: { skus: [productId], subscriptionOffers: [] },
         },
       });
+      console.log('🔵 [IAP] requestPurchase completed successfully');
       
     } catch (error: any) {
       console.error('❌ Purchase failed:', error);
@@ -420,14 +447,35 @@ class IAPService {
     receiptData: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      console.log('🔵 [IAP] Receipt verification started', { userId, receiptLength: receiptData.length });
       console.log('🔐 Verifying receipt with Apple...');
       
-      const { data, error } = await getSupabaseClient().functions.invoke('verify_receipt', {
+      // Create timeout promise (10 seconds)
+      const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) => {
+        setTimeout(() => {
+          console.error('⏱️ Receipt verification timed out after 10 seconds');
+          resolve({ success: false, error: 'Receipt verification timed out. Please try again.' });
+        }, 10000);
+      });
+
+      // Create verification promise
+      const verificationPromise = getSupabaseClient().functions.invoke('verify_receipt', {
         body: {
           receiptData,
           userId
         }
       });
+
+      // Race verification against timeout
+      const result = await Promise.race([verificationPromise, timeoutPromise]);
+
+      // If timeout won, return timeout error
+      if ('success' in result && !('data' in result) && result.success === false) {
+        return result as { success: false; error: string };
+      }
+
+      // Otherwise, result is the verification response
+      const { data, error } = result as { data: any; error: any };
 
       if (error) {
         console.error('❌ Receipt verification failed:', error);
@@ -439,6 +487,7 @@ class IAPService {
         return { success: false, error: data?.error || 'Receipt verification failed' };
       }
 
+      console.log('🔵 [IAP] Receipt verification completed', { success: true });
       console.log('✅ Receipt verified successfully');
       return { success: true };
     } catch (error: any) {

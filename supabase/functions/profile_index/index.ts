@@ -899,9 +899,9 @@ async function updateLegislationIndexedStatus(id: number): Promise<void> {
   }
 }
 
-/** ========================== WEEKLY VISITS TRACKING ========================== */
+/** ========================== WEEKLY VISITS TRACKING (POLITICIANS) ========================== */
 /** 
- * Update weekly visits count for a profile (politician or legislation)
+ * Update weekly visits count for a politician profile
  * 
  * This function tracks how many times a profile has been visited in the current week.
  * Every time a user enters a profile, it increments the weekly_visits counter by 1.
@@ -911,7 +911,7 @@ async function updateLegislationIndexedStatus(id: number): Promise<void> {
  * The function gracefully handles cases where the weekly_visits and week columns
  * don't exist yet in the database tables.
  */
-async function updateWeeklyVisits(tableName: "ppl_index" | "legi_index", id: number): Promise<void> {
+async function updateWeeklyVisits(tableName: "ppl_index", id: number): Promise<void> {
   try {
     // Get current timestamp for this week
     const now = new Date();
@@ -959,6 +959,53 @@ async function updateWeeklyVisits(tableName: "ppl_index" | "legi_index", id: num
     }
   } catch (error) {
     console.error(`Error in updateWeeklyVisits for ${tableName} id ${id}:`, error);
+    // Don't throw - this is non-critical tracking
+  }
+}
+
+/** ========================== PROFILE VISITS TRACKING (LEGISLATION) ========================== */
+/** 
+ * Update profile visits count for a legislation profile
+ * 
+ * This function tracks the total number of times a legislation profile has been visited.
+ * Every time a user enters a profile, it increments the profile_visits counter by 1.
+ * This is a cumulative counter that never resets - it tracks all-time total views.
+ * 
+ * The function gracefully handles cases where the profile_visits column
+ * doesn't exist yet in the database table.
+ */
+async function updateProfileVisits(id: number): Promise<void> {
+  try {
+    // Check if column exists by trying to select it
+    const { data: currentData, error: selectError } = await supabase
+      .from("legi_index")
+      .select("profile_visits")
+      .eq("id", id)
+      .single();
+    
+    if (selectError) {
+      // Column doesn't exist yet, skip tracking
+      console.log(`Profile visits column not found in legi_index, skipping tracking`);
+      return;
+    }
+    
+    const currentVisits = currentData?.profile_visits || 0;
+    
+    // Increment by 1 (no reset - this is a cumulative total)
+    const newVisitCount = currentVisits + 1;
+    
+    const { error: updateError } = await supabase
+      .from("legi_index")
+      .update({ profile_visits: newVisitCount })
+      .eq("id", id);
+    
+    if (updateError) {
+      console.error(`Error updating profile visits for legi_index id ${id}:`, updateError);
+    } else {
+      console.log(`Updated profile visits for legi_index id ${id}: ${newVisitCount}`);
+    }
+  } catch (error) {
+    console.error(`Error in updateProfileVisits for legi_index id ${id}:`, error);
     // Don't throw - this is non-critical tracking
   }
 }
@@ -1521,8 +1568,8 @@ async function latestLegiWebContentLink(id: number): Promise<string|undefined> {
 
 /** Main handler for legislation */
 async function handleLegiById(id: number, conc: number) {
-  // 0) Update weekly visits tracking
-  await updateWeeklyVisits("legi_index", id);
+  // 0) Update profile visits tracking (cumulative total, no weekly reset)
+  await updateProfileVisits(id);
   
   // 1) fetch legi row
   const { data: row, error } = await supabase.from("legi_index").select("*").eq("id", id).single();

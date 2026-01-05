@@ -255,6 +255,15 @@ const step: StepKey = steps[stepIndex];
         await iapService.initialize();
         setIapStatus('available');
         console.log('✅ IAP service available (onboarding)');
+        
+        // Validate products are available before allowing purchase
+        const products = await iapService.getAvailableSubscriptions();
+        if (products.length === 0) {
+          console.warn('⚠️ No subscription products available - IAP may not work');
+          setIapStatus('unavailable');
+        } else {
+          console.log(`✅ Found ${products.length} available subscription products`);
+        }
       } catch (error) {
         console.warn('IAP unavailable (onboarding):', error);
         setIapStatus('unavailable');
@@ -270,6 +279,12 @@ const step: StepKey = steps[stepIndex];
     const cleanup = iapService.setupPurchaseListeners(
       async (purchase) => {
         try {
+          console.log('🔵 [IAP] Purchase listener received', {
+            purchaseInitiated,
+            transactionId: purchase.originalTransactionId || purchase.transactionId,
+            productId: purchase.productId
+          });
+
           // Only process purchase if it was actually initiated by user
           if (!purchaseInitiated) {
             console.log('⚠️ Ignoring purchase callback - purchase not initiated by user');
@@ -325,10 +340,7 @@ const step: StepKey = steps[stepIndex];
             Alert.alert('Error', error?.message || 'Failed to activate subscription. Please try again.');
           }
         } finally {
-          // Only reset purchasing state if purchase was initiated by user
-          if (purchaseInitiated) {
-            setIsPurchasing(false);
-          }
+          setIsPurchasing(false); // Always reset to prevent stuck spinner
           setPurchaseInitiated(false); // Reset for next attempt
         }
       },
@@ -2883,10 +2895,12 @@ if (step === 'paymentPlan') {
               console.log('   - cycle:', cycle);
 
               // Both Basic and Plus now require IAP purchase
-              if (!isIAPAvailable()) {
+              if (!isIAPAvailable() || iapStatus === 'unavailable') {
                 Alert.alert(
                   'In-App Purchases Unavailable',
-                  'Please switch to a production build to complete the purchase.'
+                  iapStatus === 'unavailable' 
+                    ? 'Subscription products are not available. Please check your connection and try again.'
+                    : 'Please switch to a production build to complete the purchase.'
                 );
                 return;
               }
@@ -2912,10 +2926,17 @@ if (step === 'paymentPlan') {
                   throw new Error('Invalid plan selected');
                 }
 
-                await iapService.purchaseSubscription(productId as any);
-
-                // Mark purchase as initiated after successful call to Apple
+                // Mark purchase as initiated BEFORE calling Apple to prevent race condition
                 setPurchaseInitiated(true);
+
+                console.log('🔵 [IAP] Purchase button tapped', {
+                  productId,
+                  isIAPAvailable: isIAPAvailable(),
+                  purchaseInitiated: purchaseInitiated,
+                  isPurchasing: isPurchasing
+                });
+
+                await iapService.purchaseSubscription(productId as any);
 
                 // Success path handled by purchase listener (save + navigate)
               } catch (purchaseErr: any) {

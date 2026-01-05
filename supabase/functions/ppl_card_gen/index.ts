@@ -668,6 +668,131 @@ Deno.serve(async (req) => {
       throw new Error(`card_index insert failed: ${JSON.stringify(insertResults.find(res => res.error)?.error)}`);
     }
 
+    // Send notifications to subscribed users (fire-and-forget)
+    if (insertedCount > 0 && toInsert.length > 0) {
+      (async () => {
+        try {
+          const profileIdFormatted = `ppl${pplId}`;
+          
+          // Get all users subscribed to this profile
+          const { data: subscriptions } = await supabase
+            .from('subs')
+            .select('user')
+            .eq('profile_id', profileIdFormatted);
+          
+          if (subscriptions && subscriptions.length > 0) {
+            // Filter users with notifications enabled
+            const subscribedUserIds = subscriptions.map(sub => sub.user);
+            const { data: usersWithNotifications } = await supabase
+              .from('users')
+              .select('uuid')
+              .in('uuid', subscribedUserIds)
+              .eq('notifications_enabled', true);
+            
+            const enabledUserIds = (usersWithNotifications || []).map(u => u.uuid);
+            
+            if (enabledUserIds.length === 0) {
+              console.log(`[ppl_card_gen] No users with notifications enabled for profile ${profileIdFormatted}`);
+              return;
+            }
+            
+            // Extract unique category-screen pairs from inserted cards
+            const categoryScreenPairs = new Map<string, { category: string; screen: string }>();
+            for (const card of toInsert) {
+              const category = card.category || '';
+              const screen = card.screen || '';
+              const key = `${category}:${screen}`;
+              if (category && screen && !categoryScreenPairs.has(key)) {
+                categoryScreenPairs.set(key, { category, screen });
+              }
+            }
+            
+            const uniquePairs = Array.from(categoryScreenPairs.values());
+            if (uniquePairs.length > 0) {
+              // Map categories to display names
+              const categoryMap: Record<string, string> = {
+                'economy': 'Economy', 'environment': 'Environment', 'social programs': 'Social Programs',
+                'immigration': 'Immigration', 'healthcare': 'Healthcare', 'education': 'Education',
+                'defense': 'Defense', 'national security': 'National Security', 'more': 'More Selections',
+                'background': 'Background', 'career': 'Career', 'public image': 'Public Image',
+                'accomplishments': 'Accomplishments', 'statements': 'Statements', 'awards': 'Awards',
+                'beliefs': 'Beliefs', 'party': 'Party', 'organizations': 'Organizations',
+                'businesses': 'Businesses', 'politicians': 'Politicians', 'medias': 'Medias',
+                'donors': 'Donors', 'enterprises': 'Enterprises'
+              };
+              const screenMap: Record<string, string> = {
+                'agenda_ppl': 'Agenda', 'identity': 'Identity', 'affiliates': 'Affiliates'
+              };
+              
+              const categoryDisplayNames = uniquePairs.map(({ category, screen }) => {
+                if (category === 'more') {
+                  // For "more" category, just return the screen display name directly (e.g., "Economy", "Environment")
+                  return screenMap[screen] || screen;
+                }
+                return categoryMap[category] || category;
+              }).filter(Boolean);
+              
+              const message = `New cards have been generated for ${person.name}'s profile. The new cards can be found in the categories and pages below`;
+              
+              // Insert notifications for users with notifications enabled
+              const notificationRecords = enabledUserIds.map(userId => ({
+                user_id: userId,
+                profile_id: profileIdFormatted,
+                profile_name: person.name,
+                is_ppl: true,
+                message: message,
+                categories: categoryDisplayNames
+              }));
+              
+              await supabase.from('notifications').insert(notificationRecords);
+              console.log(`[ppl_card_gen] Created notifications for ${enabledUserIds.length} users`);
+              
+              // Send push notifications via Expo API
+              const profileTypeText = `${person.name}'s`;
+              const title = `New Cards for ${profileTypeText} Profile`;
+              const body = `New cards for ${person.name}'s profile have been generated, come check them out!`;
+              
+              // Fetch push tokens for users with notifications enabled
+              const { data: pushTokens } = await supabase
+                .from('user_push_tokens')
+                .select('push_token, user_id')
+                .in('user_id', enabledUserIds);
+              
+              if (pushTokens && pushTokens.length > 0) {
+                // Send push notifications
+                const pushMessages = pushTokens.map(tokenData => ({
+                  to: tokenData.push_token,
+                  sound: 'notification.wav',
+                  title: title,
+                  body: body,
+                  data: { navigateTo: 'notifications' },
+                  badge: 1,
+                }));
+                
+                // Send all push notifications in parallel
+                const pushPromises = pushMessages.map(message => 
+                  fetch('https://exp.host/--/api/v2/push/send', {
+                    method: 'POST',
+                    headers: {
+                      Accept: 'application/json',
+                      'Accept-Encoding': 'gzip, deflate',
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(message),
+                  })
+                );
+                
+                await Promise.all(pushPromises);
+                console.log(`[ppl_card_gen] Sent ${pushTokens.length} push notifications`);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[ppl_card_gen] Error sending notifications:', err);
+        }
+      })();
+    }
+
     return new Response(
       JSON.stringify({
         id: pplId,

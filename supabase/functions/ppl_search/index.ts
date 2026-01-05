@@ -1117,6 +1117,79 @@ Deno.serve(async (req) => {
     }
     console.log(`[PPL_SEARCH] Successfully inserted "${canonical}" with ID ${ins.id}`);
 
+    // ---------- SEND NOTIFICATIONS TO ALL USERS (fire-and-forget) ----------
+    (async () => {
+      try {
+        // Fetch all users with notifications enabled
+        const { data: usersWithNotifications } = await supabase
+          .from('users')
+          .select('uuid')
+          .eq('notifications_enabled', true);
+        
+        if (!usersWithNotifications || usersWithNotifications.length === 0) {
+          console.log(`[ppl_search] No users with notifications enabled`);
+          return;
+        }
+        
+        const enabledUserIds = usersWithNotifications.map(u => u.uuid);
+        
+        // Fetch push tokens for users with notifications enabled
+        const { data: pushTokens } = await supabase
+          .from('user_push_tokens')
+          .select('push_token, user_id')
+          .in('user_id', enabledUserIds);
+        
+        if (pushTokens && pushTokens.length > 0) {
+          const message = `A new politician is available on Execudex, come check it out!`;
+          
+          // Insert notification records for users with notifications enabled
+          const notificationRecords = enabledUserIds.map(userId => ({
+            user_id: userId,
+            profile_id: `ppl${ins.id}`,
+            profile_name: canonical,
+            is_ppl: true,
+            message: message,
+            categories: []
+          }));
+          
+          await supabase.from('notifications').insert(notificationRecords);
+          console.log(`[ppl_search] Created notifications for ${enabledUserIds.length} users`);
+          
+          // Send push notifications via Expo API
+          const title = `New Politician Available`;
+          const body = message;
+          
+          // Send push notifications
+          const pushMessages = pushTokens.map(tokenData => ({
+            to: tokenData.push_token,
+            sound: 'notification.wav',
+            title: title,
+            body: body,
+            data: { navigateTo: 'notifications' },
+            badge: 1,
+          }));
+          
+          // Send all push notifications in parallel
+          const pushPromises = pushMessages.map(message => 
+            fetch('https://exp.host/--/api/v2/push/send', {
+              method: 'POST',
+              headers: {
+                Accept: 'application/json',
+                'Accept-Encoding': 'gzip, deflate',
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(message),
+            })
+          );
+          
+          await Promise.all(pushPromises);
+          console.log(`[ppl_search] Sent ${pushTokens.length} push notifications`);
+        }
+      } catch (err) {
+        console.error('[ppl_search] Error sending notifications:', err);
+      }
+    })();
+
     // ---------- WIKIPEDIA FETCH (official API with fallback - profile_index parity) ----------
     console.log(`[PPL_SEARCH] ===== WIKIPEDIA FETCH: Processing "${canonical}" (ID ${ins.id}) =====`);
     let wikiText: string | null = null;

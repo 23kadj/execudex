@@ -14,6 +14,9 @@ import {
 } from 'react-native';
 import { CardGenerationService } from '../services/cardGenerationService';
 import { getSupabaseClient } from '../utils/supabase';
+import { NotificationService } from '../services/notificationService';
+import { useAuth } from '../components/AuthProvider';
+import { getCategoryMapping, getScreenDisplayName } from '../utils/cardData';
 
 // Simple skeleton loader component
 const SkeletonLoader = ({ width = '100%', height = 60 }: { width?: string | number, height?: number }) => {
@@ -57,6 +60,7 @@ const SkeletonLoader = ({ width = '100%', height = 60 }: { width?: string | numb
 // Overview component with profile header
 const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, prefetchedProfileData }: { name: string; position: string; billStatus?: string; isLowMateriality?: boolean; congressLink?: string; prefetchedProfileData?: any }) => {
   const router = useRouter();
+  const { user } = useAuth();
   const params = useLocalSearchParams();
   const [congressData, setCongressData] = useState<{congress: string, bill_status: string} | null>(null);
   
@@ -244,6 +248,9 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
     
     setIsGeneratingCards(true);
     try {
+      // Save timestamp before generation to find newly created cards
+      const beforeGenerationTimestamp = new Date().toISOString();
+      
       // Execute bill_cards script
       const result = await CardGenerationService.executeBillCards(parseInt(legislationId));
       
@@ -285,6 +292,27 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
           // Check if button should still be shown using new visibility function
           const shouldShow = await CardGenerationService.shouldShowGenerateButtonForOverview(parseInt(legislationId));
           setShowGenerateButton(shouldShow);
+
+          // Send notifications to subscribed users
+          if (cardsGenerated > 0) {
+            const generatedCategoryScreenPairs = await CardGenerationService.getGeneratedCardCategories(
+              parseInt(legislationId),
+              false, // isPpl
+              beforeGenerationTimestamp
+            );
+
+            if (generatedCategoryScreenPairs.length > 0) {
+              NotificationService.handleCardGenerationNotification(
+                parseInt(legislationId),
+                false, // isPpl
+                name,
+                generatedCategoryScreenPairs,
+                user?.id
+              ).catch(error => {
+                console.error('Error sending notifications:', error);
+              });
+            }
+          }
         }
       } else {
         console.error('Card generation failed:', result.message);

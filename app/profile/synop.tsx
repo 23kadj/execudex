@@ -4,6 +4,7 @@ import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { PoliticianProfileService } from '../../services/politicianProfileService';
 import { CardData } from '../../utils/cardData';
@@ -125,6 +126,11 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
   const [showGenerateMetricsButton, setShowGenerateMetricsButton] = useState(false);
   const generateMetricsButtonScale = useRef(new Animated.Value(1)).current;
 
+  // State for Voting Records button
+  const votingRecordsButtonScale = useRef(new Animated.Value(1)).current;
+  const [recordsStatus, setRecordsStatus] = useState<string | null>(null); // "available", "fail", or null
+  const [isLoadingRecords, setIsLoadingRecords] = useState(false);
+
   // State for generated cards display
   const [generatedCards, setGeneratedCards] = useState<CardData[]>([]);
   
@@ -156,7 +162,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
     }
   }, [profileData]);
 
-  // Fetch approval/disapproval data from ppl_profiles when component mounts
+  // Fetch approval/disapproval data from ppl_profiles and records status from ppl_index when component mounts
   useEffect(() => {
     const fetchProfileData = async () => {
       if (index) {
@@ -164,6 +170,18 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
           console.log('Fetching profile data for index:', index);
           
           const supabase = getSupabaseClient();
+          
+          // Fetch records status from ppl_index
+          const { data: politicianRow, error: polError } = await supabase
+            .from('ppl_index')
+            .select('records')
+            .eq('id', parseInt(index))
+            .single();
+          
+          if (!polError && politicianRow) {
+            setRecordsStatus(politicianRow.records);
+          }
+          
           const { data: profileRow, error } = (await supabase
             .from('ppl_profiles')
             .select('approval, disapproval, votes, poll_summary, poll_link, score')
@@ -526,6 +544,97 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
     }
   };
 
+  // Handler for Voting Records button
+  const handleVotingRecords = async () => {
+    if (!index || isLoadingRecords) return;
+    
+    // If records status is "fail", show alert and don't proceed
+    if (recordsStatus === "fail") {
+      Alert.alert(
+        'Voting Records Unavailable',
+        'Voting records are not currently available for this politician.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    // If records status is "available", just navigate (no need to run the script)
+    if (recordsStatus === "available") {
+      router.push({
+        pathname: '/records',
+        params: { profileIndex: index }
+      });
+      return;
+    }
+    
+    // If records status is null, run the script
+    setIsLoadingRecords(true);
+    
+    // Haptic feedback
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    // Scale animation
+    Animated.sequence([
+      Animated.timing(votingRecordsButtonScale, {
+        toValue: 0.95,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(votingRecordsButtonScale, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase.functions.invoke('records_update', {
+        body: { id: parseInt(index), name: name },
+      });
+      
+      if (error) {
+        console.error('Error calling records_update:', error);
+        Alert.alert(
+          'Error',
+          'Voting records are not currently available for this politician.',
+          [{ text: 'OK' }]
+        );
+        // Update records status to "fail"
+        setRecordsStatus("fail");
+      } else if (data) {
+        if (data.success !== false && data.inserted !== undefined) {
+          // Success - update records status to "available"
+          setRecordsStatus("available");
+          // Navigate to records page
+          router.push({
+            pathname: '/records',
+            params: { profileIndex: index }
+          });
+        } else {
+          // Failure - show alert and update status to "fail"
+          Alert.alert(
+            'Error',
+            'Voting records are not currently available for this politician.',
+            [{ text: 'OK' }]
+          );
+          setRecordsStatus("fail");
+        }
+      }
+    } catch (error) {
+      console.error('Error in handleVotingRecords:', error);
+      Alert.alert(
+        'Error',
+        'Voting records are not currently available for this politician.',
+        [{ text: 'OK' }]
+      );
+      // Update records status to "fail"
+      setRecordsStatus("fail");
+    } finally {
+      setIsLoadingRecords(false);
+    }
+  };
+
   // Handler for Generate Metrics button
   const handleGenerateMetrics = async () => {
     if (!index || isGeneratingMetrics) return;
@@ -827,9 +936,51 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         </View>
       </View>
 
+      {/* Voting Records Button */}
+      <View style={styles.generateButtonContainer}>
+        <Animated.View style={{ transform: [{ scale: votingRecordsButtonScale }], alignSelf: 'stretch' }}>
+          <Pressable
+            onPressIn={() => {
+              if (recordsStatus !== "fail" && !isLoadingRecords) {
+                Haptics.selectionAsync();
+                Animated.spring(votingRecordsButtonScale, {
+                  toValue: 0.95,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }
+            }}
+            onPressOut={() => {
+              if (recordsStatus !== "fail" && !isLoadingRecords) {
+                Animated.spring(votingRecordsButtonScale, {
+                  toValue: 1,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }
+            }}
+            onPress={handleVotingRecords}
+            disabled={isLoadingRecords}
+            style={[
+              styles.generateButton,
+              recordsStatus === "fail" && styles.generateButtonDisabled,
+              isLoadingRecords && styles.generateButtonDisabled
+            ]}
+          >
+            <Text style={[
+              styles.generateButtonText,
+              recordsStatus === "fail" && styles.generateButtonTextDisabled,
+              isLoadingRecords && styles.generateButtonTextDisabled
+            ]}>
+              {isLoadingRecords ? 'Loading...' : 'Voting Records'}
+            </Text>
+          </Pressable>
+        </Animated.View>
+      </View>
+
       {/* Generate New Cards Button */}
       {showGenerateButton && (
-        <View style={styles.generateButtonContainer}>
+        <View style={[styles.generateButtonContainer, { marginTop: 5 }]}>
           <Animated.View style={{ transform: [{ scale: generateButtonScale }], alignSelf: 'stretch' }}>
             <Pressable
               onPressIn={() => {
@@ -905,6 +1056,13 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
           </Animated.View>
         </View>
       )}
+
+      <CardLoadingIndicator 
+        visible={isLoadingRecords} 
+        onCancel={() => setIsLoadingRecords(false)}
+        title="Loading Voting Records"
+        subtitle="Please keep the app open while we prepare the voting records."
+      />
 
     </Animated.ScrollView>
   );

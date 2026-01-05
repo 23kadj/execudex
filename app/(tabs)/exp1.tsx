@@ -451,6 +451,7 @@ const exp1 = React.memo(() => {
   }, [dismissKeyboard]);
   
   // Animated scale values for recommended buttons
+  const mostPopularButtonScale = useRef(new Animated.Value(1)).current;
   const recommendedCardsButtonScale = useRef(new Animated.Value(1)).current;
   const recommendedProfilesButtonScale = useRef(new Animated.Value(1)).current;
   // Animated scale values for legislation cards (matching home.tsx format)
@@ -1000,8 +1001,46 @@ const exp1 = React.memo(() => {
 
           </ScrollView>
 
-          {/* Recommended Cards Button */}
+          {/* Most Popular Button */}
           <View style={styles.recommendedButtonsWrapper}>
+            <Animated.View
+              style={{
+                transform: [{ scale: mostPopularButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(mostPopularButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(mostPopularButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  router.push('/mostPopular');
+                }}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Most Popular</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>Check our most viewed profiles and cards</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
+
+            {/* Recommended Cards Button */}
             <Animated.View
               style={{
                 transform: [{ scale: recommendedCardsButtonScale }],

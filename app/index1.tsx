@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/react-native';
 import { useRouter } from 'expo-router';
 import React, { memo, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   Dimensions,
   Image,
@@ -20,9 +21,12 @@ import { useLocalSearchParams } from 'expo-router';
 // #region agent log - module level imports
 fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index1.tsx:MODULE',message:'Index1 module loading',data:{Sentry:typeof Sentry,React:typeof React,Animated:typeof Animated},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F'})}).catch(()=>{});
 // #endregion
+import * as Notifications from 'expo-notifications';
 import { useAuth } from '../components/AuthProvider';
+import { registerPushToken } from '../services/pushTokenService';
 import { useProfileLock } from '../hooks/useProfileLock';
 import { checkBookmarkStatus, toggleBookmark } from '../utils/bookmarkUtils';
+import { trackProfileOpen } from '../utils/cardOpensTracker';
 import { showPoliticianAlertForTesting, showPoliticianAlertIfNeeded, showWeakPoliticianAlertForInfoButton, showWeakPoliticianAlertIfNeeded } from '../utils/profileAlerts';
 import { safeHapticsSelection } from '../utils/safeHaptics';
 import { getSupabaseClient } from '../utils/supabase';
@@ -316,6 +320,13 @@ export default function Index1({ navigation }: { navigation?: any }) {
       }
     }
   }, [lockStatus]);
+
+  // Increment opens when page loads
+  useEffect(() => {
+    if (params.index) {
+      trackProfileOpen(String(params.index));
+    }
+  }, [params.index]);
   
   // Parse the numbers object from params
   let approvalPercentage = 50;
@@ -601,12 +612,130 @@ export default function Index1({ navigation }: { navigation?: any }) {
       // Pass source as {slug}/{profileId} for politician profiles
       if (profileSlug && profileId) {
         const source = `${profileSlug}/${profileId}`;
-        router.push(`/feedback?source=${source}`);
+        // Encode name and type for URL
+        const encodedName = encodeURIComponent(name);
+        router.push(`/feedback?source=${source}&name=${encodedName}&type=profile`);
       } else {
-        router.push('/feedback');
+        // Still pass name and type even if source is missing
+        const encodedName = encodeURIComponent(name);
+        router.push(`/feedback?name=${encodedName}&type=profile`);
       }
     } catch (error) {
       console.error('[INDEX1] Error navigating to feedback:', error);
+    } finally {
+      setIsMoreSheetVisible(false);
+    }
+  };
+
+  const handleSheetSubscribePress = async () => {
+    safeHapticsSelection();
+    
+    if (!user?.id) {
+      Alert.alert('Error', 'You must be signed in to subscribe to profiles.');
+      setIsMoreSheetVisible(false);
+      return;
+    }
+
+    const profileId = params.index as string | undefined;
+    if (!profileId) {
+      Alert.alert('Error', 'Unable to identify profile.');
+      setIsMoreSheetVisible(false);
+      return;
+    }
+
+    try {
+      // Check notification permissions
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      
+      if (existingStatus !== 'granted') {
+        // Show alert explaining notifications are required
+        Alert.alert(
+          'Notifications Required',
+          'Subscribing to a politician requires you to have notifications turned on.',
+          [
+            {
+              text: 'Got it',
+              onPress: async () => {
+                // Request notification permissions
+                const { status } = await Notifications.requestPermissionsAsync();
+                
+                if (status === 'granted') {
+                  // Proceed with subscription
+                  await subscribeToProfile(user.id, profileId, name);
+                } else {
+                  // User denied, do nothing
+                  setIsMoreSheetVisible(false);
+                }
+              }
+            }
+          ],
+          { cancelable: true }
+        );
+        return;
+      }
+
+      // Permissions already granted, proceed with subscription
+      await subscribeToProfile(user.id, profileId, name);
+    } catch (error) {
+      console.error('[INDEX1] Error in handleSheetSubscribePress:', error);
+      Alert.alert('Error', 'Failed to subscribe to profile. Please try again.');
+      setIsMoreSheetVisible(false);
+    }
+  };
+
+  const subscribeToProfile = async (userId: string, profileId: string, profileName: string) => {
+    try {
+      const supabase = getSupabaseClient();
+      const profileIdFormatted = `ppl${profileId}`;
+
+      // Check if subscription already exists
+      const { data: existingSubscription, error: checkError } = await supabase
+        .from('subs')
+        .select('*')
+        .eq('user', userId)
+        .eq('profile_id', profileIdFormatted)
+        .single();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        // PGRST116 is "not found" which is expected if no subscription exists
+        throw checkError;
+      }
+
+      if (existingSubscription) {
+        // Already subscribed
+        Alert.alert('Already Subscribed', `You are already subscribed to ${profileName}'s profile.`);
+        setIsMoreSheetVisible(false);
+        return;
+      }
+
+      // Insert subscription into subs table
+      const { error } = await supabase
+        .from('subs')
+        .insert({
+          user: userId,
+          profile_id: profileIdFormatted
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      // Register push token for notifications
+      if (user?.id) {
+        await registerPushToken(user.id).catch(err => {
+          console.error('[INDEX1] Error registering push token:', err);
+          // Don't show error to user - subscription still succeeded
+        });
+      }
+
+      // Show success message
+      Alert.alert(
+        'Subscribed',
+        `You are now subscribed to ${profileName}'s profile. You'll be notified of any new cards that are generated for this profile.`
+      );
+    } catch (error) {
+      console.error('[INDEX1] Error subscribing to profile:', error);
+      Alert.alert('Error', 'Failed to subscribe to profile. Please try again.');
     } finally {
       setIsMoreSheetVisible(false);
     }
@@ -858,6 +987,14 @@ export default function Index1({ navigation }: { navigation?: any }) {
               >
                 <Text style={styles.moreSheetActionText}>Feedback</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.moreSheetActionBtn}
+                activeOpacity={1}
+                onPress={handleSheetSubscribePress}
+                accessibilityRole="button"
+              >
+                <Text style={styles.moreSheetActionText}>Subscribe</Text>
+              </TouchableOpacity>
             </View>
 
             <View style={{ flex: 1 }} />
@@ -1066,7 +1203,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
   moreSheet: {
-    height: '28.75%',
+    height: '30.75%',
     backgroundColor: '#080808',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,

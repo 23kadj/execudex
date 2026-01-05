@@ -8,6 +8,8 @@ import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
 import { CardData, fetchCardsByScreen, getCardIndexScreenForPage, getCategoryMapping, getScreenDisplayName, searchCardsForPage } from '../../utils/cardData';
 import { getSupabaseClient } from '../../utils/supabase';
+import { NotificationService } from '../../services/notificationService';
+import { useAuth } from '../../components/AuthProvider';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -25,6 +27,7 @@ if (__DISABLE_HAPTICS_FOR_CRASH_TEST) {
 
 export default function Sub3({ scrollY, name, position, goToTab, index, scrollRef, cardRefreshTrigger }: { scrollY: Animated.Value; name: string; position: string; goToTab?: (idx: number) => void; index?: number; scrollRef?: React.RefObject<ScrollView>; cardRefreshTrigger?: number }) {
   const router = useRouter();
+  const { user } = useAuth();
   
   // State for profile data
   const [tier, setTier] = useState<string>('base');
@@ -307,6 +310,19 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
           message,
           [{ text: 'OK' }]
         );
+
+        // Send notifications to subscribed users
+        if (generatedCategoryScreenPairs.length > 0 && cardsGenerated > 0) {
+          NotificationService.handleCardGenerationNotification(
+            ownerId,
+            true, // isPpl
+            name,
+            generatedCategoryScreenPairs,
+            user?.id
+          ).catch(error => {
+            console.error('Error sending notifications:', error);
+          });
+        }
       }
     } catch (error) {
       // Don't log error if it was an abort

@@ -77,3 +77,4 @@ Check function logs in Supabase Dashboard:
 
 
 
+

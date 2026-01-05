@@ -47,6 +47,15 @@
       "expo-router",
       "react-native-iap",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff",
+          "sounds": ["./assets/notification.wav"],
+          "mode": "production"
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {

@@ -21,6 +21,7 @@ Sentry.init({
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
+import * as Notifications from 'expo-notifications';
 import { Stack, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
@@ -185,9 +186,41 @@ function InitialRouteHandler({ children, onRouteChecked }: { children: React.Rea
   return <>{children}</>;
 }
 
+// Component to handle notification navigation (needs router access)
+function NotificationNavigationHandler() {
+  const router = useRouter();
+  const notificationResponseListener = useRef<Notifications.Subscription | null>(null);
+
+  useEffect(() => {
+    // Handle notification taps - navigate to notifications page
+    notificationResponseListener.current = Notifications.addNotificationResponseReceivedListener(() => {
+      router.push('/notifications');
+    });
+
+    return () => {
+      if (notificationResponseListener.current) {
+        notificationResponseListener.current.remove();
+      }
+    };
+  }, [router]);
+
+  return null;
+}
+
 export default Sentry.wrap(function Layout() {
   const [appIsReady, setAppIsReady] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // Configure notification behavior
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+  }, []);
 
   useEffect(() => {
     // Wait a brief moment to ensure the app is fully mounted and ready
@@ -232,6 +265,7 @@ export default Sentry.wrap(function Layout() {
             });
           }, 150); // Hide splash when app is ~50% visible for smooth transition
         }}>
+          <NotificationNavigationHandler />
           <ErrorOverlayManager />
           <Stack
             screenOptions={{
@@ -265,6 +299,7 @@ export default Sentry.wrap(function Layout() {
           <Stack.Screen name="index3" />
           <Stack.Screen name="results" />
           <Stack.Screen name="bookmarks" />
+          <Stack.Screen name="notifications" />
           <Stack.Screen name="feedback" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="debug-supabase" />

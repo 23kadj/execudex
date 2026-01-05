@@ -229,12 +229,18 @@ export default function Sub5() {
   const handleSheetFeedbackPress = () => {
     safeHapticsSelection();
     try {
+      // Use cardContent?.title if available, otherwise fall back to cardTitle from params
+      const cardName = cardContent?.title || cardTitle;
       // Build source string: {slug}/{owner_id}/{cardId}
       if (cardId && cardIndexData?.owner_id && profileSlug) {
         const source = `${profileSlug}/${cardIndexData.owner_id}/${cardId}`;
-        router.push(`/feedback?source=${source}`);
+        // Encode card name and type for URL
+        const encodedName = encodeURIComponent(cardName);
+        router.push(`/feedback?source=${source}&name=${encodedName}&type=card`);
       } else {
-        router.push('/feedback');
+        // Still pass name and type even if source is missing
+        const encodedName = encodeURIComponent(cardName);
+        router.push(`/feedback?name=${encodedName}&type=card`);
       }
     } catch (error) {
       console.error('[SUB5] Error navigating to feedback:', error);

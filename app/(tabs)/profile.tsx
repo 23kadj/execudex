@@ -110,7 +110,29 @@ export default function Profile() {
               </View>
             </AnimatedPressable>
 
-                         {/* Account Settings Card 2 - Support & Feedback */}
+            {/* Account Settings Card 2 - Notifications */}
+            <AnimatedPressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                router.push('/notifications');
+              }}
+              style={styles.accountCardNew}
+            >
+              <View style={styles.accountCardContent}>
+                <View style={styles.accountTopRow}>
+                  <Image 
+                    source={require('../../assets/bell.png')} 
+                    style={styles.accountCardIcon}
+                  />
+                  <Text style={styles.accountTitleNew}>Notifications</Text>
+                </View>
+                <View style={styles.accountBottomRow}>
+                  <Text style={styles.accountSubtitleNew}>View your profile notifications</Text>
+                </View>
+              </View>
+            </AnimatedPressable>
+
+                         {/* Account Settings Card 3 - Support & Feedback */}
              <AnimatedPressable
                onPress={() => {
                  Haptics.selectionAsync();
@@ -132,7 +154,7 @@ export default function Profile() {
                </View>
              </AnimatedPressable>
 
-             {/* Account Settings Card 3 - Bookmarks */}
+             {/* Account Settings Card 4 - Bookmarks */}
              <AnimatedPressable
                onPress={() => {
                  Haptics.selectionAsync();
@@ -154,7 +176,7 @@ export default function Profile() {
                </View>
              </AnimatedPressable>
 
-             {/* Account Settings Card 4 - History */}
+             {/* Account Settings Card 5 - History */}
              <AnimatedPressable
                onPress={() => {
                  Haptics.selectionAsync();
@@ -176,7 +198,7 @@ export default function Profile() {
                </View>
              </AnimatedPressable>
 
-             {/* Account Settings Card - Demographics */}
+             {/* Account Settings Card 6 - Demographics */}
              <AnimatedPressable
                onPress={() => {
                  Haptics.selectionAsync();
@@ -198,7 +220,7 @@ export default function Profile() {
                </View>
              </AnimatedPressable>
 
-             {/* Account Settings Card 5 - Legal */}
+             {/* Account Settings Card 7 - Legal */}
              <AnimatedPressable
                onPress={() => {
                  Haptics.selectionAsync();
@@ -220,7 +242,7 @@ export default function Profile() {
                </View>
              </AnimatedPressable>
 
-             {/* Account Settings Card 6 - Account Deletion */}
+             {/* Account Settings Card 8 - Account Deletion */}
              <AnimatedPressable
                onPress={() => {
                  Haptics.selectionAsync();

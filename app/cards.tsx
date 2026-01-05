@@ -168,6 +168,11 @@ export default function Cards() {
   // Filter cards based on search query and selected filter words
   const filteredCardData = (() => {
     const defaultCompare = (a: any, b: any) => {
+      // Sort by demographics match score first (highest first)
+      const aMatch = a?.matchScore ?? 0;
+      const bMatch = b?.matchScore ?? 0;
+      if (aMatch !== bMatch) return bMatch - aMatch;
+
       const ao = a?.opens_7d ?? -Infinity;
       const bo = b?.opens_7d ?? -Infinity;
       if (ao !== bo) return bo - ao;
@@ -355,19 +360,32 @@ export default function Cards() {
           return;
         }
 
-        // Match cards where demographics contain any onboard term
+        // Create a map of card_id -> demographics string for match score calculation
+        const demographicsMap: Record<number, string> = {};
+        for (const contentRow of cardContentData) {
+          demographicsMap[contentRow.card_id] = String(contentRow.demographics || '');
+        }
+
+        // Match cards where demographics contain any onboard term and calculate match scores
         const matchedCardIds: number[] = [];
+        const matchScores: Record<number, number> = {};
         for (const contentRow of cardContentData) {
           const demographics = String(contentRow.demographics || '').toLowerCase();
           const cardId = contentRow.card_id;
+          let matchCount = 0;
           
-          // Check if any onboard term appears in demographics
+          // Count how many onboard terms match this card's demographics
           for (const term of onboardTerms) {
             const termLower = term.toLowerCase().trim();
             if (termLower && demographics.includes(termLower)) {
-              matchedCardIds.push(cardId);
-              break; // Found a match, no need to check other terms for this card
+              matchCount++;
             }
+          }
+          
+          // Only include cards that have at least one match
+          if (matchCount > 0) {
+            matchedCardIds.push(cardId);
+            matchScores[cardId] = matchCount;
           }
         }
 
@@ -432,7 +450,7 @@ export default function Cards() {
           }
         }
 
-        // Enrich card data with owner names
+        // Enrich card data with owner names and match scores
         const enrichedCards = cardIndexData.map((card: any) => {
           const ownerName = card.is_ppl 
             ? (pplNames[card.owner_id] || 'Unknown')
@@ -440,11 +458,16 @@ export default function Cards() {
           return {
             ...card,
             ownerName,
+            matchScore: matchScores[card.id] || 0,
           };
         });
 
-        // Sort cards by opens_7d descending (with fallback to score)
+        // Sort cards by match score first (highest first), then opens_7d, then score
         const sorted = enrichedCards.sort((a: any, b: any) => {
+          const aMatch = a?.matchScore ?? 0;
+          const bMatch = b?.matchScore ?? 0;
+          if (aMatch !== bMatch) return bMatch - aMatch;
+
           const ao = a?.opens_7d ?? -Infinity;
           const bo = b?.opens_7d ?? -Infinity;
           if (ao !== bo) return bo - ao;
@@ -702,7 +725,6 @@ export default function Cards() {
               </Pressable>
             </Animated.View>
           </View>
-          <Text style={styles.subtitleText}>Whenever a card is opened, we take note of which groups it might be of interest to. The more cards are opened, the more cards will be recommended to you.</Text>
         </View>
 
         <ScrollView

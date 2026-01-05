@@ -813,17 +813,95 @@ Deno.serve(async (req) => {
     // ---------- ALLOCATE LOWEST UNUSED ID ----------
     const legiId = await findLowestUnusedLegiId();
 
-    // ---------- INSERT legi_index (id, name, congress only) ----------
+    // ---------- INSERT legi_index (id, name, congress, created_at) ----------
     {
       const { error: insErr } = await supabase
         .from("legi_index")
-        .insert({ id: legiId, name: nameNoSpaces, congress: ordinal });
+        .insert({ 
+          id: legiId, 
+          name: nameNoSpaces, 
+          congress: ordinal,
+          created_at: new Date().toISOString()
+        });
       if (insErr) {
         return new Response(JSON.stringify({ ok:false, reason:"insert_failed" }), {
           status: 500, headers: { "Content-Type":"application/json" }
         });
       }
     }
+
+    // ---------- SEND NOTIFICATIONS TO ALL USERS (fire-and-forget) ----------
+    (async () => {
+      try {
+        // Fetch all users with notifications enabled
+        const { data: usersWithNotifications } = await supabase
+          .from('users')
+          .select('uuid')
+          .eq('notifications_enabled', true);
+        
+        if (!usersWithNotifications || usersWithNotifications.length === 0) {
+          console.log(`[bill_search] No users with notifications enabled`);
+          return;
+        }
+        
+        const enabledUserIds = usersWithNotifications.map(u => u.uuid);
+        
+        // Fetch push tokens for users with notifications enabled
+        const { data: pushTokens } = await supabase
+          .from('user_push_tokens')
+          .select('push_token, user_id')
+          .in('user_id', enabledUserIds);
+        
+        if (pushTokens && pushTokens.length > 0) {
+          const message = `A new policy is available on Execudex, come check it out!`;
+          
+          // Insert notification records for users with notifications enabled
+          const notificationRecords = enabledUserIds.map(userId => ({
+            user_id: userId,
+            profile_id: `legi${legiId}`,
+            profile_name: nameNoSpaces,
+            is_ppl: false,
+            message: message,
+            categories: []
+          }));
+          
+          await supabase.from('notifications').insert(notificationRecords);
+          console.log(`[bill_search] Created notifications for ${enabledUserIds.length} users`);
+          
+          // Send push notifications via Expo API
+          const title = `New Policy Available`;
+          const body = message;
+          
+          // Send push notifications
+          const pushMessages = pushTokens.map(tokenData => ({
+            to: tokenData.push_token,
+            sound: 'notification.wav',
+            title: title,
+            body: body,
+            data: { navigateTo: 'notifications' },
+            badge: 1,
+          }));
+          
+          // Send all push notifications in parallel
+          const pushPromises = pushMessages.map(message => 
+            fetch('https://exp.host/--/api/v2/push/send', {
+              method: 'POST',
+              headers: {
+                Accept: 'application/json',
+                'Accept-Encoding': 'gzip, deflate',
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(message),
+            })
+          );
+          
+          await Promise.all(pushPromises);
+          console.log(`[bill_search] Sent ${pushTokens.length} push notifications`);
+        }
+      } catch (err) {
+        console.error('[bill_search] Error sending notifications:', err);
+      }
+    })();
 
     // ---------- CREATE web_content ROW (pending path) ----------
     const { data: wcIns, error: wcErr } = await supabase
@@ -847,7 +925,15 @@ Deno.serve(async (req) => {
     await supabase.from("web_content").update({ path: storedPaths[0] }).eq("id", webId);
 
     // ===================== ENRICH RIGHT AWAY (your other script) =====================
-    const enrichment = await handleLegiById(legiId);
+    let enrichment: any = { id: legiId, updated: {}, error: null };
+    try {
+      enrichment = await handleLegiById(legiId);
+      console.log(`Enrichment successful for legi_id ${legiId}:`, enrichment);
+    } catch (enrichErr: any) {
+      console.error(`Enrichment failed for legi_id ${legiId}:`, enrichErr);
+      enrichment.error = enrichErr?.message || String(enrichErr);
+      // Continue anyway - the entry was created successfully, enrichment can be retried later
+    }
 
     // ---------- DONE ----------
     return new Response(JSON.stringify({

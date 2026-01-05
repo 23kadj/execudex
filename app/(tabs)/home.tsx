@@ -1157,12 +1157,11 @@ const styles = StyleSheet.create({
   profileRequestInputContainer: {
     width: '90%',
     alignSelf: 'center',
-    height: 60,
     marginTop: 3,
     marginBottom: 10,
   },
   profileRequestInput: {
-    flex: 1,
+    height: 60,
     backgroundColor: '#050505',
     borderRadius: 20,
     paddingHorizontal: 20,
@@ -1171,6 +1170,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
     textAlign: 'left',
+  },
+  legislationHintText: {
+    color: '#888',
+    fontSize: 11,
+    marginTop: 4,
+    marginLeft: 12,
   },
   filterButtonsRow: {
     flexDirection: 'row',
@@ -1916,7 +1921,8 @@ export default function Home() {
     try {
       const officeType = mapPositionToEnum(selectedPoliticianPosition);
       
-      const response = await fetch('https://tvvmkzoiicjrfjbmqzwc.getSupabaseClient().co/functions/v1/ppl_search', {
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://tvvmkzoiicjrfjbmqzwc.supabase.co';
+      const response = await fetch(`${supabaseUrl}/functions/v1/ppl_search`, {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2dm1rem9paWNqcmZqYm1xendjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQxMDY0OTUsImV4cCI6MjA2OTY4MjQ5NX0.ZlVa4YsMZVrnvSmkJ7wKBiilQ84jh_qcN1wLl7E-Kso',
@@ -2136,7 +2142,8 @@ export default function Home() {
     setNewLegislationData(null);
 
     try {
-      const response = await fetch('https://tvvmkzoiicjrfjbmqzwc.getSupabaseClient().co/functions/v1/bill_search', {
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://tvvmkzoiicjrfjbmqzwc.supabase.co';
+      const response = await fetch(`${supabaseUrl}/functions/v1/bill_search`, {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2dm1rem9paWNqcmZqYm1xendjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQxMDY0OTUsImV4cCI6MjA2OTY4MjQ5NX0.ZlVa4YsMZVrnvSmkJ7wKBiilQ84jh_qcN1wLl7E-Kso',
@@ -2573,6 +2580,9 @@ return (
             value={String(profileRequestText ?? '')}
             onChangeText={(text) => setProfileRequestText(String(text ?? ''))}
           />
+          {headerTab === 'legi' && (
+            <Text style={styles.legislationHintText}>Ex: HR 1234, S 1776</Text>
+          )}
         </View>
 
         {/* Politician Position Grid - Only for PPL mode */}
@@ -2902,6 +2912,7 @@ return (
               value={String(congressSessionText ?? '')}
               onChangeText={(text) => handleCongressInputChange(String(text ?? ''))}
             />
+            <Text style={styles.legislationHintText}>Ex: 119th, 110th</Text>
           </View>
         )}
 
