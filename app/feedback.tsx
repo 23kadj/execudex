@@ -178,6 +178,11 @@ export default function Feedback() {
               {!user?.id ? 'Please Sign In' : isSubmitted ? 'Submitted' : 'Submit'}
             </Text>
           </TouchableOpacity>
+
+          {/* Contact Information */}
+          <Text style={styles.contactText}>
+            You can contact us at execudex.app@gmail.com
+          </Text>
         </View>
       </TouchableWithoutFeedback>
     </View>
@@ -279,5 +284,12 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // CONTACT TEXT
+  contactText: {
+    color: '#999',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
   },
 });

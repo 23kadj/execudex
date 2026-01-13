@@ -98,6 +98,14 @@ export default function Legal() {
                 </View>
               </View>
             </AnimatedPressable>
+
+            {/* Third-Party Content & Sources */}
+            <View style={styles.thirdPartyContentContainer}>
+              <Text style={styles.thirdPartyContentTitle}>Third-Party Content & Sources</Text>
+              <Text style={styles.thirdPartyContentText}>
+                Execudex aggregates, summarizes, and analyzes publicly available political and news information from third-party sources. Execudex does not claim ownership over third-party content. All trademarks, copyrights, and original content remain the property of their respective owners. Summaries and analyses are original and provided for informational purposes. Users are encouraged to consult original sources directly via provided links.
+              </Text>
+            </View>
           </View>
         </View>
       </View>
@@ -192,6 +200,25 @@ const styles = StyleSheet.create({
     flex: 1,
     flexWrap: 'wrap',
     flexShrink: 1,
+  },
+  // THIRD-PARTY CONTENT
+  thirdPartyContentContainer: {
+    width: '95%',
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
+  },
+  thirdPartyContentTitle: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 17,
+    marginBottom: 12,
+  },
+  thirdPartyContentText: {
+    color: '#ccc',
+    fontSize: 14,
+    lineHeight: 20,
   },
 });
 

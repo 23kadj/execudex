@@ -144,6 +144,27 @@ export default function Demographics() {
     return parts.join(' | ');
   };
 
+  // Clear all data
+  const handleClearAll = () => {
+    setAge('');
+    setGender('');
+    setStateCode('');
+    setPoliticalStanding('');
+    setEducationLevel('');
+    setEmploymentStatus([]);
+    setIncomeLevel('');
+    setRaceEthnicity('');
+    setDependentStatus('');
+    setMilitaryStatus('');
+    setImmigrationStatus('');
+    setGovernmentBenefits([]);
+    setSexualOrientation('');
+    setVoterEligibility('');
+    setDisabilityStatus([]);
+    setIndustryOfWork([]);
+    setAdditionalInformation('');
+  };
+
   // Save changes
   const handleSave = async () => {
     if (!user?.id) {
@@ -255,6 +276,15 @@ export default function Demographics() {
           <Text style={styles.subtitleText}>
             We use this information to tell you exactly how certain policies and political actions impact you specifically. You can fill out as little or as much as you want, or skip it entirely.
           </Text>
+
+          {/* Clear All Data Button */}
+          <Pressable
+            onPressIn={() => Haptics.selectionAsync()}
+            style={styles.clearAllButton}
+            onPress={handleClearAll}
+          >
+            <Text style={styles.clearAllButtonText}>Clear All Data</Text>
+          </Pressable>
 
           {/* State Code Input */}
           <View style={styles.stateCodeWrapper}>
@@ -774,6 +804,23 @@ const styles = StyleSheet.create({
   },
   saveButtonTextDisabled: {
     color: '#888',
+  },
+  clearAllButton: {
+    width: '90%',
+    alignSelf: 'center',
+    backgroundColor: '#080808',
+    borderWidth: 1,
+    borderColor: '#101010',
+    borderRadius: 15,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  clearAllButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '500',
   },
 });
 

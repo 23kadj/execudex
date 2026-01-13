@@ -26,10 +26,11 @@ import { Stack, useLocalSearchParams, usePathname, useRouter } from 'expo-router
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, StyleSheet } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 import { AuthProvider, useAuth } from '../components/AuthProvider';
 import { ErrorOverlayManager } from '../components/ErrorOverlay';
 import { initDebugFlags } from '../utils/debugFlags';
+import { isIPad } from '../utils/deviceDetection';
 import { initGlobalErrorHandler } from '../utils/globalErrorHandler';
 import { persistentLogger } from '../utils/persistentLogger';
 import { getSupabaseClient } from '../utils/supabase';
@@ -245,7 +246,9 @@ export default Sentry.wrap(function Layout() {
   }
 
   // Stack layout wrapped in AuthProvider for auth context with fade-in animation
-  return (
+  // Apply iPad-only phone frame (390px width with black side bars)
+  const isTablet = isIPad();
+  const appContent = (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
       <AuthProvider>
         <InitialRouteHandler onRouteChecked={() => {
@@ -319,11 +322,35 @@ export default Sentry.wrap(function Layout() {
       </AuthProvider>
     </Animated.View>
   );
+
+  // On iPad, wrap in phone frame layout (390px width with black side bars)
+  if (isTablet) {
+    return (
+      <View style={styles.iPadOuterContainer}>
+        <View style={styles.iPadInnerContainer}>
+          {appContent}
+        </View>
+      </View>
+    );
+  }
+
+  // On non-iPad devices, return app content unchanged
+  return appContent;
 });
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000000',
+  },
+  iPadOuterContainer: {
+    flex: 1,
+    backgroundColor: '#000000', // Black background for side bars
+    alignItems: 'center', // Center the inner container horizontally
+  },
+  iPadInnerContainer: {
+    width: 390, // Fixed 390pt width (iPhone width)
+    flex: 1, // Take full height
+    maxWidth: 390, // Ensure it never exceeds 390pt
   },
 });

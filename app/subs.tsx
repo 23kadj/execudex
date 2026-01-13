@@ -15,7 +15,7 @@ import { getSupabaseClient } from '../utils/supabase';
 const BOX_1_CONTENT = {
   title: 'Execudex Basic',
   feature1: 'Access 10 profiles a week',
-  feature2: '3 Day Trial then $4.99 a month',
+  feature2: '3-day free trial, then $4.99/month',
 };
 
 const BOX_2_CONTENT = {
@@ -795,79 +795,6 @@ export default function Subs() {
     }
   };
 
-  // Test function to simulate a purchase (for testing in Expo Go)
-  const handleTestPurchase = async () => {
-    if (!selectedPlan || !selectedCycle) {
-      Alert.alert('Error', 'Please select a plan and cycle first');
-      return;
-    }
-
-    if (!user?.id) {
-      Alert.alert('Error', 'You must be logged in to make a purchase.');
-      return;
-    }
-
-    try {
-      setIsPurchasing(true);
-      
-      const supabase = getSupabaseClient();
-
-      // Update subscription directly in Supabase (skip receipt verification)
-      const testTransactionId = `test_${Date.now()}`;
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({
-          plan: selectedPlan,
-          cycle: selectedCycle,
-          last_transaction_id: testTransactionId,
-          last_purchase_date: new Date().toISOString(),
-          receipt_validated: false, // Mark as test purchase
-          plus_til: null
-        })
-        .eq('uuid', user.id);
-
-      if (updateError) {
-        throw new Error(`Failed to update subscription: ${updateError.message}`);
-      }
-
-      // Refresh usage data
-      const usage = await getWeeklyProfileUsage(user.id);
-      setProfileUsage({
-        profilesUsed: usage.profilesUsed,
-        plan: usage.plan,
-        cycle: usage.cycle,
-      });
-
-      // Clear selection
-      setSelectedPlan(null);
-      setSelectedCycle(null);
-
-      // Show success alert and redirect to home page after test purchase
-      Alert.alert(
-        'Test Purchase Complete', 
-        `Successfully activated ${selectedPlan} ${selectedCycle} subscription for testing.`,
-        [{ 
-          text: 'OK',
-          onPress: () => {
-            // Redirect to home page after test purchase
-            router.replace('/(tabs)/home');
-          }
-        }],
-        { cancelable: false } // Prevent dismissing without redirecting
-      );
-
-      // Also redirect after a short delay in case alert is dismissed
-      setTimeout(() => {
-        router.replace('/(tabs)/home');
-      }, 100);
-    } catch (error: any) {
-      console.error('❌ Error in test purchase:', error);
-      Alert.alert('Test Purchase Error', error?.message || 'Failed to simulate purchase. Please try again.');
-    } finally {
-      setIsPurchasing(false);
-    }
-  };
-
   // Helper function to render a subscription box
   const renderSubscriptionBox = (plan: string, cycle: string, boxContent: typeof BOX_1_CONTENT, scaleAnim: Animated.Value) => {
     const isCurrentSubscription = 
@@ -914,6 +841,15 @@ export default function Subs() {
                 {boxContent.feature2}
               </Text>
             </View>
+            
+            {/* Trial explanation text for Execudex Basic only */}
+            {plan === 'basic' && cycle === 'monthly' && (
+              <View style={{ marginTop: 4, paddingLeft: 24 }}>
+                <Text style={[styles.subscriptionFeatureText, { fontSize: 12, lineHeight: 16 }]}>
+                  Start with a 3-day free trial. After the trial, your subscription will automatically renew at $4.99/month unless canceled.
+                </Text>
+              </View>
+            )}
           </View>
         </Pressable>
       </Animated.View>
@@ -1088,7 +1024,7 @@ const styles = StyleSheet.create({
     borderColor: '#101010',
     padding: 20,
     justifyContent: 'center',
-    height: 105,
+    minHeight: 105,
   },
 
   subscriptionBoxContent: {

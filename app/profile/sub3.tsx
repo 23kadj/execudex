@@ -1,15 +1,15 @@
+import * as Sentry from '@sentry/react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import * as Sentry from '@sentry/react-native';
+import { useAuth } from '../../components/AuthProvider';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
-import { CardData, fetchCardsByScreen, getCardIndexScreenForPage, getCategoryMapping, getScreenDisplayName, searchCardsForPage } from '../../utils/cardData';
-import { getSupabaseClient } from '../../utils/supabase';
 import { NotificationService } from '../../services/notificationService';
-import { useAuth } from '../../components/AuthProvider';
+import { CardData, fetchCardsByScreen, getCategoryMapping, getScreenDisplayName, searchCardsForPage } from '../../utils/cardData';
+import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 

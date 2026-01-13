@@ -35,7 +35,7 @@ import { getSupabaseClient } from '../utils/supabase';
 const BOX_1_CONTENT = {
   title: 'Execudex Basic',
   feature1: 'Access 10 profiles a week',
-  feature2: '3 Day Trial then $4.99 a month',
+  feature2: '3-day free trial, then $4.99/month',
 };
 
 const BOX_2_CONTENT = {
@@ -792,61 +792,6 @@ const [reason, setReason] = useState<string[]>([]);
     selectedCycleRef.current = selectedCycle;
   };
 
-  // Test function to simulate a purchase (for testing in Expo Go)
-  const handleTestPurchase = async () => {
-    if (!plan || !cycle) {
-      Alert.alert('Error', 'Please select a plan and cycle first');
-      return;
-    }
-
-    try {
-      setIsPurchasing(true);
-      setPurchaseError(null);
-      setPurchaseInitiated(true); // Mark test purchase as initiated
-      
-      const supabase = getSupabaseClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        throw new Error('No authenticated user found');
-      }
-
-      // Build onboard data
-      const onboardData = buildOnboardData();
-      onboardDataRef.current = onboardData;
-      
-      // Update subscription directly in Supabase (skip receipt verification)
-      const testTransactionId = `test_${Date.now()}`;
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({
-          plan: plan,
-          cycle: cycle,
-          last_transaction_id: testTransactionId,
-          last_purchase_date: new Date().toISOString(),
-          receipt_validated: false // Mark as test purchase
-        })
-        .eq('uuid', user.id);
-
-      if (updateError) {
-        throw new Error(`Failed to update subscription: ${updateError.message}`);
-      }
-
-      // Save onboard data
-      console.log('💾 Saving onboard data after test purchase:', onboardData);
-      await saveOnboardData(user.id, onboardData, plan, cycle);
-
-      // Navigate to home
-      router.replace('/(tabs)/home');
-
-      Alert.alert('Test Purchase Complete', `Successfully activated ${plan} ${cycle} subscription for testing.`);
-    } catch (error: any) {
-      console.error('❌ Error in test purchase:', error);
-      Alert.alert('Test Purchase Error', error?.message || 'Failed to simulate purchase. Please try again.');
-      setIsPurchasing(false);
-    }
-  };
-
   // Referral code validation function
   const handleReferralSubmit = async () => {
     if (!referralCode.trim()) {
@@ -1256,7 +1201,7 @@ useLayoutEffect(() => {
       <Text style={styles.title}>Choose your age and gender</Text>
       <Text style={styles.subtitleText}>
         This helps us design your tools and
-        keep{'\n'}track of who joins the platform.
+        keep{'\n'}track of who joins the platform. (Optional)
       </Text>
 
       {/* Age Options */}
@@ -1340,20 +1285,13 @@ useLayoutEffect(() => {
 
       {/* Continue Button */}
       <Pressable
-        disabled={!age || !gender}
-        onPressIn={() => (age && gender) && Haptics.selectionAsync()}
-        style={[
-          styles.continueButton,
-          (!age || !gender) && styles.continueButtonDisabled
-        ]}
+        onPressIn={() => Haptics.selectionAsync()}
+        style={styles.continueButton}
         onPress={() => {
           setStepIndex(stepIndex + 1);
         }}
       >
-        <Text style={[
-          styles.continueButtonText,
-          (!age || !gender) && styles.continueButtonTextDisabled
-        ]}>
+        <Text style={styles.continueButtonText}>
           Continue
         </Text>
       </Pressable>
@@ -2705,6 +2643,13 @@ if (step === 'paymentPlan') {
                     {BOX_1_CONTENT.feature2}
                   </Text>
                 </View>
+                
+                {/* Trial explanation text for Execudex Basic only */}
+                <View style={{ marginTop: 4, paddingLeft: 24 }}>
+                  <Text style={[styles.subscriptionFeatureText, { fontSize: 12, lineHeight: 16 }]}>
+                    Start with a 3-day free trial. After the trial, your subscription will automatically renew at $4.99/month unless canceled.
+                  </Text>
+                </View>
               </View>
             </Pressable>
           </Animated.View>
@@ -2923,7 +2868,7 @@ if (step === 'paymentPlan') {
       <ProfileLoadingIndicator
         visible={isPurchasing}
         title={purchaseError ? 'Purchase Error' : 'Processing purchase...'}
-        subtitle={purchaseError || 'Confirm with Apple Pay to finish your subscription signup.'}
+        subtitle={purchaseError || 'Please confirm the purchase to finish your subscription signup.'}
         error={purchaseError}
         onCancel={() => {
           setIsPurchasing(false);
@@ -3089,7 +3034,7 @@ const styles = StyleSheet.create({
     borderColor: '#101010',
     padding: 20,
     justifyContent: 'center',
-    height: 105,
+    minHeight: 105,
   },
 
   subscriptionBoxSelected: {
