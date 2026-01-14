@@ -454,7 +454,11 @@ const step: StepKey = steps[stepIndex];
       }
     );
 
-    return cleanup;
+    // Cleanup: unregister handlers when component unmounts
+    return () => {
+      unregisterSuccess();
+      unregisterError();
+    };
   }, []);
 
   // Email validation
