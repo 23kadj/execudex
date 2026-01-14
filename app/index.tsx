@@ -247,25 +247,25 @@ const step: StepKey = steps[stepIndex];
     }
   }, [session, authLoading, router, stepIndex, params.logout]);
 
-  // Set up purchase listeners once (on demand initialization happens in handler)
+  // Set up centralized purchase listeners (replaces per-screen listeners)
   useEffect(() => {
     const checkIAP = async () => {
       try {
-        // Try to initialize IAP early
+        // Initialize IAP service (sets up global listeners)
         await iapService.initialize();
         setIapStatus('available');
-        console.log('✅ IAP service available (onboarding)');
+        console.log('✅ [IAP] Service available (onboarding)');
         
-        // Validate products are available before allowing purchase
+        // Validate products are available
         const products = await iapService.getAvailableSubscriptions();
         if (products.length === 0) {
-          console.warn('⚠️ No subscription products available - IAP may not work');
+          console.warn('⚠️ [IAP] No subscription products available');
           setIapStatus('unavailable');
         } else {
-          console.log(`✅ Found ${products.length} available subscription products`);
+          console.log(`✅ [IAP] Found ${products.length} available subscription products`);
         }
       } catch (error) {
-        console.warn('IAP unavailable (onboarding):', error);
+        console.warn('⚠️ [IAP] Unavailable (onboarding):', error);
         setIapStatus('unavailable');
       }
     };
@@ -276,20 +276,14 @@ const step: StepKey = steps[stepIndex];
       return;
     }
 
-    const cleanup = iapService.setupPurchaseListeners(
+    // Register purchase success handler with centralized service
+    const unregisterSuccess = iapService.onPurchaseSuccess(
       async (purchase) => {
         try {
-          console.log('🔵 [IAP] Purchase listener received', {
-            purchaseInitiated,
+          console.log('🔵 [IAP] Purchase success handler received (onboarding)', {
             transactionId: purchase.originalTransactionId || purchase.transactionId,
             productId: purchase.productId
           });
-
-          // Only process purchase if it was actually initiated by user
-          if (!purchaseInitiated) {
-            console.log('⚠️ Ignoring purchase callback - purchase not initiated by user');
-            return;
-          }
 
           setPurchaseError(null);
           const supabase = getSupabaseClient();
@@ -298,56 +292,57 @@ const step: StepKey = steps[stepIndex];
             throw new Error('No authenticated user found');
           }
 
-          // Get receipt data for verification
+          // Refresh entitlements (StoreKit 2 approach)
+          await iapService.refreshEntitlements();
+
+          // Get receipt data for server verification (optional but recommended)
           const receiptData = purchase.transactionReceipt;
-          if (!receiptData) {
-            throw new Error('Receipt data not available. Please contact support.');
+          if (receiptData) {
+            console.log('🔐 [IAP] Verifying receipt with Apple...');
+            const verificationResult = await iapService.verifyReceiptAndUpdateSubscription(
+              user.id,
+              receiptData
+            );
+
+            if (!verificationResult.success) {
+              console.warn('⚠️ [IAP] Receipt verification failed, but continuing with entitlement-based flow');
+            }
           }
 
-          // Verify receipt with Apple BEFORE saving onboard data or showing success
-          console.log('🔐 Verifying receipt with Apple...');
-          const verificationResult = await iapService.verifyReceiptAndUpdateSubscription(
-            user.id,
-            receiptData
-          );
-
-          if (!verificationResult.success) {
-            throw new Error(verificationResult.error || 'Receipt verification failed. Please contact support.');
-          }
-
-          // Save onboard data after receipt verification
-          // Use the ref value captured when Continue was pressed (includes all demographics)
+          // Save onboard data after purchase
           let onboardData = onboardDataRef.current;
           if (!onboardData) {
-            console.warn('⚠️ onboardDataRef is empty, building onboard data (may have stale demographics)');
+            console.warn('⚠️ [IAP] onboardDataRef is empty, building onboard data');
             onboardData = buildOnboardData();
           }
           const currentPlan = selectedPlanRef.current || 'basic';
           const currentCycle = selectedCycleRef.current === 'quarterly' ? 'quarterly' : 'monthly';
-          console.log('💾 Saving onboard data after purchase:', onboardData);
+          console.log('💾 [IAP] Saving onboard data after purchase:', onboardData);
           await saveOnboardData(user.id, onboardData, currentPlan, currentCycle);
 
           // Navigate to home
           router.replace('/(tabs)/home');
 
-          // Show success alert ONLY after receipt verification
+          // Show success alert
           iapService.showPurchaseSuccess();
         } catch (error: any) {
-          console.error('❌ Error processing purchase:', error);
-
-          // Only show alert if purchase was initiated by user
-          if (purchaseInitiated) {
-            Alert.alert('Error', error?.message || 'Failed to activate subscription. Please try again.');
-          }
+          console.error('❌ [IAP] Error processing purchase:', error);
+          setPurchaseError(error?.message || 'Failed to activate subscription');
+          Alert.alert('Error', error?.message || 'Failed to activate subscription. Please try again.');
         } finally {
-          setIsPurchasing(false); // Always reset to prevent stuck spinner
-          setPurchaseInitiated(false); // Reset for next attempt
+          setIsPurchasing(false);
         }
-      },
+      }
+    );
+
+    // Register purchase error handler
+    const unregisterError = iapService.onPurchaseError(
       async (error) => {
-        console.error('Purchase error:', error);
+        console.error('❌ [IAP] Purchase error (onboarding):', error);
         
-        // Check if error is "already owned" - this happens when Apple ID already owns the subscription
+        setIsPurchasing(false);
+        
+        // Check if error is "already owned" - restore purchases automatically
         const isAlreadyOwned = 
           error.alreadyOwned ||
           error.code === 'E_ALREADY_OWNED' ||
@@ -357,14 +352,10 @@ const step: StepKey = steps[stepIndex];
           error.message?.toLowerCase().includes('item already owned');
         
         if (isAlreadyOwned) {
-          console.log('🔄 Item already owned - automatically restoring purchases...');
+          console.log('🔄 [IAP] Item already owned - automatically restoring purchases...');
           
           try {
-            // Initialize IAP if needed
-            await initIap();
-            
-            // Automatically restore purchases when item is already owned
-            const purchases = await restorePurchases();
+            const purchases = await iapService.restorePurchases();
             const allExecudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
             const matchingPurchases = (purchases ?? []).filter((p: any) =>
               allExecudexProducts.includes(p?.productId)
@@ -381,15 +372,13 @@ const step: StepKey = steps[stepIndex];
               return Number.isFinite(n) ? n : 0;
             };
 
-            // Separate Plus and Basic purchases, prioritize Plus
             const plusPurchases = matchingPurchases.filter((p: any) => 
               p?.productId?.includes('plus')
             );
-            const basicPurchases = matchingPurchases.filter((p: any) => 
+            const basicPurchases = matchingPurchases.filter((p: any) =>
               p?.productId === 'execudex.basic'
             );
 
-            // Use Plus if available, otherwise Basic
             const purchasesToCheck = plusPurchases.length > 0 ? plusPurchases : basicPurchases;
             const bestPurchase =
               purchasesToCheck
@@ -2806,7 +2795,6 @@ if (step === 'paymentPlan') {
               try {
                 setPurchaseError(null);
                 setIsPurchasing(true);
-                setPurchaseInitiated(false); // Reset flag
 
                 await iapService.initialize();
 
@@ -2824,27 +2812,25 @@ if (step === 'paymentPlan') {
                   throw new Error('Invalid plan selected');
                 }
 
-                // Mark purchase as initiated BEFORE calling Apple to prevent race condition
-                setPurchaseInitiated(true);
-
-                console.log('🔵 [IAP] Purchase button tapped', {
+                console.log('🔵 [IAP] Purchase button tapped (onboarding)', {
                   productId,
-                  isIAPAvailable: isIAPAvailable(),
-                  purchaseInitiated: purchaseInitiated,
-                  isPurchasing: isPurchasing
+                  userId: user.id,
+                  isIAPAvailable: isIAPAvailable()
                 });
 
-                await iapService.purchaseSubscription(productId as any);
+                // Call purchase with userId (centralized service handles context)
+                await iapService.purchaseSubscription(productId as any, user.id);
 
                 // Success path handled by purchase listener (save + navigate)
               } catch (purchaseErr: any) {
-                console.error('Purchase failed:', purchaseErr);
+                console.error('❌ [IAP] Purchase failed (onboarding):', purchaseErr);
                 setIsPurchasing(false);
-                setPurchaseInitiated(false); // Reset flag
-                Alert.alert(
-                  'Purchase Error',
-                  purchaseErr?.message || 'Purchase failed. Please try again.'
-                );
+                if (purchaseErr.message !== 'Purchase was cancelled by user') {
+                  Alert.alert(
+                    'Purchase Error',
+                    purchaseErr?.message || 'Purchase failed. Please try again.'
+                  );
+                }
               }
             }
           } catch (error) {

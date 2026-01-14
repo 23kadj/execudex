@@ -28,6 +28,7 @@
       "backgroundColor": "#000000",
       "bundleIdentifier": "com.execudex.app",
       "buildNumber": "2",
+      "deploymentTarget": "15.0",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UISupportedInterfaceOrientations": [
@@ -64,6 +65,9 @@
       [
         "expo-build-properties",
         {
+          "ios": {
+            "deploymentTarget": "15.0"
+          },
           "android": {
             "kotlinVersion": "2.1.20"
           }

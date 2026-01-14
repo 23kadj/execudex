@@ -26,7 +26,7 @@ import { Stack, useLocalSearchParams, usePathname, useRouter } from 'expo-router
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
+import { Animated, Dimensions, StyleSheet, View } from 'react-native';
 import { AuthProvider, useAuth } from '../components/AuthProvider';
 import { ErrorOverlayManager } from '../components/ErrorOverlay';
 import { initDebugFlags } from '../utils/debugFlags';
@@ -248,6 +248,14 @@ export default Sentry.wrap(function Layout() {
   // Stack layout wrapped in AuthProvider for auth context with fade-in animation
   // Apply iPad-only phone frame (390px width with black side bars)
   const isTablet = isIPad();
+  const screenHeight = Dimensions.get('window').height;
+  
+  // iPhone 14/15 Pro dimensions: 390 x 844 (width x height in points)
+  // Maintain iPhone aspect ratio: height = width * (844/390) ≈ 2.164
+  const IPHONE_WIDTH = 390;
+  const IPHONE_HEIGHT = 844; // iPhone 14/15 Pro height
+  const iPhoneAspectRatio = IPHONE_HEIGHT / IPHONE_WIDTH;
+  
   const appContent = (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
       <AuthProvider>
@@ -325,9 +333,13 @@ export default Sentry.wrap(function Layout() {
 
   // On iPad, wrap in phone frame layout (390px width with black side bars)
   if (isTablet) {
+    // Calculate iPhone-proportioned max height (iPhone 14/15 Pro: 390 x 844)
+    // Use maxHeight to constrain to iPhone proportions while allowing content to be smaller
+    const iPhoneMaxHeight = Math.min(IPHONE_WIDTH * iPhoneAspectRatio, screenHeight);
+    
     return (
       <View style={styles.iPadOuterContainer}>
-        <View style={styles.iPadInnerContainer}>
+        <View style={[styles.iPadInnerContainer, { maxHeight: iPhoneMaxHeight }]}>
           {appContent}
         </View>
       </View>
@@ -347,10 +359,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000', // Black background for side bars
     alignItems: 'center', // Center the inner container horizontally
+    justifyContent: 'center', // Center the inner container vertically
   },
   iPadInnerContainer: {
     width: 390, // Fixed 390pt width (iPhone width)
-    flex: 1, // Take full height
     maxWidth: 390, // Ensure it never exceeds 390pt
+    flex: 1, // Allow content to fill available space
+    // maxHeight will be set dynamically to constrain to iPhone proportions
+    // This prevents stretching to full iPad height while allowing proper scrolling
   },
 });

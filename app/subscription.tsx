@@ -172,47 +172,40 @@ export default function Subscription() {
     initializeIAP();
     fetchUsage();
 
-    // Set up purchase listeners
-    const cleanup = iapService.setupPurchaseListeners(
+    // Register with centralized purchase listeners
+    const unregisterSuccess = iapService.onPurchaseSuccess(
       async (purchase) => {
         try {
-          console.log('🔵 [IAP] Purchase listener received', {
-            purchaseInitiated,
+          console.log('🔵 [IAP] Purchase success handler received (subscription)', {
             transactionId: purchase.originalTransactionId || purchase.transactionId,
             productId: purchase.productId
           });
-
-          console.log('Purchase successful:', purchase);
-
-          // Only process purchase if it was actually initiated by user
-          if (!purchaseInitiated) {
-            console.log('⚠️ Ignoring purchase callback - purchase not initiated by user');
-            return;
-          }
 
           if (!user?.id) {
             throw new Error('User not authenticated');
           }
 
-          // Parse transaction data from Apple
+          // Refresh entitlements (StoreKit 2 approach)
+          await iapService.refreshEntitlements();
+
+          // Process purchase
           await handlePurchaseSuccess(purchase);
-
         } catch (error) {
-          console.error('❌ Error processing purchase:', error);
-
-          // Only show alert if purchase was initiated by user
-          if (purchaseInitiated) {
-            Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
-          }
+          console.error('❌ [IAP] Error processing purchase:', error);
+          Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
         } finally {
-          setIsPurchasing(false); // Always reset to prevent stuck spinner
-          setPurchaseInitiated(false); // Reset for next attempt
+          setIsPurchasing(false);
         }
-      },
+      }
+    );
+
+    const unregisterError = iapService.onPurchaseError(
       async (error) => {
-        console.error('Purchase error:', error);
+        console.error('❌ [IAP] Purchase error (subscription):', error);
         
-        // Check if error is "already owned" - this happens when Apple ID already owns the subscription
+        setIsPurchasing(false);
+        
+        // Check if error is "already owned"
         const isAlreadyOwned = 
           error.alreadyOwned ||
           error.code === 'E_ALREADY_OWNED' ||
@@ -222,11 +215,10 @@ export default function Subscription() {
           error.message?.toLowerCase().includes('item already owned');
         
         if (isAlreadyOwned) {
-          console.log('🔄 Item already owned - automatically restoring purchases...');
+          console.log('🔄 [IAP] Item already owned - automatically restoring purchases...');
           
           try {
-            // Automatically restore purchases when item is already owned
-            const purchases = await restorePurchases();
+            const purchases = await iapService.restorePurchases();
             const allExecudexProducts = ['execudex.basic', 'execudex.plus.monthly', 'execudex.plus.quarterly'];
             const matchingPurchases = (purchases ?? []).filter((p: any) =>
               allExecudexProducts.includes(p?.productId)
@@ -243,7 +235,6 @@ export default function Subscription() {
               return Number.isFinite(n) ? n : 0;
             };
 
-            // Separate Plus and Basic purchases, prioritize Plus
             const plusPurchases = matchingPurchases.filter((p: any) => 
               p?.productId?.includes('plus')
             );
@@ -251,7 +242,6 @@ export default function Subscription() {
               p?.productId === 'execudex.basic'
             );
 
-            // Use Plus if available, otherwise Basic
             const purchasesToCheck = plusPurchases.length > 0 ? plusPurchases : basicPurchases;
             const bestPurchase =
               purchasesToCheck
@@ -259,31 +249,31 @@ export default function Subscription() {
                 .sort((a: any, b: any) => parseTs(b) - parseTs(a))[0] ?? null;
 
             if (bestPurchase && user?.id) {
-              // Process the restored purchase - no ownership checking
-              console.log('✅ Found existing purchase, linking to account:', bestPurchase);
+              console.log('✅ [IAP] Found existing purchase, linking to account:', bestPurchase);
               await handlePurchaseSuccess(bestPurchase);
               Alert.alert(
                 'Subscription Restored',
                 'Your existing subscription has been linked to this account.'
               );
             } else {
-              // No matching purchase found, show error
               iapService.showPurchaseError(error);
             }
           } catch (restoreError: any) {
-            console.error('❌ Error restoring purchases:', restoreError);
+            console.error('❌ [IAP] Error restoring purchases:', restoreError);
             iapService.showPurchaseError(error);
           }
         } else {
-          // For other errors, show the error normally
-          iapService.showPurchaseError(error);
+          if (!error.userCancelled) {
+            iapService.showPurchaseError(error);
+          }
         }
-        
-        setIsPurchasing(false);
       }
     );
 
-    return cleanup;
+    return () => {
+      unregisterSuccess();
+      unregisterError();
+    };
   }, [user?.id]); // Only re-run when user ID changes
 
 
@@ -595,7 +585,6 @@ export default function Subscription() {
     }
 
     setIsPurchasing(true);
-    setPurchaseInitiated(false); // Reset flag
 
     try {
       // Determine product ID based on cycle
@@ -603,27 +592,20 @@ export default function Subscription() {
         ? 'execudex.plus.quarterly'
         : 'execudex.plus.monthly';
 
-      console.log('🛒 Initiating purchase for:', productId);
-
-      console.log('🔵 [IAP] Purchase button tapped', {
+      console.log('🔵 [IAP] Purchase button tapped (subscription)', {
         productId,
-        isIAPAvailable: isIAPAvailable(),
-        purchaseInitiated: purchaseInitiated,
-        isPurchasing: isPurchasing
+        userId: user.id,
+        isIAPAvailable: isIAPAvailable()
       });
 
-      // Mark purchase as initiated BEFORE calling Apple to prevent race condition
-      setPurchaseInitiated(true);
-
-      // Call the existing StoreKit purchase flow
-      await iapService.purchaseSubscription(productId as any);
+      // Call purchase with userId (centralized service handles context)
+      await iapService.purchaseSubscription(productId as any, user.id);
 
       // Success/error handled by purchase listeners
       
     } catch (error: any) {
-      console.error('❌ Purchase failed:', error);
+      console.error('❌ [IAP] Purchase failed (subscription):', error);
       setIsPurchasing(false);
-      setPurchaseInitiated(false); // Reset flag
 
       if (error.message !== 'Purchase was cancelled by user') {
         Alert.alert('Purchase Error', error.message || 'Purchase failed. Please try again.');

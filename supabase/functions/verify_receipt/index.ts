@@ -1,6 +1,21 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 
+/**
+ * Legacy StoreKit 1 receipt verification endpoint
+ * 
+ * NOTE: This endpoint uses Apple's deprecated verifyReceipt API (StoreKit 1).
+ * For new implementations, consider using App Store Server API (StoreKit 2).
+ * 
+ * This endpoint is kept for backward compatibility with existing purchases
+ * and will continue to work, but Apple recommends migrating to App Store Server API.
+ * 
+ * StoreKit 2 verification would use:
+ * - GET /v1/transactions/{transactionId}
+ * - GET /v1/subscriptions/{originalTransactionId}
+ * - JWT-signed transaction info from client
+ */
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
