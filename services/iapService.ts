@@ -498,10 +498,12 @@ class IAPService {
         },
       });
 
+      // Increased timeout to 5 minutes to allow time for sandbox login and user interaction
+      // Real users typically complete purchases much faster, but this prevents timeout during sandbox testing
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new Error('Purchase request timed out. The purchase dialog did not appear. Please try again.'));
-        }, 30000);
+        }, 300000); // 5 minutes (300000ms) instead of 30 seconds
       });
 
       await Promise.race([purchasePromise, timeoutPromise]);
