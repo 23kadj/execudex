@@ -182,7 +182,9 @@ export default function Subs() {
           });
 
           if (!user?.id) {
-            throw new Error('User not authenticated');
+            // Silently return if user not authenticated - don't show alert
+            console.log('⚠️ [IAP] User not authenticated, skipping purchase processing');
+            return;
           }
 
           // Refresh entitlements (StoreKit 2 approach)
@@ -190,8 +192,13 @@ export default function Subs() {
 
           // Process purchase
           await handlePurchaseSuccess(purchase);
-        } catch (error) {
+        } catch (error: any) {
           console.error('❌ [IAP] Error processing purchase:', error);
+          // Only show alert for actual errors, not authentication issues
+          if (error?.message?.includes('not authenticated')) {
+            console.log('⚠️ [IAP] Authentication issue, skipping alert');
+            return;
+          }
           Alert.alert('Error', 'Failed to activate subscription. Please contact support.');
         } finally {
           setIsPurchasing(false);

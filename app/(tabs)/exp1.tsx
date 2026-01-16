@@ -5,6 +5,7 @@ import { Animated, Dimensions, Image, Keyboard, Platform, Pressable, SafeAreaVie
 import { useAuth } from '../../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../../components/ProfileLoadingIndicator';
 import { NavigationService } from '../../services/navigationService';
+import { getConstrainedWidth } from '../../utils/constrainedDimensions';
 import { getSupabaseClient } from '../../utils/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -1545,12 +1546,12 @@ const styles = StyleSheet.create({
     left: -4,
   },
   politicianCardItem: {
-    width: Dimensions.get('window').width * 0.295,
+    width: getConstrainedWidth() * 0.295,
     alignItems: 'center',
   },
   politicianCard: {
-    width: Dimensions.get('window').width * 0.295,
-    height: Dimensions.get('window').width * 0.5,
+    width: getConstrainedWidth() * 0.295,
+    height: getConstrainedWidth() * 0.5,
     backgroundColor: '#030303',
     borderWidth: 1,
     borderColor: '#101010',

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../components/AuthProvider';
 import { useLegiWeak } from '../hooks/useLegiWeak';
+import { getConstrainedWidth } from '../utils/constrainedDimensions';
 
 // Import the new legislation components
 import Legi1 from './legislation/legi1';
@@ -25,7 +26,8 @@ const TABS = [
   { label: 'Discourse', key: 'legi3',      component: Legi3     },
 ];
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
+// Use constrained width to respect iPad phone frame (390px on iPad, actual width on iPhone)
+const SCREEN_WIDTH = getConstrainedWidth();
 
 export default function Index3({ navigation }: { navigation?: any }) {
   const params = useLocalSearchParams<{ index?: string }>();

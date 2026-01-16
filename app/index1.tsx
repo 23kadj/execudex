@@ -30,6 +30,7 @@ import { trackProfileOpen } from '../utils/cardOpensTracker';
 import { showPoliticianAlertForTesting, showPoliticianAlertIfNeeded, showWeakPoliticianAlertForInfoButton, showWeakPoliticianAlertIfNeeded } from '../utils/profileAlerts';
 import { safeHapticsSelection } from '../utils/safeHaptics';
 import { getSupabaseClient } from '../utils/supabase';
+import { getConstrainedWidth } from '../utils/constrainedDimensions';
 import Sub1 from './profile/sub1';
 import Sub2 from './profile/sub2';
 import Sub3 from './profile/sub3';
@@ -190,7 +191,8 @@ const TABS = [
   { label: 'Affiliates',key: 'sub3',    component: ValidatedSub3,   componentName: 'Sub3'   },
 ];
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
+// Use constrained width to respect iPad phone frame (390px on iPad, actual width on iPhone)
+const SCREEN_WIDTH = getConstrainedWidth();
 
 // Safe component renderer with error boundary
 const ComponentRenderer = memo(function ComponentRenderer({

@@ -21,6 +21,7 @@ import { NavigationService } from '../services/navigationService';
 import { showLegislationAlertForTesting, showLegislationAlertIfNeeded, showWeakLegislationAlertForInfoButton, showWeakLegislationAlertIfNeeded } from '../utils/profileAlerts';
 import { safeHapticsSelection } from '../utils/safeHaptics';
 import { getSupabaseClient } from '../utils/supabase';
+import { getConstrainedWidth } from '../utils/constrainedDimensions';
 
 import Legi1 from './legislation/legi1';
 import Legi2 from './legislation/legi2';
@@ -34,7 +35,8 @@ const TABS = [
   { label: 'Discourse',key: 'discourse',   component: Legi3  },
 ];
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
+// Use constrained width to respect iPad phone frame (390px on iPad, actual width on iPhone)
+const SCREEN_WIDTH = getConstrainedWidth();
 
 export default function Index2({ navigation }: { navigation?: any }) {
   const [isBookmarked, setIsBookmarked] = useState(false);

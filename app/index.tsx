@@ -289,7 +289,10 @@ const step: StepKey = steps[stepIndex];
           const supabase = getSupabaseClient();
           const { data: { user } } = await supabase.auth.getUser();
           if (!user) {
-            throw new Error('No authenticated user found');
+            // Silently return if user not authenticated - don't show alert
+            // This can happen during app startup before auth completes
+            console.log('⚠️ [IAP] User not authenticated, skipping purchase processing');
+            return;
           }
 
           // Refresh entitlements (StoreKit 2 approach)
@@ -327,6 +330,11 @@ const step: StepKey = steps[stepIndex];
           iapService.showPurchaseSuccess();
         } catch (error: any) {
           console.error('❌ [IAP] Error processing purchase:', error);
+          // Only show alert for actual errors, not authentication issues
+          if (error?.message?.includes('not authenticated')) {
+            console.log('⚠️ [IAP] Authentication issue, skipping alert');
+            return;
+          }
           setPurchaseError(error?.message || 'Failed to activate subscription');
           Alert.alert('Error', error?.message || 'Failed to activate subscription. Please try again.');
         } finally {
@@ -389,7 +397,9 @@ const step: StepKey = steps[stepIndex];
               const supabase = getSupabaseClient();
               const { data: { user } } = await supabase.auth.getUser();
               if (!user) {
-                throw new Error('No authenticated user found');
+                // Silently return if user not authenticated - don't show alert
+                console.log('⚠️ [IAP] User not authenticated, skipping restore processing');
+                return;
               }
 
               // Process the restored purchase as if it was a new purchase - no ownership checking
@@ -440,7 +450,12 @@ const step: StepKey = steps[stepIndex];
               iapService.showPurchaseError(error);
             }
           } catch (restoreError: any) {
-            console.error('❌ Error restoring purchases:', restoreError);
+            console.error('❌ [IAP] Error restoring purchases:', restoreError);
+            // Only show alert for actual errors, not authentication issues
+            if (restoreError?.message?.includes('not authenticated')) {
+              console.log('⚠️ [IAP] Authentication issue during restore, skipping alert');
+              return;
+            }
             setPurchaseError(error.message || 'Purchase failed. Please try again.');
             iapService.showPurchaseError(error);
           }
