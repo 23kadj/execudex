@@ -1,7 +1,8 @@
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Dimensions, Image, Keyboard, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../../components/ProfileLoadingIndicator';
 import { NavigationService } from '../../services/navigationService';
@@ -12,6 +13,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const exp1 = React.memo(() => {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const { user } = useAuth();
 
   const formatTrendingPoliticianName = useCallback((fullName?: string) => {
@@ -59,6 +61,49 @@ const exp1 = React.memo(() => {
   const [category4Label, setCategory4Label] = useState('Political Position');
   const [category5Label, setCategory5Label] = useState('Bill Status');
   const [category6Label, setCategory6Label] = useState('Congress');
+  const [policyAreaLabel, setPolicyAreaLabel] = useState('Policy Category');
+  const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
+
+  // Handle route params from subjects page and AsyncStorage
+  useFocusEffect(
+    useCallback(() => {
+      // Check route params first
+      if (params.subject && typeof params.subject === 'string') {
+        // Truncate the subject name smartly for display
+        const truncated = truncateTextSmartly(params.subject, 30);
+        setPolicyAreaLabel(truncated);
+      }
+      if (params.subjectFilter && typeof params.subjectFilter === 'string') {
+        setSubjectFilter(params.subjectFilter);
+        // Auto-set Profile Type to Legislation when subject filter is applied
+        setCategory1Label('Legislation');
+      }
+      
+      // Also check AsyncStorage for subject selection from back navigation
+      const checkAsyncStorage = async () => {
+        try {
+          const storedSubject = await AsyncStorage.getItem('selectedSubject');
+          const storedFilter = await AsyncStorage.getItem('selectedSubjectFilter');
+          
+          if (storedSubject) {
+            const truncated = truncateTextSmartly(storedSubject, 30);
+            setPolicyAreaLabel(truncated);
+            await AsyncStorage.removeItem('selectedSubject');
+          }
+          if (storedFilter) {
+            setSubjectFilter(storedFilter);
+            // Auto-set Profile Type to Legislation when subject filter is applied
+            setCategory1Label('Legislation');
+            await AsyncStorage.removeItem('selectedSubjectFilter');
+          }
+        } catch (error) {
+          console.error('Error reading AsyncStorage:', error);
+        }
+      };
+      
+      checkAsyncStorage();
+    }, [params.subject, params.subjectFilter, truncateTextSmartly])
+  );
 
   // State for politician data from ppl_index
   const [politicianData, setPoliticianData] = useState([
@@ -260,6 +305,27 @@ const exp1 = React.memo(() => {
     setCategory4Label('Political Position');
     setCategory5Label('Bill Status');
     setCategory6Label('Congress');
+    setPolicyAreaLabel('Policy Category');
+    setSubjectFilter(null);
+  }, []);
+
+  // Helper function to truncate text smartly based on word boundaries
+  const truncateTextSmartly = useCallback((text: string, maxChars: number = 30): string => {
+    if (text.length <= maxChars) return text;
+    
+    // Try to break at word boundaries first
+    const words = text.split(' ');
+    let truncated = '';
+    for (const word of words) {
+      const testText = truncated ? `${truncated} ${word}` : word;
+      if (testText.length <= maxChars - 3) { // Reserve 3 chars for "..."
+        truncated = testText;
+      } else {
+        break;
+      }
+    }
+    // If we have a truncated version, use it, otherwise just cut at maxChars-3 chars
+    return truncated ? `${truncated}...` : `${text.substring(0, maxChars - 3)}...`;
   }, []);
 
   // Handle search functionality
@@ -268,10 +334,7 @@ const exp1 = React.memo(() => {
     if (isSearchingRef.current) return;
     
     const q = searchQuery.trim();
-    if (!q || q.length < 1) return;
-
-    // Additional validation to prevent search with invalid characters
-    if (q.length < 2) return; // Require at least 2 characters
+    // Allow empty search now - removed the early return
 
     isSearchingRef.current = true;
     if (isMountedRef.current) setIsSearchLoading(true);
@@ -280,24 +343,87 @@ const exp1 = React.memo(() => {
       // Use lazy-loaded Supabase client
       const supabase = getSupabaseClient();
       
-      // Search in ppl_index by name and sub_name (politicians)
-      const { data: pplData, error: pplError } = await supabase
-        .from('ppl_index')
-        .select('id, name, sub_name, limit_score')
-        .or(`name.ilike.%${q}%,sub_name.ilike.%${q}%`)
-        .order('limit_score', { ascending: false });
+      // Determine which tables to query based on Profile Type filter
+      const shouldQueryPpl = category1Label === 'Politician' || category1Label === 'Both' || category1Label === 'Profile Type';
+      const shouldQueryLegi = category1Label === 'Legislation' || category1Label === 'Both' || category1Label === 'Profile Type';
+      
+      // Build politician query with filters
+      let politicianResults: any[] = [];
+      
+      if (shouldQueryPpl) {
+        let pplQuery = supabase
+          .from('ppl_index')
+          .select('id, name, sub_name, limit_score, party_type, office_type');
+        
+        // Only apply name filter if there's a search query
+        if (q && q.length > 0) {
+          pplQuery = pplQuery.or(`name.ilike.%${q}%,sub_name.ilike.%${q}%`);
+        }
 
-      if (pplError) throw pplError;
+        // Apply influence filter if selected
+        if (category2Label !== 'Influence') {
+          switch (category2Label) {
+            case 'Low':
+              // Low influence: 0 to 0.44
+              pplQuery = pplQuery.gte('limit_score', 0).lte('limit_score', 0.44);
+              break;
+            case 'Moderate':
+              // Moderate influence: 0.45 to 0.64
+              pplQuery = pplQuery.gte('limit_score', 0.45).lte('limit_score', 0.64);
+              break;
+            case 'High':
+              // High influence: 0.65 to 1
+              pplQuery = pplQuery.gte('limit_score', 0.65).lte('limit_score', 1);
+              break;
+          }
+        }
 
+        // Apply party filter if selected
+        if (category3Label !== 'Political Party') {
+          let partyValue = '';
+          switch (category3Label) {
+            case 'Democrat': partyValue = 'D'; break;
+            case 'Republican': partyValue = 'R'; break;
+            case 'Independent': partyValue = 'I'; break;
+            case 'Other': partyValue = 'other'; break;
+          }
+          if (partyValue) {
+            pplQuery = pplQuery.eq('party_type', partyValue);
+          }
+        }
 
-      // Transform politician results to match the expected format
-      const politicianResults = (pplData || []).map((item: any) => ({
-        id: item.id,
-        title: item.name,
-        subtitle: item.sub_name,
-        type: 'politician' as const,
-        limit_score: item.limit_score || 0
-      }));
+        // Apply position filter if selected
+        if (category4Label !== 'Political Position') {
+          let officeTypeValue = '';
+          switch (category4Label) {
+            case 'President': officeTypeValue = 'president'; break;
+            case 'Vice President': officeTypeValue = 'vice_president'; break;
+            case 'Cabinet': officeTypeValue = 'cabinet'; break;
+            case 'Senator': officeTypeValue = 'senator'; break;
+            case 'Representative': officeTypeValue = 'representative'; break;
+            case 'Governor': officeTypeValue = 'governor'; break;
+            case 'Mayor': officeTypeValue = 'mayor'; break;
+            case 'Candidate': officeTypeValue = 'candidate'; break;
+          }
+          if (officeTypeValue) {
+            pplQuery = pplQuery.eq('office_type', officeTypeValue);
+          }
+        }
+
+        pplQuery = pplQuery.order('limit_score', { ascending: false });
+
+        const { data: pplData, error: pplError } = await pplQuery;
+        if (pplError) throw pplError;
+
+        // Transform politician results to match the expected format
+        politicianResults = (pplData || []).map((item: any) => ({
+          id: item.id,
+          title: item.name,
+          subtitle: item.sub_name,
+          type: 'politician' as const,
+          limit_score: item.limit_score || 0
+        }));
+      }
 
       // Helper function to generate congress value arrays for filtering
       const generateCongressValues = (filterRange: string): string[] => {
@@ -333,60 +459,84 @@ const exp1 = React.memo(() => {
         }
       };
 
-      // Apply congress filtering using Supabase .in() query for better performance
-      let legiQueryWithFilters = supabase
-        .from('legi_index')
-        .select('id, name, sub_name, congress, bill_status')
-        .or(`name.ilike.%${q}%,sub_name.ilike.%${q}%`)
-        .order('id', { ascending: true });
-
-      // Apply congress filter if selected
-      if (category6Label !== 'Congress') {
-        const congressValues = generateCongressValues(category6Label);
-        legiQueryWithFilters = legiQueryWithFilters.in('congress', congressValues);
-      }
-
-      // Apply bill status filter if selected
-      if (category5Label !== 'Bill Status') {
-        let statusValue = '';
-        switch (category5Label) {
-          case 'Passed': statusValue = 'passed'; break;
-          case 'Processing': statusValue = 'processing'; break;
+      // Build legislation query with filters
+      let legislationResults: any[] = [];
+      
+      if (shouldQueryLegi) {
+        let legiQueryWithFilters = supabase
+          .from('legi_index')
+          .select('id, name, sub_name, congress, bill_status, subject');
+        
+        // Only apply name filter if there's a search query
+        if (q && q.length > 0) {
+          legiQueryWithFilters = legiQueryWithFilters.or(`name.ilike.%${q}%,sub_name.ilike.%${q}%`);
         }
-        if (statusValue) {
-          legiQueryWithFilters = legiQueryWithFilters.eq('bill_status', statusValue);
+
+        // Apply subject filter if selected
+        if (subjectFilter) {
+          legiQueryWithFilters = legiQueryWithFilters.ilike('subject', `%${subjectFilter}%`);
         }
+
+        // Apply congress filter if selected
+        if (category6Label !== 'Congress') {
+          const congressValues = generateCongressValues(category6Label);
+          legiQueryWithFilters = legiQueryWithFilters.in('congress', congressValues);
+        }
+
+        // Apply bill status filter if selected
+        if (category5Label !== 'Bill Status') {
+          let statusValue = '';
+          switch (category5Label) {
+            case 'Passed': statusValue = 'passed'; break;
+            case 'Processing': statusValue = 'processing'; break;
+          }
+          if (statusValue) {
+            legiQueryWithFilters = legiQueryWithFilters.eq('bill_status', statusValue);
+          }
+        }
+
+        legiQueryWithFilters = legiQueryWithFilters.order('id', { ascending: true });
+
+        const { data: legiData, error: legiError } = await legiQueryWithFilters;
+        if (legiError) throw legiError;
+
+        // Transform legislation results to match the expected format (without limit_score)
+        legislationResults = (legiData || []).map((item: any) => ({
+          id: item.id,
+          title: item.name,
+          subtitle: item.sub_name,
+          type: 'legislation' as const,
+          limit_score: 0 // Set to 0 since we're not using limit_score for legislation
+        }));
       }
-
-      const { data: legiData, error: legiError } = await legiQueryWithFilters;
-      if (legiError) throw legiError;
-
-      // Transform legislation results to match the expected format (without limit_score)
-      const legislationResults = (legiData || []).map((item: any) => ({
-        id: item.id,
-        title: item.name,
-        subtitle: item.sub_name,
-        type: 'legislation' as const,
-        limit_score: 0 // Set to 0 since we're not using limit_score for legislation
-      }));
 
       // Combine both result sets
       const searchResults = [...politicianResults, ...legislationResults];
 
-      // Only navigate if we have valid results or if it's an intentional search
-      if (searchResults.length > 0 || q.length > 0) {
-        // Navigate to results page with search results
-        router.push({
-          pathname: '/results',
-          params: {
-            searchResults: JSON.stringify(searchResults),
-            searchQuery: q
-          }
-        });
+      // Build filter parameters based on changed categories (for displaying filter count)
+      const filters = {
+        profileType: category1Label !== 'Profile Type' ? category1Label : null,
+        influence: category2Label !== 'Influence' ? category2Label : null,
+        party: category3Label !== 'Political Party' ? category3Label : null,
+        position: category4Label !== 'Political Position' ? category4Label : null,
+        billStatus: category5Label !== 'Bill Status' ? category5Label : null,
+        congress: category6Label !== 'Congress' ? category6Label : null,
+        subject: subjectFilter || null,
+      };
 
-        // Use Keyboard.dismiss() only, let system handle blur naturally
-        Keyboard.dismiss();
-      }
+      // Navigate to results page with search results and filters
+      // Allow navigation even with empty search (filters-only search)
+      router.push({
+        pathname: '/results',
+        params: {
+          searchResults: JSON.stringify(searchResults),
+          searchQuery: q || '',
+          filters: JSON.stringify(filters)
+        }
+      });
+
+      // Use Keyboard.dismiss() only, let system handle blur naturally
+      Keyboard.dismiss();
 
     } catch (error) {
       console.error('Search error:', error);
@@ -398,7 +548,7 @@ const exp1 = React.memo(() => {
         isSearchingRef.current = false;
       }, 100);
     }
-  }, [searchQuery, router, category5Label, category6Label]);
+  }, [searchQuery, router, category1Label, category2Label, category3Label, category4Label, category5Label, category6Label, subjectFilter]);
 
   // Animated scale values for cards
   const card1Scale = useRef(new Animated.Value(1)).current;
@@ -425,9 +575,14 @@ const exp1 = React.memo(() => {
   const searchGridResetButtonScale = useRef(new Animated.Value(1)).current;
   const searchGrid1ButtonFullScale = useRef(new Animated.Value(1)).current;
 
-  // Determine which buttons should be disabled based on Category 1
+  // Determine which buttons should be disabled based on Category 1 and subject filter
   const isCategoryDisabled = useCallback((categoryNumber: number) => {
     if (categoryNumber === 1) return false; // Profile Type always enabled
+    
+    // If subject filter is applied, disable politician-related buttons
+    if (subjectFilter) {
+      return categoryNumber === 2 || categoryNumber === 3 || categoryNumber === 4; // Disable influence, politician-only
+    }
     
     switch (category1Label) {
       case 'Politician':
@@ -437,7 +592,7 @@ const exp1 = React.memo(() => {
       default:
         return false; // Both or default - all enabled
     }
-  }, [category1Label]);
+  }, [category1Label, subjectFilter]);
 
   // Add re-entrancy guard ref
   const isSearchingRef = useRef(false);
@@ -697,6 +852,37 @@ const exp1 = React.memo(() => {
               <AnimatedPressable
                 onPressIn={() => {
                   Haptics.selectionAsync();
+                  Animated.spring(searchGrid1ButtonFullScale, {
+                    toValue: 0.95,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(searchGrid1ButtonFullScale, {
+                    toValue: 1,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  // Navigate to subjects page
+                  router.push('/subjects');
+                }}
+                style={[
+                  styles.searchGridButtonFull,
+                  { transform: [{ scale: searchGrid1ButtonFullScale }] }
+                ]}
+              >
+                <Text style={styles.searchGridButtonFullText} numberOfLines={1}>
+                  {policyAreaLabel}
+                </Text>
+              </AnimatedPressable>
+            </View>
+            <View style={styles.searchGridRowFull}>
+              <AnimatedPressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
                   Animated.spring(searchGridResetButtonScale, {
                     toValue: 0.95,
                     friction: 6,
@@ -717,47 +903,6 @@ const exp1 = React.memo(() => {
                 ]}
               >
                 <Text style={styles.searchGridButtonFullText}>Reset Filter</Text>
-              </AnimatedPressable>
-            </View>
-            <View style={styles.searchGridRowFull}>
-              <AnimatedPressable
-                onPressIn={() => {
-                  Haptics.selectionAsync();
-                  Animated.spring(searchGrid1ButtonFullScale, {
-                    toValue: 0.95,
-                    friction: 6,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPressOut={() => {
-                  Animated.spring(searchGrid1ButtonFullScale, {
-                    toValue: 1,
-                    friction: 6,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPress={() => {
-                  // Build filter parameters based on changed categories
-                  const filters = {
-                    profileType: category1Label !== 'Profile Type' ? category1Label : null,
-                    influence: category2Label !== 'Influence' ? category2Label : null,
-                    party: category3Label !== 'Political Party' ? category3Label : null,
-                    position: category4Label !== 'Political Position' ? category4Label : null,
-                    billStatus: category5Label !== 'Bill Status' ? category5Label : null,
-                    congress: category6Label !== 'Congress' ? category6Label : null,
-                  };
-                  
-                  router.push({
-                    pathname: '/results',
-                    params: { filters: JSON.stringify(filters) }
-                  });
-                }}
-                style={[
-                  styles.searchGridButtonFull,
-                  { transform: [{ scale: searchGrid1ButtonFullScale }] }
-                ]}
-              >
-                <Text style={styles.searchGridButtonFullText}>Show Results</Text>
               </AnimatedPressable>
             </View>
           </View>

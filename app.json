@@ -4,7 +4,7 @@
     "slug": "execudex",
     "scheme": "execudex",
     "newArchEnabled": true,
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -27,7 +27,7 @@
       "icon": "./assets/icon.png",
       "backgroundColor": "#000000",
       "bundleIdentifier": "com.execudex.app",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "deploymentTarget": "15.1",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,

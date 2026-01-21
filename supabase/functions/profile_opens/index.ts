@@ -26,7 +26,7 @@ serve(async (req) => {
     );
 
     // Parse request body
-    const { profileId } = await req.json();
+    const { profileId, isPolitician } = await req.json();
 
     // Validate profileId
     if (!profileId) {
@@ -39,82 +39,177 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Incrementing opens for profile: ${profileId}`);
-
-    // Fetch current opens value
-    const { data: currentData, error: fetchError } = await supabaseClient
-      .from('ppl_index')
-      .select('opens')
-      .eq('id', profileId)
-      .maybeSingle();
-
-    if (fetchError) {
-      console.error('Error fetching opens:', fetchError);
+    const profileIdNum = parseInt(profileId, 10);
+    if (isNaN(profileIdNum)) {
       return new Response(
-        JSON.stringify({ 
-          error: 'Failed to fetch profile data',
-          details: fetchError.message 
-        }),
+        JSON.stringify({ error: 'Invalid profileId: must be a number' }),
         {
-          status: 500,
+          status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
       );
     }
 
-    if (!currentData) {
-      console.error('Profile not found:', profileId);
-      return new Response(
-        JSON.stringify({ error: 'Profile not found' }),
-        {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
-    }
+    // Determine profile type: politician (ppl_index) or legislation (legi_index)
+    const isPpl = isPolitician === true || isPolitician === 'true';
+    
+    if (isPpl) {
+      // Handle politician profile (ppl_index)
+      console.log(`Incrementing opens for politician profile: ${profileIdNum}`);
 
-    // Calculate new value: increment by 1, or set to 1 if null
-    const currentValue = currentData.opens;
-    const newValue = (currentValue != null && Number.isInteger(currentValue)) 
-      ? currentValue + 1 
-      : 1;
+      // Fetch current opens value
+      const { data: currentData, error: fetchError } = await supabaseClient
+        .from('ppl_index')
+        .select('opens')
+        .eq('id', profileIdNum)
+        .maybeSingle();
 
-    console.log(`Current value: ${currentValue}, New value: ${newValue}`);
-
-    // Update the value
-    const { error: updateError } = await supabaseClient
-      .from('ppl_index')
-      .update({ opens: newValue })
-      .eq('id', profileId);
-
-    if (updateError) {
-      console.error('Error updating opens:', updateError);
-      return new Response(
-        JSON.stringify({ 
-          error: 'Failed to update opens',
-          details: updateError.message 
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
-    }
-
-    // Success!
-    console.log(`✅ Successfully incremented opens to ${newValue} for profile ${profileId}`);
-    return new Response(
-      JSON.stringify({
-        success: true,
-        profileId: profileId,
-        opens: newValue,
-        message: 'Opens counter incremented successfully'
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      if (fetchError) {
+        console.error('Error fetching opens:', fetchError);
+        return new Response(
+          JSON.stringify({ 
+            error: 'Failed to fetch profile data',
+            details: fetchError.message 
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
       }
-    );
+
+      if (!currentData) {
+        console.error('Politician profile not found:', profileIdNum);
+        return new Response(
+          JSON.stringify({ error: 'Profile not found' }),
+          {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // Calculate new value: increment by 1, or set to 1 if null
+      const currentValue = currentData.opens;
+      const newValue = (currentValue != null && Number.isInteger(currentValue)) 
+        ? currentValue + 1 
+        : 1;
+
+      console.log(`Current value: ${currentValue}, New value: ${newValue}`);
+
+      // Update the value
+      const { error: updateError } = await supabaseClient
+        .from('ppl_index')
+        .update({ opens: newValue })
+        .eq('id', profileIdNum);
+
+      if (updateError) {
+        console.error('Error updating opens:', updateError);
+        return new Response(
+          JSON.stringify({ 
+            error: 'Failed to update opens',
+            details: updateError.message 
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // Success!
+      console.log(`✅ Successfully incremented opens to ${newValue} for politician profile ${profileIdNum}`);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          profileId: profileIdNum,
+          opens: newValue,
+          message: 'Opens counter incremented successfully'
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    } else {
+      // Handle legislation profile (legi_index)
+      console.log(`Incrementing profile_visits for legislation profile: ${profileIdNum}`);
+
+      // Fetch current profile_visits value
+      const { data: currentData, error: fetchError } = await supabaseClient
+        .from('legi_index')
+        .select('profile_visits')
+        .eq('id', profileIdNum)
+        .maybeSingle();
+
+      if (fetchError) {
+        console.error('Error fetching profile_visits:', fetchError);
+        return new Response(
+          JSON.stringify({ 
+            error: 'Failed to fetch profile data',
+            details: fetchError.message 
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      if (!currentData) {
+        console.error('Legislation profile not found:', profileIdNum);
+        return new Response(
+          JSON.stringify({ error: 'Profile not found' }),
+          {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // Calculate new value: increment by 1, or set to 1 if null
+      const currentValue = currentData.profile_visits;
+      const newValue = (currentValue != null && Number.isInteger(currentValue)) 
+        ? currentValue + 1 
+        : 1;
+
+      console.log(`Current value: ${currentValue}, New value: ${newValue}`);
+
+      // Update the value
+      const { error: updateError } = await supabaseClient
+        .from('legi_index')
+        .update({ profile_visits: newValue })
+        .eq('id', profileIdNum);
+
+      if (updateError) {
+        console.error('Error updating profile_visits:', updateError);
+        return new Response(
+          JSON.stringify({ 
+            error: 'Failed to update profile_visits',
+            details: updateError.message 
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // Success!
+      console.log(`✅ Successfully incremented profile_visits to ${newValue} for legislation profile ${profileIdNum}`);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          profileId: profileIdNum,
+          profile_visits: newValue,
+          message: 'Profile visits counter incremented successfully'
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
 
   } catch (error) {
     console.error('Unexpected error in profile_opens function:', error);

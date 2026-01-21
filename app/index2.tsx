@@ -22,6 +22,7 @@ import { showLegislationAlertForTesting, showLegislationAlertIfNeeded, showWeakL
 import { safeHapticsSelection } from '../utils/safeHaptics';
 import { getSupabaseClient } from '../utils/supabase';
 import { getConstrainedWidth } from '../utils/constrainedDimensions';
+import { trackLegislationProfileOpen } from '../utils/cardOpensTracker';
 
 import Legi1 from './legislation/legi1';
 import Legi2 from './legislation/legi2';
@@ -81,6 +82,13 @@ export default function Index2({ navigation }: { navigation?: any }) {
       }
     }
   }, [lockStatus]);
+
+  // Increment profile_visits when page loads
+  useEffect(() => {
+    if (params.index) {
+      trackLegislationProfileOpen(String(params.index));
+    }
+  }, [params.index]);
   
   // Check bookmark status when component mounts
   useEffect(() => {

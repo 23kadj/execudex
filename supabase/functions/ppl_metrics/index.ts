@@ -683,7 +683,7 @@ Deno.serve(async (req) => {
     const fullName: string = person.name;
     const tier: string = String(person.tier || "").toLowerCase();
 
-    // previous profile row (for wiping)
+    // previous profile row (for reference)
     const { data: prev, error: prevErr } = await supabase
       .from("ppl_profiles")
       .select("index_id")
@@ -691,7 +691,21 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (prevErr) throw prevErr;
 
-    // ALWAYS wipe first so this run overwrites any old attempt
+    // Search for new metrics first (before wiping old data)
+    const met = await findMetricsForPerson(pplId, fullName, tier, prev, deadline);
+
+    // Only proceed if we found new metrics - otherwise preserve old data
+    if (!met.found_any) {
+      return json(200, {
+        id: pplId,
+        name: fullName,
+        tier,
+        notes: `No new metrics found. Old data preserved.`,
+        outcome: met,
+      });
+    }
+
+    // Wipe old data only after confirming we have new data to replace it
     if (prev) {
       const { error: wipeErr } = await supabase
         .from("ppl_profiles")
@@ -706,32 +720,16 @@ Deno.serve(async (req) => {
       if (wipeErr) throw wipeErr;
     }
 
-    const met = await findMetricsForPerson(pplId, fullName, tier, prev, deadline);
-
-    // Build patch per outcome
-    let patch: Record<string, any> | null = null;
-
-    if (met.found_any) {
-      const includeVotes = (met as any).mode === "votes";
-      patch = {
-        poll_link: met.poll_link || null,
-        approval: met.approval,
-        disapproval: met.disapproval,
-        votes: includeVotes ? met.votes : null,
-        poll_summary: met.poll_summary || "",
-        updated_at: nowIso(),
-      };
-    } else {
-      // Failure/timeout: write "No Data" and leave numbers blank
-      patch = {
-        poll_link: null,
-        approval: null,
-        disapproval: null,
-        votes: null,
-        poll_summary: (met as any).poll_summary || "No Data",
-        updated_at: nowIso(),
-      };
-    }
+    // Build patch with new metrics
+    const includeVotes = (met as any).mode === "votes";
+    const patch: Record<string, any> = {
+      poll_link: met.poll_link || null,
+      approval: met.approval,
+      disapproval: met.disapproval,
+      votes: includeVotes ? met.votes : null,
+      poll_summary: met.poll_summary || "",
+      updated_at: nowIso(),
+    };
 
     // Persist (atomic upsert on index_id)
     const upsertRow = { index_id: pplId, ...patch };
@@ -748,7 +746,7 @@ Deno.serve(async (req) => {
       id: pplId,
       name: fullName,
       tier,
-      notes: `Metrics v2.9: CONCURRENT URL probing (batches of ${CONCURRENCY}); strict digit-only extraction + numeric parser; guard tiny vote counts (<1000); summary only describes saved numbers (no missing-data notes); centrality reads up to 110k; base-tier starts with Ballotpedia; per-search up to 3 links in parallel; failure-> "No Data"; wipe-first overwrite; global timeout=${GLOBAL_TIMEOUT_MS}ms.`,
+      notes: `Metrics v2.9: CONCURRENT URL probing (batches of ${CONCURRENCY}); strict digit-only extraction + numeric parser; guard tiny vote counts (<1000); summary only describes saved numbers (no missing-data notes); centrality reads up to 110k; base-tier starts with Ballotpedia; per-search up to 3 links in parallel; wipe-only-if-new-data-found (preserves old data on failure); global timeout=${GLOBAL_TIMEOUT_MS}ms.`,
       outcome: met,
     });
 

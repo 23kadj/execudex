@@ -25,16 +25,21 @@ import { useAuth } from '../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../components/ProfileLoadingIndicator';
 import { SearchFilterButton } from '../components/SearchFilterButton';
 import { Typography } from '../constants/Typography';
-import { initIap, restorePurchases } from '../iap.apple';
 import { iapService } from '../services/iapService';
 import { SUBSCRIPTION_PRODUCTS } from '../types/iapTypes';
 import { isIAPAvailable } from '../utils/iapAvailability';
 import { getSupabaseClient } from '../utils/supabase';
 
 // Payment Plan Subscription Box Content - EDIT THESE TO CHANGE TEXT
+const FREE_CONTENT = {
+  title: 'Execudex Free',
+  feature1: 'Access 5 profiles a week',
+  feature2: 'Free of charge',
+};
+
 const BOX_1_CONTENT = {
   title: 'Execudex Basic',
-  feature1: 'Access 10 profiles a week',
+  feature1: 'Access 20 profiles a week',
   feature2: '3-day free trial, then $4.99/month',
 };
 
@@ -46,7 +51,7 @@ const BOX_2_CONTENT = {
 
 const BOX_3_CONTENT = {
   title: 'Execudex Basic 3 Month Plan',
-  feature1: 'Access 10 profiles a week',
+  feature1: 'Access 20 profiles a week',
   feature2: '$12.99 every 3 months',
 };
 
@@ -785,19 +790,20 @@ const [reason, setReason] = useState<string[]>([]);
   const onboardDataRef = useRef<string>('');
   
   // Animation refs for subscription boxes
+  const boxFreeScale = useRef(new Animated.Value(1)).current;
   const box1Scale = useRef(new Animated.Value(1)).current;
   const box2Scale = useRef(new Animated.Value(1)).current;
   const box3Scale = useRef(new Animated.Value(1)).current;
   const box4Scale = useRef(new Animated.Value(1)).current;
 
   // Functions to handle plan and cycle selection (following same pattern as other onboarding steps)
-  const handlePlanSelect = (selectedPlan: string, selectedCycle: string) => {
+  const handlePlanSelect = (selectedPlan: string, selectedCycle: string | null) => {
     console.log('🔘 Plan selected:', selectedPlan);
     console.log('🔘 Cycle selected:', selectedCycle);
     setPlan(selectedPlan);
-    setCycle(selectedCycle);
+    setCycle(selectedCycle || '');
     selectedPlanRef.current = selectedPlan;
-    selectedCycleRef.current = selectedCycle;
+    selectedCycleRef.current = selectedCycle || '';
   };
 
   // Referral code validation function
@@ -1965,7 +1971,7 @@ if (step === 'unsatisfiedReason') {
 
         {/* Dependent Status Filter Buttons */}
         <View style={styles.educationButtonsContainer}>
-          {['Children', 'Elderly family member', 'Disabled Dependent', 'No Dependents'].map((option) => (
+          {['Children', 'Elderly Family Member', 'Disabled Dependent', 'Spouse', 'No Dependents'].map((option) => (
             <SearchFilterButton
               key={option}
               word={option}
@@ -1987,7 +1993,7 @@ if (step === 'unsatisfiedReason') {
 
         {/* Military Status Filter Buttons */}
         <View style={styles.educationButtonsContainer}>
-          {['No military affiliation', 'Active duty', 'National Guard or Reserve', 'Veteran', 'Military Dependent'].map((option) => (
+          {['No Military Affiliation', 'Active Duty', 'National Guard or Reserve', 'Veteran', 'Military Dependent'].map((option) => (
             <SearchFilterButton
               key={option}
               word={option}
@@ -2611,8 +2617,54 @@ if (step === 'paymentPlan') {
         {/* TITLE */}
         <Text style={styles.title10}>Choose your payment plan</Text>
 
-        {/* Subscription Boxes Container */}
-        <View style={{ width: '100%', marginTop: 20 }}>
+        {/* Subscription Boxes Container - Scrollable */}
+        <ScrollView 
+          style={{ width: '100%', marginTop: 20 }}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 20 }}
+        >
+          {/* Execudex Free */}
+          <Animated.View style={{ transform: [{ scale: boxFreeScale }] }}>
+            <Pressable
+              onPress={() => handlePlanSelect('free', null)}
+              onPressIn={() => {
+                Haptics.selectionAsync();
+                Animated.spring(boxFreeScale, { toValue: 0.95, friction: 6, useNativeDriver: true }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(boxFreeScale, { toValue: 1, friction: 6, useNativeDriver: true }).start();
+              }}
+              style={[
+                styles.subscriptionBox,
+                (plan === 'free') && styles.subscriptionBoxSelected
+              ]}
+            >
+              <View style={styles.subscriptionBoxContent}>
+                <Text style={styles.subscriptionBoxTitle}>{FREE_CONTENT.title}</Text>
+                
+                <View style={styles.subscriptionFeatureRow}>
+                  <Image 
+                    source={require('../assets/check.png')} 
+                    style={styles.subscriptionCheckIcon}
+                  />
+                  <Text style={styles.subscriptionFeatureText}>
+                    {FREE_CONTENT.feature1}
+                  </Text>
+                </View>
+                
+                <View style={[styles.subscriptionFeatureRow, { marginBottom: 2 }]}>
+                  <Image 
+                    source={require('../assets/check.png')} 
+                    style={styles.subscriptionCheckIcon}
+                  />
+                  <Text style={styles.subscriptionFeatureText}>
+                    {FREE_CONTENT.feature2}
+                  </Text>
+                </View>
+              </View>
+            </Pressable>
+          </Animated.View>
+
           {/* First Rectangle - Execudex Basic */}
           <Animated.View style={{ transform: [{ scale: box1Scale }] }}>
             <Pressable
@@ -2745,43 +2797,39 @@ if (step === 'paymentPlan') {
               </View>
             </Pressable>
           </Animated.View>
-        </View>
 
-        {/* DESCRIPTION */}
-        <View style={styles.descriptionBox}>
-          <Text style={styles.description}>
-            You can change your subscription plan at any time
-          </Text>
-        </View>
+          {/* DESCRIPTION */}
+          <View style={styles.descriptionBox}>
+            <Text style={styles.description}>
+              You can change your subscription plan at any time
+            </Text>
+          </View>
 
-
-        {/* Spacer to push terms text down */}
-        <View style={{ flex: 1 }} />
-      </View>
-
-      {/* TERMS AGREEMENT TEXT */}
-      <View style={[styles.termsAgreementContainer, { position: 'relative', bottom: 'auto' }]}>
-        <Text style={styles.termsAgreementText}>
-          Continuing means you agree to the{' '}
-          <Text 
-            style={styles.termsLink}
-            onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
-          >
-            Terms of Use
-          </Text>
-          {' '}and{' '}
-          <Text 
-            style={styles.termsLink}
-            onPress={() => Linking.openURL('https://execudex.dev/privacy')}
-          >
-            Privacy Policy
-          </Text>
-        </Text>
+          {/* TERMS AGREEMENT TEXT */}
+          <View style={styles.termsAgreementContainer}>
+            <Text style={styles.termsAgreementText}>
+              Continuing means you agree to the{' '}
+              <Text 
+                style={styles.termsLink}
+                onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
+              >
+                Terms of Use
+              </Text>
+              {' '}and{' '}
+              <Text 
+                style={styles.termsLink}
+                onPress={() => Linking.openURL('https://execudex.dev/privacy')}
+              >
+                Privacy Policy
+              </Text>
+            </Text>
+          </View>
+        </ScrollView>
       </View>
 
       {/* CONTINUE */}
       <Pressable
-        disabled={!plan || !cycle}
+        disabled={!plan || (plan !== 'free' && !cycle)}
         onPress={async () => {
           try {
             // Get the current user's UUID from Supabase Auth
@@ -2799,6 +2847,30 @@ if (step === 'paymentPlan') {
               console.log('📤 About to call saveOnboardData with:');
               console.log('   - plan:', plan);
               console.log('   - cycle:', cycle);
+
+              // Free plan: Skip IAP and save directly to database
+              if (plan === 'free') {
+                try {
+                  setPurchaseError(null);
+                  setIsPurchasing(true);
+                  
+                  console.log('💾 Saving free plan without IAP...');
+                  await saveOnboardData(user.id, onboardData, 'free', undefined);
+                  
+                  // Navigate to home after saving
+                  router.replace('/(tabs)/home');
+                  
+                  setIsPurchasing(false);
+                } catch (saveErr: any) {
+                  console.error('❌ Failed to save free plan:', saveErr);
+                  setIsPurchasing(false);
+                  Alert.alert(
+                    'Error',
+                    saveErr?.message || 'Failed to save subscription. Please try again.'
+                  );
+                }
+                return;
+              }
 
               // Both Basic and Plus now require IAP purchase
               if (!isIAPAvailable() || iapStatus === 'unavailable') {
@@ -2856,15 +2928,15 @@ if (step === 'paymentPlan') {
             console.error('Error saving onboard data:', error);
           }
         }}
-        onPressIn={() => (plan && cycle) && Haptics.selectionAsync()}
+        onPressIn={() => plan && Haptics.selectionAsync()}
         style={[
           styles.continueButton,
-          (!plan || !cycle) && styles.continueButtonDisabled
+          (!plan || (plan !== 'free' && !cycle)) && styles.continueButtonDisabled
         ]}
       >
         <Text style={[
           styles.continueButtonText,
-          (!plan || !cycle) && styles.continueButtonTextDisabled
+          (!plan || (plan !== 'free' && !cycle)) && styles.continueButtonTextDisabled
         ]}>
           Continue
         </Text>
@@ -3513,12 +3585,10 @@ choice6:           {
     fontWeight: '600',
   },
   termsAgreementContainer: {
-    position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 130 : 100,
-    left: 0,
-    right: 0,
     paddingHorizontal: 20,
     alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 20,
   },
   termsAgreementText: {
     color: '#888',

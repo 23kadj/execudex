@@ -12,9 +12,15 @@ import { isIAPAvailable } from '../utils/iapAvailability';
 import { getSupabaseClient } from '../utils/supabase';
 
 // Subscription box content - EDIT THESE TO CHANGE TEXT
+const FREE_CONTENT = {
+  title: 'Execudex Free',
+  feature1: 'Access 5 profiles a week',
+  feature2: 'Free of charge',
+};
+
 const BOX_1_CONTENT = {
   title: 'Execudex Basic',
-  feature1: 'Access 10 profiles a week',
+  feature1: 'Access 20 profiles a week',
   feature2: '3-day free trial, then $4.99/month',
 };
 
@@ -26,7 +32,7 @@ const BOX_2_CONTENT = {
 
 const BOX_3_CONTENT = {
   title: 'Execudex Basic 3 Month Plan',
-  feature1: 'Access 10 profiles a week',
+  feature1: 'Access 20 profiles a week',
   feature2: '$12.99 every 3 months',
 };
 
@@ -57,6 +63,7 @@ export default function Subs() {
   
   
   // Animation values for bounce effect
+  const boxFreeScale = useRef(new Animated.Value(1)).current;
   const box1Scale = useRef(new Animated.Value(1)).current;
   const box2Scale = useRef(new Animated.Value(1)).current;
   const box3Scale = useRef(new Animated.Value(1)).current;
@@ -524,14 +531,14 @@ export default function Subs() {
     }
   };
 
-  const handleSubscriptionSelect = (plan: string, cycle: string) => {
+  const handleSubscriptionSelect = (plan: string, cycle: string | null) => {
     // Toggle selection - if clicking the same one, deselect
-    if (selectedPlan === plan && selectedCycle === cycle) {
+    if (selectedPlan === plan && selectedCycle === (cycle || null)) {
       setSelectedPlan(null);
       setSelectedCycle(null);
     } else {
       setSelectedPlan(plan);
-      setSelectedCycle(cycle);
+      setSelectedCycle(cycle || null);
     }
   };
 
@@ -708,7 +715,7 @@ export default function Subs() {
   };
 
   const handlePurchaseButtonPress = async () => {
-    if (!selectedPlan || !selectedCycle || !user?.id) {
+    if (!selectedPlan || (!selectedCycle && selectedPlan !== 'free') || !user?.id) {
       return;
     }
 
@@ -784,11 +791,13 @@ export default function Subs() {
   };
 
   // Helper function to render a subscription box
-  const renderSubscriptionBox = (plan: string, cycle: string, boxContent: typeof BOX_1_CONTENT, scaleAnim: Animated.Value) => {
+  const renderSubscriptionBox = (plan: string, cycle: string | null, boxContent: typeof BOX_1_CONTENT, scaleAnim: Animated.Value) => {
     const isCurrentSubscription = 
       profileUsage?.plan === plan && 
-      (cycle === 'monthly' ? profileUsage?.cycle === 'monthly' : profileUsage?.cycle === 'quarterly');
-    const isSelected = selectedPlan === plan && selectedCycle === cycle;
+      (plan === 'free' 
+        ? (profileUsage?.plan === 'free' && !profileUsage?.cycle)
+        : (cycle === 'monthly' ? profileUsage?.cycle === 'monthly' : profileUsage?.cycle === 'quarterly'));
+    const isSelected = selectedPlan === plan && selectedCycle === (cycle || null);
 
     return (
       <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
@@ -847,6 +856,7 @@ export default function Subs() {
   // Helper function to get subscription boxes in order (current subscription first)
   const getOrderedSubscriptionBoxes = () => {
     const boxes = [
+      { plan: 'free', cycle: null, content: FREE_CONTENT, scale: boxFreeScale },
       { plan: 'basic', cycle: 'monthly', content: BOX_1_CONTENT, scale: box1Scale },
       { plan: 'plus', cycle: 'monthly', content: BOX_2_CONTENT, scale: box2Scale },
       { plan: 'plus', cycle: 'quarterly', content: BOX_4_CONTENT, scale: box3Scale },
@@ -855,9 +865,13 @@ export default function Subs() {
     // Sort so current subscription is first
     return boxes.sort((a, b) => {
       const aIsCurrent = profileUsage?.plan === a.plan && 
-        (a.cycle === 'monthly' ? profileUsage?.cycle === 'monthly' : profileUsage?.cycle === 'quarterly');
+        (a.plan === 'free'
+          ? (profileUsage?.plan === 'free' && !profileUsage?.cycle)
+          : (a.cycle === 'monthly' ? profileUsage?.cycle === 'monthly' : profileUsage?.cycle === 'quarterly'));
       const bIsCurrent = profileUsage?.plan === b.plan && 
-        (b.cycle === 'monthly' ? profileUsage?.cycle === 'monthly' : profileUsage?.cycle === 'quarterly');
+        (b.plan === 'free'
+          ? (profileUsage?.plan === 'free' && !profileUsage?.cycle)
+          : (b.cycle === 'monthly' ? profileUsage?.cycle === 'monthly' : profileUsage?.cycle === 'quarterly'));
       
       if (aIsCurrent) return -1;
       if (bIsCurrent) return 1;
@@ -935,7 +949,7 @@ export default function Subs() {
               (!selectedPlan || !selectedCycle || isPurchasing) && styles.submitButtonDisabled
             ]}
             onPress={handlePurchaseButtonPress}
-            disabled={!selectedPlan || !selectedCycle || isPurchasing}
+            disabled={!selectedPlan || (!selectedCycle && selectedPlan !== 'free') || isPurchasing}
             activeOpacity={0.7}
           >
             {isPurchasing ? (
@@ -943,9 +957,9 @@ export default function Subs() {
             ) : (
               <Text style={[
                 styles.submitButtonText,
-                (!selectedPlan || !selectedCycle) && styles.submitButtonTextDisabled
+                (!selectedPlan || (!selectedCycle && selectedPlan !== 'free')) && styles.submitButtonTextDisabled
               ]}>
-                Purchase Subscription
+                {selectedPlan === 'free' ? 'Switch to Free' : 'Purchase Subscription'}
               </Text>
             )}
           </TouchableOpacity>

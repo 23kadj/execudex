@@ -19,6 +19,7 @@ interface FilterParams {
   position: string | null;
   billStatus: string | null;
   congress: string | null;
+  subject: string | null;
 }
 
 interface ResultItem {
@@ -184,7 +185,12 @@ export default function Results() {
       if (shouldQueryLegi) {
         let legiQuery = supabase
           .from('legi_index')
-          .select('id, name, sub_name');
+          .select('id, name, sub_name, subject');
+
+        // Apply subject filter if selected
+        if (filters.subject) {
+          legiQuery = legiQuery.ilike('subject', `%${filters.subject}%`);
+        }
 
         // Apply filters relevant to legi_index
         if (filters.billStatus) {
@@ -609,10 +615,16 @@ export default function Results() {
   const ResultsCount = useCallback(() => {
     // If this is a search result, show search-specific text
     if (searchQueryParam) {
+      // Check if filters were applied during search
+      const activeFilters = Object.values(filters).filter(f => f !== null);
+      const filterText = activeFilters.length > 0 
+        ? ` (${activeFilters.length} filter${activeFilters.length > 1 ? 's' : ''} applied)`
+        : '';
+      
       return (
         <View style={styles.resultsCountContainer}>
           <Text style={styles.resultsCountText}>
-            {results.length} result{results.length !== 1 ? 's' : ''} found for "{searchQueryParam}"
+            {results.length} result{results.length !== 1 ? 's' : ''} found for "{searchQueryParam}"{filterText}
           </Text>
         </View>
       );

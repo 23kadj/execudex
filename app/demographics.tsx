@@ -437,7 +437,7 @@ export default function Demographics() {
 
           {/* Dependent Status Filter Buttons */}
           <View style={styles.educationButtonsContainer}>
-            {['Children', 'Elderly family member', 'Disabled Dependent', 'No Dependents'].map((option) => (
+            {['Children', 'Elderly Family Member', 'Disabled Dependent', 'Spouse', 'No Dependents'].map((option) => (
               <SearchFilterButton
                 key={option}
                 word={option}
@@ -454,7 +454,7 @@ export default function Demographics() {
 
           {/* Military Status Filter Buttons */}
           <View style={styles.educationButtonsContainer}>
-            {['No military affiliation', 'Active duty', 'National Guard or Reserve', 'Veteran', 'Military Dependent'].map((option) => (
+            {['No Military Affiliation', 'Active Duty', 'National Guard or Reserve', 'Veteran', 'Military Dependent'].map((option) => (
               <SearchFilterButton
                 key={option}
                 word={option}

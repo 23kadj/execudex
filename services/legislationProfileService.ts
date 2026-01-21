@@ -41,6 +41,9 @@ export class LegislationProfileService {
     try {
       console.log(`Starting profile check for legislation ID: ${legislationId}`);
       
+      // Step 0: Check if bill_search enrichment is needed (for processing bills with stale data_update)
+      await this.checkAndRerunBillSearchIfNeeded(legislationId, onProgress);
+      
       // Step 1: Check index validation
       const checkResult = await this.checkProfileValidation(legislationId);
       
@@ -443,6 +446,73 @@ export class LegislationProfileService {
     }
   }
 
+
+  /**
+   * Check if bill_search enrichment is needed and rerun if necessary
+   * Checks if bill_status is "processing" and data_update is more than 5 days old
+   */
+  private static async checkAndRerunBillSearchIfNeeded(legislationId: number, onProgress?: ProgressCallback): Promise<void> {
+    try {
+      const supabase = getSupabaseClient();
+      const { data: indexData, error: indexError } = await supabase
+        .from('legi_index')
+        .select('bill_status, data_update')
+        .eq('id', legislationId)
+        .single();
+
+      if (indexError || !indexData) {
+        console.log('Could not fetch bill_status/data_update, skipping bill_search check');
+        return;
+      }
+
+      const billStatus = indexData.bill_status as string | null | undefined;
+      const dataUpdate = indexData.data_update as string | null | undefined;
+
+      // Check if bill_status is "processing"
+      if (billStatus !== 'processing') {
+        console.log(`Bill status is "${billStatus}", skipping bill_search check`);
+        return;
+      }
+
+      // Check if data_update exists and is more than 5 days old
+      if (!dataUpdate) {
+        console.log('No data_update timestamp found, skipping bill_search check');
+        return;
+      }
+
+      const updateDate = new Date(dataUpdate);
+      const now = new Date();
+      const daysSinceUpdate = (now.getTime() - updateDate.getTime()) / (1000 * 60 * 60 * 24);
+
+      if (daysSinceUpdate <= 5) {
+        console.log(`Data update is ${daysSinceUpdate.toFixed(1)} days old (<= 5 days), skipping bill_search`);
+        return;
+      }
+
+      // Both conditions met: bill_status is "processing" and data_update is > 5 days old
+      console.log(`Bill status is "processing" and data_update is ${daysSinceUpdate.toFixed(1)} days old. Rerunning bill_search enrichment...`);
+      onProgress?.({ script: 'Updating bill metadata...' });
+
+      const { data, error } = await supabase.functions.invoke('bill_search', {
+        body: {
+          enrich: true,
+          legi_id: legislationId
+        }
+      });
+
+      if (error) {
+        console.error('Error rerunning bill_search enrichment:', error);
+        // Don't throw - allow profile to open even if enrichment fails
+        return;
+      }
+
+      console.log('Bill_search enrichment completed:', data);
+      onProgress?.({ script: 'Updating bill metadata...', completed: true });
+    } catch (error) {
+      console.error('Error in checkAndRerunBillSearchIfNeeded:', error);
+      // Don't throw - allow profile to open even if check fails
+    }
+  }
 
   /**
    * Get profile status for debugging

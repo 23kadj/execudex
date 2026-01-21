@@ -1275,8 +1275,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     height: 60,
     width: '100%',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
+    paddingHorizontal: 20,
     alignSelf: 'stretch',
   },
   generateButtonDisabled: {
@@ -1287,7 +1288,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 20,
     fontWeight: '400',
-    textAlign: 'center',
+    textAlign: 'left',
   },
   generateButtonTextDisabled: {
     color: '#999',

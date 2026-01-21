@@ -1,9 +1,11 @@
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { safeNativeCall } from '../../utils/nativeCallDebugger';
 import { persistentLogger } from '../../utils/persistentLogger';
+import { getSupabaseClient } from '../../utils/supabase';
 
 // #region agent log - module level
 fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'see-more.tsx:MODULE',message:'Module loaded',data:{safeNativeCall:typeof safeNativeCall,persistentLogger:typeof persistentLogger,Animated:typeof Animated},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
@@ -48,6 +50,7 @@ export default function SeeMore({
   // #endregion
   
   // Use passed params directly (reverted to previous system - no fetching)
+  const politicianId = params.id as string || '';
   const politicianName = params.name as string || name || 'No Data Available';
   const politicianPosition = params.position as string || position || 'No Data Available';
   const approval = params.approval ? Number(params.approval) : (approvalPercentage || 50);
@@ -57,6 +60,10 @@ export default function SeeMore({
   
   const [isLoading] = useState<boolean>(false);
   const [hasError] = useState<boolean>(false);
+  
+  // State for Refresh Metrics button
+  const [isRefreshingMetrics, setIsRefreshingMetrics] = useState<boolean>(false);
+  const refreshMetricsButtonScale = useRef(new Animated.Value(1)).current;
 
   // Check if both approval and disapproval values are valid (not null/undefined and not default fallback values)
   const hasValidPollData = () => {
@@ -69,6 +76,70 @@ export default function SeeMore({
     const isDisapprovalInRange = disapproval >= 0 && disapproval <= 100;
     
     return hasValidApproval && hasValidDisapproval && isApprovalInRange && isDisapprovalInRange;
+  };
+
+  // Handler for Refresh Metrics button
+  const handleRefreshMetrics = async () => {
+    if (!politicianId || isRefreshingMetrics) return;
+    
+    setIsRefreshingMetrics(true);
+    
+    // Haptic feedback
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    // Scale animation
+    Animated.sequence([
+      Animated.timing(refreshMetricsButtonScale, {
+        toValue: 0.95,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(refreshMetricsButtonScale, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase.functions.invoke('ppl_metrics', {
+        body: { id: parseInt(politicianId) },
+      });
+      
+      if (error) {
+        console.error('Error calling ppl_metrics:', error);
+        Alert.alert(
+          'Error',
+          'Failed to refresh metrics. Please try again later.',
+          [{ text: 'OK' }]
+        );
+      } else if (data) {
+        if (data.outcome?.found_any) {
+          Alert.alert(
+            'Success',
+            'Metrics have been refreshed successfully.',
+            [{ text: 'OK' }]
+          );
+          // Optionally refresh the page data here if needed
+        } else {
+          Alert.alert(
+            'No Data Found',
+            'No new metrics were found for this politician.',
+            [{ text: 'OK' }]
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error in handleRefreshMetrics:', error);
+      Alert.alert(
+        'Error',
+        'Failed to refresh metrics. Please try again later.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsRefreshingMetrics(false);
+    }
   };
 
   // Handler for opening links
@@ -299,6 +370,48 @@ export default function SeeMore({
           <Text style={styles.dataText}>{pollSummaryText || 'No Data Available'}</Text>
         </View>
 
+        {/* Refresh Metrics Button */}
+        {politicianId && (
+          <View style={styles.refreshButtonContainer}>
+            <Animated.View style={{ transform: [{ scale: refreshMetricsButtonScale }], alignSelf: 'stretch' }}>
+              <Pressable
+                onPressIn={() => {
+                  if (!isRefreshingMetrics) {
+                    Haptics.selectionAsync();
+                    Animated.spring(refreshMetricsButtonScale, {
+                      toValue: 0.95,
+                      friction: 6,
+                      useNativeDriver: true,
+                    }).start();
+                  }
+                }}
+                onPressOut={() => {
+                  if (!isRefreshingMetrics) {
+                    Animated.spring(refreshMetricsButtonScale, {
+                      toValue: 1,
+                      friction: 6,
+                      useNativeDriver: true,
+                    }).start();
+                  }
+                }}
+                onPress={handleRefreshMetrics}
+                disabled={isRefreshingMetrics}
+                style={[
+                  styles.refreshButton,
+                  isRefreshingMetrics && styles.refreshButtonDisabled
+                ]}
+              >
+                <Text style={[
+                  styles.refreshButtonText,
+                  isRefreshingMetrics && styles.refreshButtonTextDisabled
+                ]}>
+                  {isRefreshingMetrics ? 'Refreshing...' : 'Refresh Metrics'}
+                </Text>
+              </Pressable>
+            </Animated.View>
+          </View>
+        )}
+
         {/* Links Row */}
         <View style={styles.linksRow}>
           {pollLinkText ? (
@@ -323,6 +436,13 @@ export default function SeeMore({
           )}
         </View>
       </ScrollView>
+      
+      <CardLoadingIndicator 
+        visible={isRefreshingMetrics} 
+        onCancel={() => setIsRefreshingMetrics(false)}
+        title="Refreshing Metrics"
+        subtitle="Please keep the app open while we generate your metric data."
+      />
     </View>
   );
 }
@@ -497,5 +617,36 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '400',
     textAlign: 'center',
+  },
+  refreshButtonContainer: {
+    width: 370,
+    alignSelf: 'center',
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  refreshButton: {
+    backgroundColor: '#050505',
+    borderRadius: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 60,
+    width: '100%',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    alignSelf: 'stretch',
+  },
+  refreshButtonDisabled: {
+    backgroundColor: '#333',
+    opacity: 0.6,
+  },
+  refreshButtonText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '400',
+    textAlign: 'left',
+  },
+  refreshButtonTextDisabled: {
+    color: '#999',
   },
 }); 

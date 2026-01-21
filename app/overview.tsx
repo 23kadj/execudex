@@ -12,14 +12,14 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import { CardGenerationService } from '../services/cardGenerationService';
-import { getSupabaseClient } from '../utils/supabase';
-import { NotificationService } from '../services/notificationService';
 import { useAuth } from '../components/AuthProvider';
-import { getCategoryMapping, getScreenDisplayName } from '../utils/cardData';
+import { CardGenerationService } from '../services/cardGenerationService';
+import { NavigationService } from '../services/navigationService';
+import { NotificationService } from '../services/notificationService';
+import { getSupabaseClient } from '../utils/supabase';
 
 // Simple skeleton loader component
-const SkeletonLoader = ({ width = '100%', height = 60 }: { width?: string | number, height?: number }) => {
+const SkeletonLoader = ({ width = '100%', height = 60 }: { width?: number | `${number}%`, height?: number }) => {
   const shimmerAnim = useRef(new Animated.Value(0)).current;
   
   useEffect(() => {
@@ -63,6 +63,16 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
   const { user } = useAuth();
   const params = useLocalSearchParams();
   const [congressData, setCongressData] = useState<{congress: string, bill_status: string} | null>(null);
+  const [subject, setSubject] = useState<string | null>(null);
+  const [latestAction, setLatestAction] = useState<string | null>(null);
+  const [committees, setCommittees] = useState<string | null>(null);
+  const [actions, setActions] = useState<string | null>(null);
+  const [cosponsors, setCosponsors] = useState<string | null>(null);
+  const [sponsorProfile, setSponsorProfile] = useState<{ id: string; name: string; sub_name: string } | null>(null);
+  const [isSponsorLoading, setIsSponsorLoading] = useState(false);
+  const sponsorButtonScale = useRef(new Animated.Value(1)).current;
+  const policyTimelineButtonScale = useRef(new Animated.Value(1)).current;
+  const cosponsorsButtonScale = useRef(new Animated.Value(1)).current;
   
   // Initialize profileData with prefetched data if available
   const [profileData, setProfileData] = useState<{overview: string, agenda: string, impact: string} | null>(() => {
@@ -87,7 +97,7 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
   // Get the legislation ID from navigation parameters
   const legislationId = typeof params.index === 'string' ? params.index : '';
   
-  // Fetch congress and bill_status from legi_index
+  // Fetch congress, bill_status, subject, latest_action, committees, actions, and cosponsors from legi_index
   useEffect(() => {
     const fetchCongressData = async () => {
       if (legislationId) {
@@ -95,7 +105,7 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
           const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('legi_index')
-            .select('congress, bill_status')
+            .select('congress, bill_status, subject, latest_action, committees, actions, cosponsors')
             .eq('id', parseInt(legislationId))
             .single();
           
@@ -104,6 +114,39 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
               congress: data.congress || '',
               bill_status: data.bill_status || ''
             });
+            // Set subject if it exists and is not empty
+            if (data.subject && data.subject.trim()) {
+              setSubject(data.subject.trim());
+            } else {
+              setSubject(null);
+            }
+            // Set latest action if it exists and is not empty
+            if (data.latest_action && data.latest_action.trim()) {
+              setLatestAction(data.latest_action.trim());
+            } else {
+              setLatestAction(null);
+            }
+
+            // Set committees if it exists and is not empty
+            if (data.committees && data.committees.trim()) {
+              setCommittees(data.committees.trim());
+            } else {
+              setCommittees(null);
+            }
+
+            // Set actions if it exists and is not empty
+            if (data.actions && data.actions.trim()) {
+              setActions(data.actions.trim());
+            } else {
+              setActions(null);
+            }
+
+            // Set cosponsors if it exists and is not empty
+            if (data.cosponsors && data.cosponsors.trim()) {
+              setCosponsors(data.cosponsors.trim());
+            } else {
+              setCosponsors(null);
+            }
           }
         } catch (error) {
           console.error('Error fetching congress data:', error);
@@ -113,6 +156,153 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
 
     fetchCongressData();
   }, [legislationId]);
+
+  // Derive Committees box title and body text
+  const committeesTitle = committees && committees.includes('|') ? 'Committees' : 'Committee';
+  const committeesBody = committees ? committees.replace(/\|/g, '') : '';
+
+  const extractSponsorNameFromSubName = (subName: string): string | null => {
+    const s = String(subName ?? '').trim();
+    if (!s) return null;
+
+    // Expected pattern (per product spec):
+    // "<date> | <Sponsor Name> <PARTY-STATE>"
+    // Example: "Jan 10, 2024 | Jodey C Arrington R-TX"
+    const parts = s.split('|');
+    if (parts.length < 2) return null;
+
+    // Take the segment directly after the first divider
+    let segment = parts[1].trim();
+    if (!segment) return null;
+
+    // If there are more dividers, ignore anything after the next one
+    segment = segment.split('|')[0].trim();
+
+    // Remove any trailing party/state tag like "R-TX" or "(R-TX)" or "[R-TX]"
+    // Capture the name part before that tag.
+    let nameOnly = segment;
+
+    // Strip bracketed/parenthesized suffixes
+    nameOnly = nameOnly.replace(/\s*\([^)]*\)\s*$/g, '').replace(/\s*\[[^\]]*\]\s*$/g, '').trim();
+
+    // Strip trailing PARTY-STATE tokens like "R-TX", "D-CA", "I-VT"
+    nameOnly = nameOnly.replace(/\s+[A-Z]{1,3}-[A-Z]{2}$/g, '').trim();
+
+    // Remove honorifics/prefixes
+    nameOnly = nameOnly.replace(/^(Rep\.|Sen\.|Representative|Senator|Hon\.)\s+/i, '').trim();
+
+    return nameOnly || null;
+  };
+
+  const sponsorName = extractSponsorNameFromSubName(position);
+
+  // Lookup sponsor in ppl_index based on extracted sponsor name
+  useEffect(() => {
+    const fetchSponsor = async () => {
+      if (!sponsorName) {
+        setSponsorProfile(null);
+        return;
+      }
+
+      try {
+        const supabase = getSupabaseClient();
+        // First, try to match the full cleaned sponsor name
+        const { data, error } = await supabase
+          .from('ppl_index')
+          .select('id, name, sub_name, limit_score')
+          .or(`name.ilike.%${sponsorName}%,sub_name.ilike.%${sponsorName}%`)
+          .order('limit_score', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data?.id) {
+          setSponsorProfile({
+            id: String(data.id),
+            name: String(data.name ?? ''),
+            sub_name: String(data.sub_name ?? ''),
+          });
+          return;
+        }
+
+        // If no strong match, fall back to a broader last-name-only search
+        const tokens = sponsorName.split(/\s+/).filter(Boolean);
+        const lastName = tokens[tokens.length - 1];
+        if (!lastName) {
+          setSponsorProfile(null);
+          return;
+        }
+
+        const { data: dataFallback, error: errorFallback } = await supabase
+          .from('ppl_index')
+          .select('id, name, sub_name, limit_score')
+          .or(`name.ilike.%${lastName}%,sub_name.ilike.%${lastName}%`)
+          .order('limit_score', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!errorFallback && dataFallback?.id) {
+          setSponsorProfile({
+            id: String(dataFallback.id),
+            name: String(dataFallback.name ?? ''),
+            sub_name: String(dataFallback.sub_name ?? ''),
+          });
+        } else {
+          setSponsorProfile(null);
+        }
+      } catch (error) {
+        console.error('Error fetching sponsor profile:', error);
+        setSponsorProfile(null);
+      }
+    };
+
+    fetchSponsor();
+  }, [sponsorName]);
+
+  const handleSponsorPress = async () => {
+    if (!sponsorProfile || isSponsorLoading) return;
+
+    setIsSponsorLoading(true);
+    try {
+      await NavigationService.navigateToPoliticianProfile({
+        pathname: '/index1',
+        params: {
+          title: sponsorProfile.name,
+          subtitle: sponsorProfile.sub_name,
+          imgKey: 'placeholder',
+          numbersObj: JSON.stringify({ red: '50%', green: '50%' }),
+          index: sponsorProfile.id,
+        }
+      }, user?.id);
+    } catch (error) {
+      console.error('Error navigating to sponsor profile:', error);
+    } finally {
+      setIsSponsorLoading(false);
+    }
+  };
+
+  const handlePolicyTimelinePress = () => {
+    if (!actions) return;
+
+    router.push({
+      pathname: '/action',
+      params: {
+        actions,
+        title: name,
+      },
+    });
+  };
+
+  const handleCosponsorsPress = () => {
+    if (!cosponsors) return;
+
+    router.push({
+      pathname: '/cosponsors',
+      params: {
+        cosponsors,
+        title: name,
+      },
+    });
+  };
 
   // Check if legislation is weak
   useEffect(() => {
@@ -337,7 +527,9 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
         <Text style={styles.legislationStatusText}>
           {getStatusDisplay()}
         </Text>
-
+        {subject && (
+          <Text style={styles.subtitleText}>{subject}</Text>
+        )}
       </View>
 
       {/* Overview Box */}
@@ -351,6 +543,24 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
           )}
         </View>
       </View>
+
+      {/* Latest Action Box - only show when latestAction is available */}
+      {latestAction && (() => {
+        // Extract vote numbers from latest_action (format: "X - Y" or "X-Y")
+        const voteMatch = latestAction.match(/(\d+)\s*-\s*(\d+)/);
+        const voteTitle = voteMatch 
+          ? `Latest Action: ${voteMatch[1]} - ${voteMatch[2]}`
+          : "Latest Action";
+        
+        return (
+          <View style={styles.boxRow}>
+            <View style={[styles.overviewBox, { flex: 1, marginBottom: 0 }]}>
+              <Text style={styles.boxTitle}>{voteTitle}</Text>
+              <Text style={styles.boxContent}>{latestAction}</Text>
+            </View>
+          </View>
+        );
+      })()}
 
       {/* Agenda Box */}
       <View style={styles.boxRow}>
@@ -375,6 +585,139 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
           )}
         </View>
       </View>
+
+      {/* Committees Box - only show when committees data is available */}
+      {committees && committeesBody && (
+        <View style={styles.boxRow}>
+          <View style={[styles.overviewBox, { flex: 1, marginBottom: 0 }]}>
+            <Text style={styles.boxTitle}>{committeesTitle}</Text>
+            <Text style={styles.boxContent}>{committeesBody}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Policy Timeline Button - only when actions are available */}
+      {actions && (
+        <View style={styles.boxRow}>
+          <Animated.View style={{ transform: [{ scale: policyTimelineButtonScale }], alignSelf: 'stretch', width: '100%' }}>
+            <Pressable
+              onPressIn={() => {
+                Haptics.selectionAsync();
+                Animated.spring(policyTimelineButtonScale, {
+                  toValue: 0.95,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(policyTimelineButtonScale, {
+                  toValue: 1,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPress={handlePolicyTimelinePress}
+              style={styles.generateButton}
+            >
+              <Text style={styles.generateButtonText}>Policy Timeline</Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
+
+      {/* Cosponsors Button - only when cosponsors are available */}
+      {cosponsors && (
+        <View style={styles.boxRow}>
+          <Animated.View style={{ transform: [{ scale: cosponsorsButtonScale }], alignSelf: 'stretch', width: '100%' }}>
+            <Pressable
+              onPressIn={() => {
+                Haptics.selectionAsync();
+                Animated.spring(cosponsorsButtonScale, {
+                  toValue: 0.95,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(cosponsorsButtonScale, {
+                  toValue: 1,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPress={handleCosponsorsPress}
+              style={styles.generateButton}
+            >
+              <Text style={styles.generateButtonText}>Cosponsors</Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
+
+      {/* Sponsor Button - copied from History politician button visuals */}
+      {sponsorProfile && (
+        <View style={styles.boxRow}>
+          <Animated.View style={{ width: '100%', transform: [{ scale: sponsorButtonScale }] }}>
+            <Pressable
+              onPressIn={() => {
+                if (!isSponsorLoading) {
+                  Haptics.selectionAsync();
+                  Animated.spring(sponsorButtonScale, {
+                    toValue: 0.95,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }
+              }}
+              onPressOut={() => {
+                if (!isSponsorLoading) {
+                  Animated.spring(sponsorButtonScale, {
+                    toValue: 1,
+                    friction: 6,
+                    useNativeDriver: true,
+                  }).start();
+                }
+              }}
+              onPress={() => !isSponsorLoading && handleSponsorPress()}
+              disabled={isSponsorLoading}
+              style={[
+                styles.sponsorCard,
+                isSponsorLoading && styles.sponsorCardDisabled
+              ]}
+            >
+              <View style={styles.sponsorCardContent}>
+                <View style={styles.sponsorTopRow}>
+                  <Text
+                    style={[
+                      styles.sponsorTitle,
+                      isSponsorLoading && styles.sponsorTitleDisabled
+                    ]}
+                    numberOfLines={0}
+                    adjustsFontSizeToFit={false}
+                  >
+                    {isSponsorLoading ? 'Generating...' : sponsorProfile.name}
+                  </Text>
+                  <View style={styles.sponsorTypeBadge}>
+                    <Text style={styles.sponsorTypeText}>Sponsor</Text>
+                  </View>
+                </View>
+                <View style={styles.sponsorBottomRow}>
+                  <Text
+                    style={[
+                      styles.sponsorSubtitle,
+                      isSponsorLoading && styles.sponsorSubtitleDisabled
+                    ]}
+                    numberOfLines={0}
+                    adjustsFontSizeToFit={false}
+                  >
+                    {sponsorProfile.sub_name}
+                  </Text>
+                </View>
+              </View>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
 
       {/* Generate New Cards Button */}
       {showGenerateButton && (
@@ -450,7 +793,7 @@ const styles = StyleSheet.create({
   profileHeaderContainer: {
     // You can control the position of the whole block here:
     marginBottom: 2,
-    marginTop: 10,
+    marginTop: 5,
     alignItems: 'flex-start',
     paddingHorizontal: 10,
     width: '95%',
@@ -477,7 +820,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 11,
     fontWeight: '400',
-    marginBottom: 10,
+    marginBottom: 5,
     textAlign: 'left',
   },
   numbersRowWrap: {
@@ -586,6 +929,82 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     textAlign: 'left',
   },
+
+  // Sponsor button (copied from History card visuals)
+  sponsorCard: {
+    backgroundColor: '#050505',
+    borderRadius: 22,
+    padding: 20,
+    width: '100%',
+    alignSelf: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.10,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+    minHeight: 80,
+    borderWidth: 1,
+    borderColor: '#101010',
+  },
+  sponsorCardDisabled: {
+    backgroundColor: '#333',
+    opacity: 0.6,
+  },
+  sponsorCardContent: {
+    width: '100%',
+    paddingHorizontal: 0,
+    flex: 1,
+  },
+  sponsorTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    width: '100%',
+    marginBottom: 4,
+  },
+  sponsorBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    width: '100%',
+  },
+  sponsorTitle: {
+    color: '#fff',
+    fontWeight: '400',
+    fontSize: 20,
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  sponsorTitleDisabled: {
+    color: '#999',
+  },
+  sponsorSubtitle: {
+    color: '#898989',
+    fontWeight: '400',
+    fontSize: 12,
+    flexWrap: 'wrap',
+  },
+  sponsorSubtitleDisabled: {
+    color: '#666',
+  },
+  sponsorTypeBadge: {
+    backgroundColor: '#222',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginLeft: 10,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 24,
+  },
+  sponsorTypeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlignVertical: 'center',
+  },
   lowMaterialityContainer: {
     marginTop: 20,
     paddingHorizontal: 20,
@@ -660,10 +1079,13 @@ const styles = StyleSheet.create({
   generateButton: {
     backgroundColor: '#050505',
     borderRadius: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 60,
     width: '100%',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
+    paddingHorizontal: 20,
   },
   generateButtonDisabled: {
     backgroundColor: '#333',
@@ -673,7 +1095,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 20,
     fontWeight: '400',
-    textAlign: 'center',
+    textAlign: 'left',
   },
   generateButtonTextDisabled: {
     color: '#999',

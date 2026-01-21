@@ -67,8 +67,13 @@ serve(async (req) => {
       );
     }
 
-    // Check if user is on basic plan
+    // Check if user is on basic or free plan (both have limits)
+    const isFreePlan = userData.plan === 'free';
     const isBasicPlan = userData.plan === 'basic';
+    const hasWeeklyLimit = isFreePlan || isBasicPlan;
+    
+    // Determine weekly limit based on plan
+    const weeklyLimit = isFreePlan ? FREE_WEEKLY_LIMIT : isBasicPlan ? BASIC_WEEKLY_LIMIT : Infinity;
     
     // User is on basic plan - check quota system
     const currentDate = new Date(date);
@@ -223,12 +228,13 @@ serve(async (req) => {
       console.log('Weekly reset triggered (most recent Sunday was before last_reset or no reset exists)');
       
       // Reset the week_profiles array and add current profile
-      // This tracks the profile for ALL users (both basic and plus) - tracking is universal
+      // This tracks the profile for ALL users (both basic, free, and plus) - tracking is universal
       weekProfiles = [profile_id];
       
       // Create simple comma-separated format for reset
       const resetString = profile_id;
-      console.log(`Creating reset string for ${isBasicPlan ? 'basic' : 'plus'} plan user:`, resetString);
+      const planType = isFreePlan ? 'free' : isBasicPlan ? 'basic' : 'plus';
+      console.log(`Creating reset string for ${planType} plan user:`, resetString);
       
       // Update database with reset (tracks for all users)
       const { error: updateError } = await supabaseClient
@@ -269,7 +275,7 @@ serve(async (req) => {
     // Check if profile_id is already in the array
     if (weekProfiles.includes(profile_id)) {
       console.log(`Profile ${profile_id} already accessed this week. Current count: ${weekProfiles.length}`);
-      const planType = isBasicPlan ? 'basic' : 'plus';
+      const planType = isFreePlan ? 'free' : isBasicPlan ? 'basic' : 'plus';
       console.log(`${planType} plan user - profile already tracked`);
       return new Response(
         JSON.stringify({ 
@@ -285,18 +291,20 @@ serve(async (req) => {
     }
 
     // Profile is not in array - need to add it for tracking
-    // IMPORTANT: We track profiles for ALL users (both basic and plus)
-    // - Basic users: Tracking is used for quota enforcement (limit of 5 per week)
+    // IMPORTANT: We track profiles for ALL users (free, basic, and plus)
+    // - Free users: Tracking is used for quota enforcement (limit of 5 per week)
+    // - Basic users: Tracking is used for quota enforcement (limit of 20 per week)
     // - Plus users: Tracking is for record-keeping (no limits, unlimited access)
     
-    // For basic plan users: Check quota BEFORE adding
-    if (isBasicPlan) {
-      console.log(`Basic plan: Checking quota: ${weekProfiles.length} profiles used, limit is ${BASIC_WEEKLY_LIMIT}`);
-      if (weekProfiles.length >= BASIC_WEEKLY_LIMIT) {
-        console.log(`Weekly profile limit reached: ${weekProfiles.length} >= ${BASIC_WEEKLY_LIMIT}`);
+    // For free and basic plan users: Check quota BEFORE adding
+    if (hasWeeklyLimit) {
+      const planType = isFreePlan ? 'free' : 'basic';
+      console.log(`${planType} plan: Checking quota: ${weekProfiles.length} profiles used, limit is ${weeklyLimit}`);
+      if (weekProfiles.length >= weeklyLimit) {
+        console.log(`Weekly profile limit reached: ${weekProfiles.length} >= ${weeklyLimit}`);
         const nextSundayDate = getNextSunday(currentDate);
         
-        // Basic plan user exceeded quota - deny access (don't track this profile)
+        // Free or basic plan user exceeded quota - deny access (don't track this profile)
         return new Response(
           JSON.stringify({ 
             allowed: false,
@@ -313,18 +321,21 @@ serve(async (req) => {
     }
 
     // Add the profile to the array for tracking
-    // This happens for ALL users (both basic and plus):
-    // - Basic: Only reaches here if quota check passed (under limit)
+    // This happens for ALL users (free, basic, and plus):
+    // - Free: Only reaches here if quota check passed (under 5)
+    // - Basic: Only reaches here if quota check passed (under 20)
     // - Plus: Always reaches here (unlimited, tracking for records)
     weekProfiles.push(profile_id);
     const newLength = weekProfiles.length;
-    console.log(`Adding profile ${profile_id} to tracking. New count: ${newLength}${isBasicPlan ? ` (basic plan, limit: ${BASIC_WEEKLY_LIMIT})` : ' (plus plan - unlimited, tracking for records)'}`);
+    const planType = isFreePlan ? 'free' : isBasicPlan ? 'basic' : 'plus';
+    const limitText = hasWeeklyLimit ? ` (${planType} plan, limit: ${weeklyLimit})` : ' (plus plan - unlimited, tracking for records)';
+    console.log(`Adding profile ${profile_id} to tracking. New count: ${newLength}${limitText}`);
     
-    // Double-check we're not exceeding the limit before updating database (only for basic plan)
+    // Double-check we're not exceeding the limit before updating database (only for free/basic plans)
     // This is a defensive check - should never happen if logic above is correct
     // Plus users can have unlimited profiles tracked, so skip this check for them
-    if (isBasicPlan && newLength > BASIC_WEEKLY_LIMIT) {
-      console.error(`ERROR: Attempted to add profile would exceed limit! Current: ${newLength}, Limit: ${BASIC_WEEKLY_LIMIT}`);
+    if (hasWeeklyLimit && newLength > weeklyLimit) {
+      console.error(`ERROR: Attempted to add profile would exceed limit! Current: ${newLength}, Limit: ${weeklyLimit}`);
       // Remove the profile we just added
       weekProfiles.pop();
       const nextSundayDate = getNextSunday(currentDate);
@@ -383,31 +394,35 @@ serve(async (req) => {
         verifyProfiles = verifyData.week_profiles;
       }
       
-      // Only check limit for basic plan users (plus users can have unlimited)
-      if (isBasicPlan && verifyProfiles.length > BASIC_WEEKLY_LIMIT) {
-        console.error(`CRITICAL: Basic plan user exceeded limit after update! Count: ${verifyProfiles.length}, Limit: ${BASIC_WEEKLY_LIMIT}`);
+      // Only check limit for free/basic plan users (plus users can have unlimited)
+      if (hasWeeklyLimit && verifyProfiles.length > weeklyLimit) {
+        const planType = isFreePlan ? 'free' : 'basic';
+        console.error(`CRITICAL: ${planType} plan user exceeded limit after update! Count: ${verifyProfiles.length}, Limit: ${weeklyLimit}`);
         console.error('Stored profiles:', verifyProfiles);
         // This shouldn't happen, but log it for debugging
       } else {
-        const planType = isBasicPlan ? 'basic' : 'plus';
-        console.log(`Verified: Database has ${verifyProfiles.length} profiles stored for ${planType} plan user${isBasicPlan ? ` (limit: ${BASIC_WEEKLY_LIMIT})` : ' (unlimited tracking)'}`);
+        const planType = isFreePlan ? 'free' : isBasicPlan ? 'basic' : 'plus';
+        const limitText = hasWeeklyLimit ? ` (limit: ${weeklyLimit})` : ' (unlimited tracking)';
+        console.log(`Verified: Database has ${verifyProfiles.length} profiles stored for ${planType} plan user${limitText}`);
       }
     }
 
-    console.log(`Profile added successfully. Total profiles tracked: ${newLength}${isBasicPlan ? ` (basic plan)` : ' (plus plan - unlimited)'}`);
+    const planType = isFreePlan ? 'free' : isBasicPlan ? 'basic' : 'plus';
+    console.log(`Profile added successfully. Total profiles tracked: ${newLength}${hasWeeklyLimit ? ` (${planType} plan)` : ' (plus plan - unlimited)'}`);
 
-    // Calculate remaining profiles for warning system (only for basic plan)
+    // Calculate remaining profiles for warning system (only for free/basic plans)
     // Plus users don't need warnings since they have unlimited access
     let showWarning = false;
     let remaining = 0;
     
-    if (isBasicPlan) {
-      remaining = BASIC_WEEKLY_LIMIT - newLength;
+    if (hasWeeklyLimit) {
+      remaining = weeklyLimit - newLength;
       // Show warning when user is at or below warning thresholds (2 or 1 remaining)
-      // This means warnings show at profiles 8 and 9 (out of 10)
+      // For free (5 limit): warnings at 3 and 4 profiles used
+      // For basic (20 limit): warnings at 18 and 19 profiles used
       if (WARNING_THRESHOLDS.includes(remaining)) {
         showWarning = true;
-        console.log(`Warning triggered for basic plan: ${remaining} profile(s) remaining`);
+        console.log(`Warning triggered for ${planType} plan: ${remaining} profile(s) remaining`);
       }
     } else {
       // Plus plan: No warnings needed, but log tracking info
@@ -418,9 +433,9 @@ serve(async (req) => {
       JSON.stringify({ 
         allowed: true,
         profilesUsed: newLength,
-        reason: isBasicPlan ? 'profile_added' : 'unlimited_plan_tracked',
+        reason: hasWeeklyLimit ? 'profile_added' : 'unlimited_plan_tracked',
         showWarning: showWarning,
-        remainingProfiles: isBasicPlan ? remaining : undefined
+        remainingProfiles: hasWeeklyLimit ? remaining : undefined
       }),
       {
         status: 200,
