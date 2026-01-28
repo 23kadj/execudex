@@ -491,6 +491,8 @@ const styles = StyleSheet.create({
   barWrapper: {
     backgroundColor: '#050505',
     borderRadius: 24,
+    borderColor: '#101010',
+    borderWidth: 1,
     padding: 20,
     shadowColor: '#000',
     shadowOpacity: 0.10,

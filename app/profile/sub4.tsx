@@ -45,6 +45,30 @@ const normalizeCategory = (title?: string) => {
   return getCategoryFromTitle(title);
 };
 
+// Filter out politician names (first and last name) from common words
+const filterOutPoliticianNames = (words: string[], profileName: string): string[] => {
+  if (!profileName || profileName === 'No Data Available' || !words || words.length === 0) {
+    return words;
+  }
+  
+  // Extract name parts (split by spaces and filter out empty strings)
+  const nameParts = profileName
+    .trim()
+    .split(/\s+/)
+    .map(part => part.toLowerCase().trim())
+    .filter(part => part.length > 0);
+  
+  if (nameParts.length === 0) {
+    return words;
+  }
+  
+  // Filter out words that match any name part (case-insensitive)
+  return words.filter(word => {
+    const wordLower = word.toLowerCase();
+    return !nameParts.some(namePart => wordLower === namePart);
+  });
+};
+
 // Cycle numbered styles (1..15) to preserve visual variety for >15 cards.
 const styleIndex = (index: number) => ((index % 15) + 1) as 1|2|3|4|5|6|7|8|9|10|11|12|13|14|15;
 
@@ -422,8 +446,12 @@ export default function Sub4() {
         setShowSearchAssistance(shouldShow);
         
         if (shouldShow) {
-          const mostCommon = getMostCommonWords(sorted, 10);
-          setCommonWords(mostCommon);
+          // Get more words initially to account for potential name matches
+          const mostCommon = getMostCommonWords(sorted, 20);
+          // Filter out politician names (first and last name) from common words
+          const filteredCommon = filterOutPoliticianNames(mostCommon, profileName);
+          // Take only the first 10 words after filtering
+          setCommonWords(filteredCommon.slice(0, 10));
         } else {
           setCommonWords([]);
           setSelectedFilterWords([]);
@@ -625,8 +653,12 @@ export default function Sub4() {
             setShowSearchAssistance(shouldShow);
             
             if (shouldShow) {
-              const mostCommon = getMostCommonWords(sorted, 10);
-              setCommonWords(mostCommon);
+              // Get more words initially to account for potential name matches
+              const mostCommon = getMostCommonWords(sorted, 20);
+              // Filter out politician names (first and last name) from common words
+              const filteredCommon = filterOutPoliticianNames(mostCommon, profileName);
+              // Take only the first 10 words after filtering
+              setCommonWords(filteredCommon.slice(0, 10));
             } else {
               setCommonWords([]);
               setSelectedFilterWords([]);

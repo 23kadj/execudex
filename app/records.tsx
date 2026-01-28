@@ -498,15 +498,15 @@ export default function Records() {
 
         const politicianName = politicianData.name;
 
-        // Fetch cards where subtext contains "vetoes" or "signs" and the politician's name
-        // Voting record cards have subtext like "[Politician Name] signs/vetoes [Bill Number]"
+        // Fetch cards where subtext contains "vetoes", "signs", or "votes" and the politician's name
+        // Voting record cards: "[Politician Name] signs/vetoes [Bill Number]" or "[Politician Name] votes yes/no [Bill Number]"
         const { data, error } = await supabase
           .from('card_index')
           .select('id, title, subtext, opens_7d, score, created_at, is_ppl, owner_id, screen, web_id, web, link')
           .eq('owner_id', ownerId)
           .eq('is_ppl', true)
           .eq('is_active', true)
-          .or(`subtext.ilike.%${politicianName} signs%,subtext.ilike.%${politicianName} vetoes%`)
+          .or(`subtext.ilike.%${politicianName} signs%,subtext.ilike.%${politicianName} vetoes%,subtext.ilike.%${politicianName} votes%`)
           .order('opens_7d', { ascending: false });
 
         if (error) {
@@ -522,10 +522,10 @@ export default function Records() {
           return;
         }
 
-        // Filter to ensure subtext contains "vetoes" or "signs" (case-insensitive)
+        // Filter to ensure subtext contains "vetoes", "signs", or "votes" (case-insensitive)
         const votingRecords = data.filter(card => {
           const subtext = (card.subtext || '').toLowerCase();
-          return subtext.includes('vetoes') || subtext.includes('signs');
+          return subtext.includes('vetoes') || subtext.includes('signs') || subtext.includes('votes');
         });
 
         // Fetch owner names for all cards

@@ -1117,10 +1117,10 @@ Deno.serve(async (req) => {
     }
     console.log(`[PPL_SEARCH] Successfully inserted "${canonical}" with ID ${ins.id}`);
 
-    // ---------- SEND NOTIFICATIONS TO ALL USERS (fire-and-forget) ----------
+    // ---------- SEND NOTIFICATIONS TO ALL USERS (fire-and-forget) — same pattern as new-card notifications ----------
     (async () => {
       try {
-        // Fetch all users with notifications enabled
+        // Fetch all users with notifications enabled (same as bill_cards / ppl_card_gen)
         const { data: usersWithNotifications } = await supabase
           .from('users')
           .select('uuid')
@@ -1133,33 +1133,31 @@ Deno.serve(async (req) => {
         
         const enabledUserIds = usersWithNotifications.map(u => u.uuid);
         
-        // Fetch push tokens for users with notifications enabled
+        // Message style matches working "new cards" notifications: "[Event] for [profile]. Come check it out!"
+        const message = `A new politician profile has been added for ${canonical}. Come check it out!`;
+        const title = `New Politician Profile: ${canonical}`;
+        const body = `A new politician profile for ${canonical} has been added, come check it out!`;
+        
+        // Insert notification records for all users with notifications enabled (same as card-gen)
+        const notificationRecords = enabledUserIds.map(userId => ({
+          user_id: userId,
+          profile_id: `ppl${ins.id}`,
+          profile_name: canonical,
+          is_ppl: true,
+          message: message,
+          categories: []
+        }));
+        
+        await supabase.from('notifications').insert(notificationRecords);
+        console.log(`[ppl_search] Created notifications for ${enabledUserIds.length} users`);
+        
+        // Send push notifications via Expo API (only for users with tokens)
         const { data: pushTokens } = await supabase
           .from('user_push_tokens')
           .select('push_token, user_id')
           .in('user_id', enabledUserIds);
         
         if (pushTokens && pushTokens.length > 0) {
-          const message = `A new politician is available on Execudex, come check it out!`;
-          
-          // Insert notification records for users with notifications enabled
-          const notificationRecords = enabledUserIds.map(userId => ({
-            user_id: userId,
-            profile_id: `ppl${ins.id}`,
-            profile_name: canonical,
-            is_ppl: true,
-            message: message,
-            categories: []
-          }));
-          
-          await supabase.from('notifications').insert(notificationRecords);
-          console.log(`[ppl_search] Created notifications for ${enabledUserIds.length} users`);
-          
-          // Send push notifications via Expo API
-          const title = `New Politician Available`;
-          const body = message;
-          
-          // Send push notifications
           const pushMessages = pushTokens.map(tokenData => ({
             to: tokenData.push_token,
             sound: 'notification.wav',
@@ -1169,8 +1167,7 @@ Deno.serve(async (req) => {
             badge: 1,
           }));
           
-          // Send all push notifications in parallel
-          const pushPromises = pushMessages.map(message => 
+          const pushPromises = pushMessages.map(pushMsg =>
             fetch('https://exp.host/--/api/v2/push/send', {
               method: 'POST',
               headers: {
@@ -1178,7 +1175,7 @@ Deno.serve(async (req) => {
                 'Accept-Encoding': 'gzip, deflate',
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify(message),
+              body: JSON.stringify(pushMsg),
             })
           );
           

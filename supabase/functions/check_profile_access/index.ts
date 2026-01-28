@@ -6,6 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const FREE_WEEKLY_LIMIT = 5;
 const BASIC_WEEKLY_LIMIT = 10;
 const WARNING_THRESHOLDS = [2, 1];
 
@@ -17,9 +18,26 @@ serve(async (req) => {
 
   try {
     // Initialize Supabase client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    if (!supabaseUrl || !supabaseKey) {
+      console.error('Missing Supabase environment variables');
+      return new Response(
+        JSON.stringify({ 
+          error: 'Server configuration error',
+          details: 'Missing Supabase credentials'
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      supabaseUrl,
+      supabaseKey,
       {
         auth: {
           autoRefreshToken: false,
@@ -28,8 +46,22 @@ serve(async (req) => {
       }
     );
 
-    // Parse request body
-    const { user_uuid, profile_id, date } = await req.json();
+    // Parse request body with error handling
+    let requestBody;
+    try {
+      requestBody = await req.json();
+    } catch (parseError) {
+      console.error('Error parsing request body:', parseError);
+      return new Response(
+        JSON.stringify({ error: 'Invalid request body', details: parseError instanceof Error ? parseError.message : 'Unknown error' }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    const { user_uuid, profile_id, date } = requestBody;
 
     // Validate inputs
     if (!user_uuid || !profile_id || !date) {
@@ -76,7 +108,25 @@ serve(async (req) => {
     const weeklyLimit = isFreePlan ? FREE_WEEKLY_LIMIT : isBasicPlan ? BASIC_WEEKLY_LIMIT : Infinity;
     
     // User is on basic plan - check quota system
-    const currentDate = new Date(date);
+    let currentDate: Date;
+    try {
+      currentDate = new Date(date);
+      if (isNaN(currentDate.getTime())) {
+        throw new Error('Invalid date format');
+      }
+    } catch (dateError) {
+      console.error('Error parsing date:', dateError);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid date format',
+          details: dateError instanceof Error ? dateError.message : 'Unknown error'
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
     const currentDayOfWeek = currentDate.getDay(); // 0 = Sunday
 
     // Get week_profiles - handle comma-separated string format
@@ -102,7 +152,19 @@ serve(async (req) => {
     weekProfiles = [...new Set(weekProfiles)];
     console.log(`Final weekProfiles (after deduplication): ${weekProfiles.length} unique profiles:`, weekProfiles);
     
-    let lastReset = userData.last_reset ? new Date(userData.last_reset) : null;
+    let lastReset: Date | null = null;
+    if (userData.last_reset) {
+      try {
+        lastReset = new Date(userData.last_reset);
+        if (isNaN(lastReset.getTime())) {
+          console.warn('Invalid last_reset date, treating as null');
+          lastReset = null;
+        }
+      } catch (e) {
+        console.warn('Error parsing last_reset date, treating as null:', e);
+        lastReset = null;
+      }
+    }
 
     // Helper function to get Eastern Time components and day of week from a UTC date
     function getEasternTimeInfo(date: Date): { year: number; month: number; day: number; dayOfWeek: number } {
@@ -115,13 +177,25 @@ serve(async (req) => {
       });
       
       const parts = formatter.formatToParts(date);
-      const year = parseInt(parts.find(p => p.type === 'year')!.value);
-      const month = parseInt(parts.find(p => p.type === 'month')!.value) - 1; // 0-indexed
-      const day = parseInt(parts.find(p => p.type === 'day')!.value);
+      const yearPart = parts.find(p => p.type === 'year');
+      const monthPart = parts.find(p => p.type === 'month');
+      const dayPart = parts.find(p => p.type === 'day');
+      const weekdayPart = parts.find(p => p.type === 'weekday');
+      
+      if (!yearPart || !monthPart || !dayPart || !weekdayPart) {
+        throw new Error('Failed to parse Eastern Time components');
+      }
+      
+      const year = parseInt(yearPart.value);
+      const month = parseInt(monthPart.value) - 1; // 0-indexed
+      const day = parseInt(dayPart.value);
       
       const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      const weekdayPart = parts.find(p => p.type === 'weekday')!.value;
-      const dayOfWeek = dayNames.indexOf(weekdayPart);
+      const dayOfWeek = dayNames.indexOf(weekdayPart.value);
+      
+      if (dayOfWeek === -1) {
+        throw new Error(`Invalid weekday: ${weekdayPart.value}`);
+      }
       
       return { year, month, day, dayOfWeek };
     }
@@ -149,19 +223,27 @@ serve(async (req) => {
       const estParts = formatter.formatToParts(estCandidate);
       const edtParts = formatter.formatToParts(edtCandidate);
       
-      const estYear = parseInt(estParts.find(p => p.type === 'year')!.value);
-      const estMonth = parseInt(estParts.find(p => p.type === 'month')!.value) - 1;
-      const estDay = parseInt(estParts.find(p => p.type === 'day')!.value);
-      const estHour = parseInt(estParts.find(p => p.type === 'hour')!.value);
-      const estMinute = parseInt(estParts.find(p => p.type === 'minute')!.value);
-      const estSecond = parseInt(estParts.find(p => p.type === 'second')!.value);
+      const getPartValue = (parts: Intl.DateTimeFormatPart[], type: string): string => {
+        const part = parts.find(p => p.type === type);
+        if (!part) {
+          throw new Error(`Missing ${type} in date parts`);
+        }
+        return part.value;
+      };
       
-      const edtYear = parseInt(edtParts.find(p => p.type === 'year')!.value);
-      const edtMonth = parseInt(edtParts.find(p => p.type === 'month')!.value) - 1;
-      const edtDay = parseInt(edtParts.find(p => p.type === 'day')!.value);
-      const edtHour = parseInt(edtParts.find(p => p.type === 'hour')!.value);
-      const edtMinute = parseInt(edtParts.find(p => p.type === 'minute')!.value);
-      const edtSecond = parseInt(edtParts.find(p => p.type === 'second')!.value);
+      const estYear = parseInt(getPartValue(estParts, 'year'));
+      const estMonth = parseInt(getPartValue(estParts, 'month')) - 1;
+      const estDay = parseInt(getPartValue(estParts, 'day'));
+      const estHour = parseInt(getPartValue(estParts, 'hour'));
+      const estMinute = parseInt(getPartValue(estParts, 'minute'));
+      const estSecond = parseInt(getPartValue(estParts, 'second'));
+      
+      const edtYear = parseInt(getPartValue(edtParts, 'year'));
+      const edtMonth = parseInt(getPartValue(edtParts, 'month')) - 1;
+      const edtDay = parseInt(getPartValue(edtParts, 'day'));
+      const edtHour = parseInt(getPartValue(edtParts, 'hour'));
+      const edtMinute = parseInt(getPartValue(edtParts, 'minute'));
+      const edtSecond = parseInt(getPartValue(edtParts, 'second'));
       
       // Compare components to target
       const matchesEST = estYear === year && estMonth === month && estDay === day && 
@@ -219,7 +301,24 @@ serve(async (req) => {
     }
 
     // Check if weekly reset is needed (check on any day, not just Sunday)
-    const mostRecentSunday = getMostRecentSunday(currentDate);
+    let mostRecentSunday: Date;
+    try {
+      mostRecentSunday = getMostRecentSunday(currentDate);
+    } catch (dateError) {
+      console.error('Error calculating most recent Sunday:', dateError);
+      // Default to allowing access if date calculation fails
+      return new Response(
+        JSON.stringify({ 
+          allowed: true,
+          reason: 'date_calculation_error_default_allow',
+          error: dateError instanceof Error ? dateError.message : 'Unknown date error'
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
     
     // Check if last_reset happened since the most recent Sunday
     const needsReset = !lastReset || lastReset < mostRecentSunday;
@@ -302,7 +401,14 @@ serve(async (req) => {
       console.log(`${planType} plan: Checking quota: ${weekProfiles.length} profiles used, limit is ${weeklyLimit}`);
       if (weekProfiles.length >= weeklyLimit) {
         console.log(`Weekly profile limit reached: ${weekProfiles.length} >= ${weeklyLimit}`);
-        const nextSundayDate = getNextSunday(currentDate);
+        let nextSundayDate: string;
+        try {
+          nextSundayDate = getNextSunday(currentDate);
+        } catch (dateError) {
+          console.error('Error calculating next Sunday date:', dateError);
+          // Fallback to a generic message if date calculation fails
+          nextSundayDate = 'this Sunday';
+        }
         
         // Free or basic plan user exceeded quota - deny access (don't track this profile)
         return new Response(
@@ -338,7 +444,13 @@ serve(async (req) => {
       console.error(`ERROR: Attempted to add profile would exceed limit! Current: ${newLength}, Limit: ${weeklyLimit}`);
       // Remove the profile we just added
       weekProfiles.pop();
-      const nextSundayDate = getNextSunday(currentDate);
+      let nextSundayDate: string;
+      try {
+        nextSundayDate = getNextSunday(currentDate);
+      } catch (dateError) {
+        console.error('Error calculating next Sunday date:', dateError);
+        nextSundayDate = 'this Sunday';
+      }
       return new Response(
         JSON.stringify({ 
           allowed: false,

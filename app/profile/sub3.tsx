@@ -93,7 +93,13 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
 
 
   
-  // Fetch profile data from ppl_index
+  // Affiliates / related profiles (from ppl_index.affiliates, ppl_index.related)
+  const [affiliatesStatus, setAffiliatesStatus] = useState<'available' | 'fail' | null>(null);
+  const [profileRelated, setProfileRelated] = useState<string | null>(null);
+  const [isAffiliatesLoading, setIsAffiliatesLoading] = useState(false);
+  const relatedProfilesButtonScale = useRef(new Animated.Value(1)).current;
+
+  // Fetch profile data from ppl_index (including affiliates, related for Related Profiles button)
   useEffect(() => {
     // Create abort controller for this effect
     const abortController = new AbortController();
@@ -106,7 +112,7 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
           const supabase = getSupabaseClient();
           const { data, error } = await supabase
             .from('ppl_index')
-            .select('tier, office_type')
+            .select('tier, office_type, affiliates, related')
             .eq('id', parseInt(index.toString()))
             .single();
           
@@ -120,10 +126,15 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
             if (isMounted) {
               setTier('base');
               setOfficeType('');
+              setAffiliatesStatus(null);
+              setProfileRelated(null);
             }
           } else if (data && isMounted) {
             setTier(data.tier || '');
             setOfficeType(data.office_type || '');
+            const aff = data.affiliates as string | null | undefined;
+            setAffiliatesStatus(aff === 'available' || aff === 'fail' ? aff : null);
+            setProfileRelated(typeof data.related === 'string' ? data.related : null);
           }
         } catch (err) {
           // Don't log error if it was an abort
@@ -134,6 +145,8 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
           if (isMounted) {
             setTier('base');
             setOfficeType('');
+            setAffiliatesStatus(null);
+            setProfileRelated(null);
           }
         }
       }
@@ -436,6 +449,40 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
         profileIndex: index?.toString() || ''
       }
     });
+  };
+
+  const handleRelatedProfilesPress = async () => {
+    if (!index) return;
+    const pplId = parseInt(index.toString(), 10);
+    if (affiliatesStatus === 'available' && profileRelated && profileRelated.trim()) {
+      Haptics.selectionAsync?.();
+      router.push({ pathname: '/related-profiles', params: { related: profileRelated } });
+      return;
+    }
+    setIsAffiliatesLoading(true);
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase.functions.invoke('ppl_affiliates', { body: { id: pplId } });
+      if (error) throw error;
+      const ok = data?.ok === true;
+      const relatedVal = typeof data?.related === 'string' ? data.related : '';
+      if (ok) {
+        setAffiliatesStatus('available');
+        setProfileRelated(relatedVal || null);
+        router.push({ pathname: '/related-profiles', params: { related: relatedVal } });
+      } else {
+        setAffiliatesStatus('fail');
+        setProfileRelated(null);
+        Alert.alert('Could not load affiliate list', 'We couldn\'t load this politician\'s affiliate list. Please try again.');
+      }
+    } catch (err) {
+      console.error('ppl_affiliates error:', err);
+      setAffiliatesStatus('fail');
+      setProfileRelated(null);
+      Alert.alert('Could not load affiliate list', 'We couldn\'t load this politician\'s affiliate list. Please try again.');
+    } finally {
+      setIsAffiliatesLoading(false);
+    }
   };
 
   // Render cards based on layout config
@@ -1131,6 +1178,41 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
           )}
         </View>
         {renderGrid()}
+        {/* Related Profiles button — below category grid, above first preview card */}
+        <View style={styles.relatedProfilesButtonRow}>
+          <Animated.View style={{ transform: [{ scale: relatedProfilesButtonScale }], alignSelf: 'stretch', width: '100%' }}>
+            <Pressable
+              onPressIn={() => {
+                Haptics.selectionAsync?.();
+                Animated.spring(relatedProfilesButtonScale, {
+                  toValue: 0.95,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(relatedProfilesButtonScale, {
+                  toValue: 1,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPress={handleRelatedProfilesPress}
+              disabled={isAffiliatesLoading}
+              style={[
+                styles.relatedProfilesButton,
+                isAffiliatesLoading && styles.relatedProfilesButtonDisabled
+              ]}
+            >
+              <Text style={[
+                styles.relatedProfilesButtonText,
+                isAffiliatesLoading && styles.relatedProfilesButtonTextDisabled
+              ]}>
+                Related Profiles
+              </Text>
+            </Pressable>
+          </Animated.View>
+        </View>
         {renderCards()}
         
         {/* Generate New Cards Button */}
@@ -1173,10 +1255,20 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
       </View>
       
       <CardLoadingIndicator 
-        visible={isCardLoading || isGeneratingCards} 
-        onCancel={handleCancelLoading}
-        title={isGeneratingCards ? "Loading Cards" : "Loading Card"}
-        subtitle="Please keep the app open while we prepare your card..."
+        visible={isCardLoading || isGeneratingCards || isAffiliatesLoading} 
+        onCancel={isAffiliatesLoading ? () => setIsAffiliatesLoading(false) : handleCancelLoading}
+        title={
+          isAffiliatesLoading
+            ? 'Loading Affiliate List'
+            : isGeneratingCards
+              ? 'Loading Cards'
+              : 'Loading Card'
+        }
+        subtitle={
+          isAffiliatesLoading
+            ? "Keep the app open as we load this politician's affiliate list."
+            : "Please keep the app open while we prepare your card..."
+        }
       />
     </Animated.ScrollView>
   );
@@ -1595,7 +1687,7 @@ const styles = StyleSheet.create({
     width: '95%',
     alignSelf: 'center',
     borderRadius: 32,
-    height: 165,
+    height: 158,
     marginTop: 0,
     marginBottom: 15,
     paddingTop: 18,
@@ -1613,11 +1705,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 5,
+    marginTop: 5,
     paddingHorizontal: 0,
   },
   gridButton1: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginLeft: 20,
@@ -1628,6 +1723,8 @@ const styles = StyleSheet.create({
   gridButton2: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginRight: 20,
@@ -1638,6 +1735,8 @@ const styles = StyleSheet.create({
   gridButton3: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginLeft: 20,
@@ -1648,6 +1747,8 @@ const styles = StyleSheet.create({
   gridButton4: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginRight: 20,
@@ -1658,6 +1759,8 @@ const styles = StyleSheet.create({
   gridButton5: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginLeft: 20,
@@ -1668,6 +1771,8 @@ const styles = StyleSheet.create({
   gridButton6: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginRight: 20,
@@ -1726,6 +1831,8 @@ const styles = StyleSheet.create({
   gridButtonFull: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 54,
     width: '90%',
     alignItems: 'center',
@@ -1761,5 +1868,37 @@ const styles = StyleSheet.create({
     color: '#999',
   },
 
-
+  // Related Profiles button (below category grid, above first preview card)
+  relatedProfilesButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+    marginTop: 0,
+    alignSelf: 'center',
+    width: '92%',
+  },
+  relatedProfilesButton: {
+    backgroundColor: '#050505',
+    borderRadius: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 60,
+    width: '100%',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  relatedProfilesButtonDisabled: {
+    backgroundColor: '#333',
+    opacity: 0.6,
+  },
+  relatedProfilesButtonText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '400',
+    textAlign: 'left',
+  },
+  relatedProfilesButtonTextDisabled: {
+    color: '#999',
+  },
 }); 

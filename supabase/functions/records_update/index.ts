@@ -527,24 +527,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Prioritize URLs: prefer main key-votes page (no category number) over category-specific pages
+    // Prioritize URLs: prefer main key-votes page (no category number) over category-specific pages.
+    // Avoid ?sponsorships=1 — that shows sponsorships-only, not key votes, and yields 0 vote rows.
     // URL structure: /candidate/key-votes/{id}/{name} or /candidate/key-votes/{id}/{name}/{category}/{category-name}
     let targetUrl = validUrls[0];
     
-    // Look for main page (no category number in path)
-    const mainPageUrl = validUrls.find(url => {
+    const isMainPagePath = (url: string) => {
       try {
         const urlObj = new URL(url);
         const pathSegments = urlObj.pathname.split("/").filter(Boolean);
-        // Main page should be: candidate/key-votes/{id}/{name} (4 segments, no category number)
-        // Category page: candidate/key-votes/{id}/{name}/{category}/{category-name} (6 segments)
-        return pathSegments.length === 4 || 
-               (pathSegments.length === 5 && !/^\d+$/.test(pathSegments[4])); // Allow trailing slash
+        return pathSegments.length === 4 ||
+               (pathSegments.length === 5 && !/^\d+$/.test(pathSegments[4]));
       } catch {
         return false;
       }
-    });
-    
+    };
+
+    // Prefer main key-votes page WITHOUT sponsorships=1 (full key votes, not sponsorships-only view)
+    const mainPageNoSponsorships = validUrls.find(url =>
+      isMainPagePath(url) && !url.toLowerCase().includes("sponsorships=1")
+    );
+    const mainPageUrl = mainPageNoSponsorships ?? validUrls.find(isMainPagePath);
+
     if (mainPageUrl) {
       targetUrl = mainPageUrl;
       console.log(`[RECORDS_UPDATE] Found main key-votes page: ${targetUrl}`);

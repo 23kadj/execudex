@@ -885,6 +885,8 @@ const styles = StyleSheet.create({
   gridButton1: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginLeft: 20,
@@ -895,6 +897,8 @@ const styles = StyleSheet.create({
   gridButton2: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginRight: 20,
@@ -905,6 +909,8 @@ const styles = StyleSheet.create({
   gridButton3: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginLeft: 20,
@@ -915,6 +921,8 @@ const styles = StyleSheet.create({
   gridButton4: {
     backgroundColor: '#090909',
     borderRadius: 15,
+    borderColor: '#101010',
+    borderWidth: 1,
     height: 58,
     width: '43%',
     marginRight: 20,

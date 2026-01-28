@@ -259,6 +259,33 @@ function extractBillWordTitleFromText(txt: string, billCode: string | null): str
   return null;
 }
 
+/** Clean and de-dupe a raw word title using Mistral to drop bill ids and stray years */
+async function refineTitleWithMistral(rawTitle: string, billCode?: string | null): Promise<string | null> {
+  try {
+    const sys = `
+You are a precise title cleaner for congress.gov bill titles. Remove bill codes (e.g., "H.R.4016", "S.1582") and trailing congress/session years that are just metadata (e.g., ", 2026"). Keep the real, human-readable title text. If the year is an essential part of the official title (e.g., "Act of 2001"), keep it. Never return only a year. Return concise plain text with no bill id prefix.
+
+Return ONLY JSON:
+{ "clean_title": "<clean title or null if unsure>" }
+`.trim();
+
+    const usr = `
+Raw title: "${rawTitle}"
+Bill code (if any): "${billCode || ""}"
+`.trim();
+
+    const res = await mistralJSON(sys, usr, 0, "clean_title");
+    const out = (res?.clean_title ?? null) as string | null;
+    if (typeof out === "string") {
+      const cleaned = out.replace(/\s+/g, " ").trim();
+      if (cleaned && !/^\d{4}$/.test(cleaned)) return cleaned;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Format a date like "03/01/2025" as "March 1st, 2025". Falls back to the original string on parse errors. */
 function formatDateWithOrdinalFromMDY(s: string): string {
   try {
@@ -984,9 +1011,11 @@ async function enrichBillMetadata(legiId: number, baseUrl: string): Promise<void
         const billIdLikeRx = /^(HR|S|HJRES|SJRES|HCONRES|SCONRES|HRES|SRES)\d+$/i;
         const matchesBillIdPattern = billIdLikeRx.test(existingCompact);
         const matchesBillCode = billCompact && existingCompact === billCompact;
+        const looksLikeBareYear =
+          /^\s*\d{4}\s*\)?\s*$/.test(existingNameRaw); // e.g., "2026" or "2026)"
 
-        // Only treat as auto-updatable if it looks like a bill id.
-        if (matchesBillIdPattern || matchesBillCode) {
+        // Only treat as auto-updatable if it looks like a bill id or obviously-bad year-only title.
+        if (matchesBillIdPattern || matchesBillCode || looksLikeBareYear) {
           allowNameUpdate = true;
         } else {
           console.log(`[enrichBillMetadata] Existing name for legi_id ${legiId} appears to be a custom word title ("${existingNameRaw}"); will NOT overwrite.`);
@@ -996,7 +1025,21 @@ async function enrichBillMetadata(legiId: number, baseUrl: string): Promise<void
       if (allowNameUpdate) {
         const wordTitle = extractBillWordTitleFromText(mainPageText, billCodeFromUrl);
         if (wordTitle) {
-          const cleanedTitle = wordTitle.replace(/\s+/g, " ").trim();
+          const mistralTitle = await refineTitleWithMistral(wordTitle, billCodeFromUrl);
+          const rawCleaned = (mistralTitle || wordTitle).replace(/\s+/g, " ").trim();
+
+          // Strip obvious bill-code prefixes and stray trailing years if Mistral left them
+          let cleanedTitle = rawCleaned;
+          if (billCodeFromUrl) {
+            const codeNoSpaces = billCodeFromUrl.replace(/\s+/g, "");
+            const codeEsc = codeNoSpaces.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            cleanedTitle = cleanedTitle.replace(new RegExp(`^\\s*${codeEsc}[\\s:\\-–—]*`, "i"), "").trim();
+          }
+          cleanedTitle = cleanedTitle.replace(/[,;:\-–—\s]*\b(19|20)\d{2}\b\s*$/, "").trim() || cleanedTitle;
+
+          // If we somehow end up with only a year, fall back to the original word title
+          if (/^\\d{4}$/.test(cleanedTitle)) cleanedTitle = wordTitle.replace(/\s+/g, " ").trim();
+
           const chosenName =
             cleanedTitle && cleanedTitle.length <= 30
               ? cleanedTitle
@@ -1910,10 +1953,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ---------- SEND NOTIFICATIONS TO ALL USERS (fire-and-forget) ----------
+    // ---------- SEND NOTIFICATIONS TO ALL USERS (fire-and-forget) — same pattern as new-card notifications ----------
     (async () => {
       try {
-        // Fetch all users with notifications enabled
+        // Fetch all users with notifications enabled (same as bill_cards / ppl_card_gen)
         const { data: usersWithNotifications } = await supabase
           .from('users')
           .select('uuid')
@@ -1926,33 +1969,31 @@ Deno.serve(async (req) => {
         
         const enabledUserIds = usersWithNotifications.map(u => u.uuid);
         
-        // Fetch push tokens for users with notifications enabled
+        // Message style matches working "new cards" notifications: "[Event] for [profile]. Come check it out!"
+        const message = `A new legislation profile has been added for ${displayName}. Come check it out!`;
+        const title = `New Legislation Profile: ${displayName}`;
+        const body = `A new legislation profile for ${displayName} has been added, come check it out!`;
+        
+        // Insert notification records for all users with notifications enabled (same as card-gen)
+        const notificationRecords = enabledUserIds.map(userId => ({
+          user_id: userId,
+          profile_id: `legi${legiId}`,
+          profile_name: displayName,
+          is_ppl: false,
+          message: message,
+          categories: []
+        }));
+        
+        await supabase.from('notifications').insert(notificationRecords);
+        console.log(`[bill_search] Created notifications for ${enabledUserIds.length} users`);
+        
+        // Send push notifications via Expo API (only for users with tokens)
         const { data: pushTokens } = await supabase
           .from('user_push_tokens')
           .select('push_token, user_id')
           .in('user_id', enabledUserIds);
         
         if (pushTokens && pushTokens.length > 0) {
-          const message = `A new policy is available on Execudex, come check it out!`;
-          
-          // Insert notification records for users with notifications enabled
-          const notificationRecords = enabledUserIds.map(userId => ({
-            user_id: userId,
-            profile_id: `legi${legiId}`,
-            profile_name: nameNoSpaces,
-            is_ppl: false,
-            message: message,
-            categories: []
-          }));
-          
-          await supabase.from('notifications').insert(notificationRecords);
-          console.log(`[bill_search] Created notifications for ${enabledUserIds.length} users`);
-          
-          // Send push notifications via Expo API
-          const title = `New Policy Available`;
-          const body = message;
-          
-          // Send push notifications
           const pushMessages = pushTokens.map(tokenData => ({
             to: tokenData.push_token,
             sound: 'notification.wav',
@@ -1962,8 +2003,7 @@ Deno.serve(async (req) => {
             badge: 1,
           }));
           
-          // Send all push notifications in parallel
-          const pushPromises = pushMessages.map(message => 
+          const pushPromises = pushMessages.map(pushMsg =>
             fetch('https://exp.host/--/api/v2/push/send', {
               method: 'POST',
               headers: {
@@ -1971,7 +2011,7 @@ Deno.serve(async (req) => {
                 'Accept-Encoding': 'gzip, deflate',
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify(message),
+              body: JSON.stringify(pushMsg),
             })
           );
           

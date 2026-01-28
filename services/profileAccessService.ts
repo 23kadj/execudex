@@ -10,6 +10,18 @@ export interface ProfileAccessResponse {
   error?: string;
 }
 
+const PROFILE_ACCESS_MAX_RETRIES = 2;
+const PROFILE_ACCESS_RETRY_DELAY_MS = 800;
+
+function isRetryableStatus(err: unknown): boolean {
+  const status = (err as { context?: { status?: number } })?.context?.status;
+  return status === 502 || status === 503 || status === 504;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Check if user can access a profile based on their subscription plan
  * @param userId - User's UUID
@@ -20,52 +32,64 @@ export async function checkProfileAccess(
   userId: string,
   profileId: string
 ): Promise<ProfileAccessResponse> {
-  try {
-    const currentDate = new Date().toISOString();
+  const currentDate = new Date().toISOString();
+  const body = {
+    user_uuid: userId,
+    profile_id: profileId,
+    date: currentDate,
+  };
 
-    console.log('[checkProfileAccess] Starting access check:', { userId, profileId, currentDate });
+  let lastError: unknown = null;
 
-    const { data, error } = await getSupabaseClient().functions.invoke('check_profile_access', {
-      body: {
-        user_uuid: userId,
-        profile_id: profileId,
-        date: currentDate,
-      },
-    });
+  for (let attempt = 0; attempt <= PROFILE_ACCESS_MAX_RETRIES; attempt++) {
+    try {
+      if (attempt > 0) {
+        await sleep(PROFILE_ACCESS_RETRY_DELAY_MS);
+      }
 
-    if (error) {
-      console.error('[checkProfileAccess] ❌ Error calling check_profile_access edge function:', error);
-      console.error('[checkProfileAccess] Full error object:', JSON.stringify(error, null, 2));
-      console.error('[checkProfileAccess] Error context:', error.context);
-      console.error('[checkProfileAccess] ⚠️ Edge function failed - defaulting to ALLOW access (profile tracking may not work)');
-      // Default to allowing access if edge function fails (graceful degradation)
-      // NOTE: This means week_profiles won't be updated if the edge function fails!
+      const { data, error } = await getSupabaseClient().functions.invoke('check_profile_access', {
+        body,
+      });
+
+      if (!error) {
+        return data as ProfileAccessResponse;
+      }
+
+      lastError = error;
+
+      if (attempt < PROFILE_ACCESS_MAX_RETRIES && isRetryableStatus(error)) {
+        continue;
+      }
+
+      // Final attempt failed or non-retryable: degrade gracefully
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(
+          `[checkProfileAccess] Edge function failed after ${attempt + 1} attempt(s), defaulting to ALLOW. Status: ${(error as { context?: { status?: number } })?.context?.status ?? 'unknown'}`
+        );
+      }
       return {
         allowed: true,
-        error: error.message || 'Failed to check profile access',
+        error: (error as Error).message || 'Failed to check profile access',
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt < PROFILE_ACCESS_MAX_RETRIES) {
+        continue;
+      }
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn('[checkProfileAccess] Exception after retries, defaulting to ALLOW:', error);
+      }
+      return {
+        allowed: true,
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
-
-    // Log the raw response
-    console.log('[checkProfileAccess] ✅ Edge function response received:', JSON.stringify(data, null, 2));
-    console.log('[checkProfileAccess] Access check result:', {
-      allowed: data?.allowed,
-      profilesUsed: data?.profilesUsed,
-      reason: data?.reason,
-      showWarning: data?.showWarning,
-      remainingProfiles: data?.remainingProfiles
-    });
-
-    return data as ProfileAccessResponse;
-  } catch (error) {
-    console.error('Exception in checkProfileAccess:', error);
-    console.error('Exception occurred - defaulting to ALLOW access');
-    // Default to allowing access on exception (graceful degradation)
-    return {
-      allowed: true,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
   }
+
+  return {
+    allowed: true,
+    error: lastError instanceof Error ? lastError.message : 'Failed to check profile access',
+  };
 }
 
 /**

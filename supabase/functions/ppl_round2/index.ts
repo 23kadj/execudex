@@ -33,71 +33,63 @@ const AGENDA_CATEGORIES = [
   "education"
 ] as const;
 
-/** ======= allowed domains ======= (unchanged core + additions) */
+/** ======= allowed domains ======= (from PPL_ALLOWED_DOMAINS.md) */
 const ALLOWED_DOMAINS = [
-  "a46.asmdc.org","aaas.org","abc.net.au","abcnews.go.com","acenet.edu","aclu.org",
-  "actonclimate.com","aei.org","afp.com","afsc.org","ajmc.com","aljazeera.com",
-  "americanimmigrationcouncil.org","americanprogress.org","apnews.com","arizonamirror.com",
-  "armscontrol.org","assemblee-nationale.fr","atlanticcouncil.org","axios.com",
-  "ballotpedia.org","ballotready.org","bankofengland.co.uk","bbc.com","bea.gov",
-  "beverlyhills.org","bioguide.congress.gov","bipartisanpolicy.org","bjs.ojp.gov",
-  "bloomberg.com","bls.gov","boe.es","brennancenter.org","britannica.com","brookings.edu",
-  "bts.gov","budget.house.gov","budgetmodel.wharton.upenn.edu","bundesbank.de",
-  "bundesrat.de","bundesregierung.de","bundestag.de","bundesverfassungsgericht.de",
-  "c-span.org","caimmigrant.org","calbudgetcenter.org","californiahealthline.org",
-  "calmatters.org","camera.it","campaignlegal.org","canada.ca","capitol.texas.gov",
-  "carnegieendowment.org","carnegieeurope.eu","cato.org","cbc.ca","cbo.gov",
-  "cbpp.org","ccltss.org","cdc.gov","cdt.org","cdflaborlaw.com","cdph.ca.gov",
-  "census.gov","cfr.org","chathamhouse.org","christianitytoday.com","cityofchicago.org",
-  "climate.law.columbia.edu","cnn.com","commonwealthfund.org","comptroller.texas.gov",
-  "congress.gov","constitutioncenter.org","consumerfinance.gov","courtlistener.com",
-  "crfb.org","csg.org","csis.org","csmonitor.com","ctmirror.org","curia.europa.eu",
-  "data.ca.gov","data.cityofnewyork.us","data.gov","data.ny.gov","data.texas.gov",
-  "dataverse.harvard.edu","dhs.gov","documentcloud.org","dos.myflorida.com","dot.gov",
-  "dre.pt","dw.com","eac.gov","ecb.europa.eu","ecfr.gov","echr.coe.int",
-  "econofact.org","ed.gov","edsource.org","edstrategy.org","eeas.europa.eu","eff.org",
-  "eia.gov","electionlab.mit.edu","electionline.org","elections.ca","elections.ny.gov",
-  "electionstudies.org","electoralcommission.org.uk","electproject.org","energy.gov",
-  "energyinnovation.org","epa.gov","epi.org","eur-lex.europa.eu","europa.eu",
-  "factcheck.org","fairvote.org","fbi.gov","fcc.gov","fda.gov","fdd.org","fec.gov",
-  "federalregister.gov","federalreserve.gov","finra.org","flsenate.gov","foley.com",
-  "followthemoney.org","france24.com","freepress.net","ftc.gov","gallup.com","gao.gov",
-  "gazette.gc.ca","gazzettaufficiale.it","globalinitiative.net","goodjobsfirst.org",
-  "gothamist.com","gov.ca.gov","gov.uk","gouvernement.fr","governor.ny.gov","govinfo.gov",
-  "govtrack.us","gpo.gov","gsa.gov","harvard.edu","hhs.gov","hklaw.com","hoover.org",
-  "house.gov","hrw.org","hud.gov","humanrightsmeasurement.org","icc-cpi.int","icj-cij.org",
-  "icpsr.umich.edu","ifs.org.uk","ilga.gov","imf.org","insideclimatenews.org",
-  "insidehighered.com","irs.gov","jec.senate.gov","justice.gc.ca","justice.gov",
-  "justsecurity.org","kansasreflector.com","kff.org","laist.com","latimes.com",
-  "law.berkeley.edu","law.cornell.edu","lawandcrime.com","lawfaremedia.org",
-  "leg.colorado.gov","leg.wa.gov","legislation.gov.uk","leginfo.legislature.ca.gov",
-  "legis.state.pa.us","loc.gov","malegislature.gov","manchesterdemocracy.org",
-  "manhattan-institute.org","mass.gov","maynardnexsen.com","mercatus.org","michiganadvance.com",
-  "millercenter.org","minnpost.com","morningconsult.com","myfloridahouse.gov","naco.org",
-  "nap.edu","nasaa.org","nass.org","nato.int","nber.org","nbcbayarea.com","nces.ed.gov",
-  "ncsc.org","ncsl.org","nea.org","nga.org","nhk.or.jp","nhtsa.gov","nih.gov","nilc.org",
-  "noaa.gov","npr.org","nrdc.org","nyc.gov","nycbar.org","nycourts.gov","oag.ca.gov",
-  "occrp.org","oecd.org","ohchr.org","oig.justice.gov","oireachtas.ie","ojp.gov",
-  "opec.org","opensecrets.org","openstates.org","osce.org","ourcommons.ca","ourworldindata.org",
-  "oversight.gov","oyez.org","parl.ca","parlamento.pt","parliament.uk","pbs.org",
-  "pewresearch.org","pgpf.org","phila.gov","pogo.org","politico.com","politifact.com",
-  "ppic.org","presidency.ucsb.edu","project-syndicate.org","propublica.org","prri.org",
-  "psea.org","publicagenda.org","publichealth.berkeley.edu","publicintegrity.org",
-  "publications.gc.ca","pwc.com","rand.org","randstatestats.org","reason.org",
-  "regents.universityofcalifornia.edu","reginfo.gov","reporterslab.org","resolutionfoundation.org",
-  "reuters.com","rferl.org","rfi.fr","rstreet.org","rte.ie","saisreview.sais.jhu.edu",
+  "a46.asmdc.org","aaas.org","abc.net.au","abcnews.go.com","acenet.edu","afp.com",
+  "ajmc.com","apnews.com","arizonamirror.com","assemblee-nationale.fr","axios.com","ballotpedia.org",
+  "ballotready.org","bankofengland.co.uk","bbc.com","bea.gov","beverlyhills.org","bioguide.congress.gov",
+  "bipartisanpolicy.org","bjs.ojp.gov","bls.gov","boe.es","britannica.com","bts.gov",
+  "budget.house.gov","budgetmodel.wharton.upenn.edu","bundesbank.de","bundesrat.de","bundesregierung.de","bundestag.de",
+  "bundesverfassungsgericht.de","c-span.org","caimmigrant.org","californiahealthline.org","calmatters.org","camera.it",
+  "canada.ca","capitol.texas.gov","carnegieendowment.org","carnegieeurope.eu","cbc.ca","cbo.gov",
+  "ccltss.org","cdc.gov","cdt.org","cdflaborlaw.com","cdph.ca.gov","census.gov",
+  "cfr.org","chathamhouse.org","cityofchicago.org","climate.law.columbia.edu","commonwealthfund.org","comptroller.texas.gov",
+  "congress.gov","constitutioncenter.org","consumerfinance.gov","courtlistener.com","crfb.org","csg.org",
+  "csis.org","csmonitor.com","ctmirror.org","curia.europa.eu","data.ca.gov","data.cityofnewyork.us",
+  "data.gov","data.ny.gov","data.texas.gov","dataverse.harvard.edu","dhs.gov","documentcloud.org",
+  "dos.myflorida.com","dot.gov","dre.pt","dw.com","eac.gov","ecb.europa.eu",
+  "ecfr.gov","echr.coe.int","econofact.org","ed.gov","edsource.org","edstrategy.org",
+  "eeas.europa.eu","eff.org","eia.gov","electionlab.mit.edu","electionline.org","elections.ca",
+  "elections.ny.gov","electionstudies.org","electoralcommission.org.uk","electproject.org","energy.gov","epa.gov",
+  "eur-lex.europa.eu","europa.eu","factcheck.org","fairvote.org","fbi.gov","fcc.gov",
+  "fda.gov","fec.gov","federalregister.gov","federalreserve.gov","finra.org","flsenate.gov",
+  "foley.com","followthemoney.org","france24.com","ftc.gov","gallup.com","gao.gov",
+  "gazette.gc.ca","gazzettaufficiale.it","globalinitiative.net","gothamist.com","gov.ca.gov","gov.uk",
+  "gouvernement.fr","governor.ny.gov","govinfo.gov","govtrack.us","gpo.gov","gsa.gov",
+  "harvard.edu","hhs.gov","hklaw.com","house.gov","hud.gov","humanrightsmeasurement.org",
+  "icc-cpi.int","icj-cij.org","icpsr.umich.edu","ifs.org.uk","ilga.gov","imf.org",
+  "insidehighered.com","irs.gov","jec.senate.gov","justice.gc.ca","justice.gov","justsecurity.org",
+  "kansasreflector.com","kff.org","laist.com","latimes.com","law.berkeley.edu","law.cornell.edu",
+  "leg.colorado.gov","leg.wa.gov","legislation.gov.uk","leginfo.legislature.ca.gov","legis.state.pa.us","loc.gov",
+  "malegislature.gov","manchesterdemocracy.org","mass.gov","maynardnexsen.com","michiganadvance.com","millercenter.org",
+  "minnpost.com","morningconsult.com","myfloridahouse.gov","naco.org","nap.edu","nasaa.org",
+  "nass.org","nato.int","nber.org","nbcbayarea.com","nces.ed.gov","ncsc.org",
+  "ncsl.org","nga.org","nhk.or.jp","nhtsa.gov","nih.gov","noaa.gov",
+  "npr.org","nyc.gov","nycbar.org","nycourts.gov","oag.ca.gov","occrp.org",
+  "oecd.org","ohchr.org","oig.justice.gov","oireachtas.ie","ojp.gov","opec.org",
+  "opensecrets.org","openstates.org","osce.org","ourcommons.ca","ourworldindata.org","oversight.gov",
+  "oyez.org","parl.ca","parlamento.pt","parliament.uk","pbs.org","pewresearch.org",
+  "pgpf.org","phila.gov","politico.com","politifact.com","ppic.org","presidency.ucsb.edu",
+  "propublica.org","prri.org","psea.org","publicagenda.org","publichealth.berkeley.edu","publications.gc.ca",
+  "pwc.com","rand.org","randstatestats.org","regents.universityofcalifornia.edu","reginfo.gov","reporterslab.org",
+  "resolutionfoundation.org","reuters.com","rferl.org","rfi.fr","rte.ie","saisreview.sais.jhu.edu",
   "santamariatimes.com","sba.gov","sbs.com.au","scholars.org","scite.ai","sec.gov",
-  "senat.fr","senate.gov","senato.it","sencanada.ca","siepr.stanford.edu","sierraclub.org",
-  "sipri.org","smallwarsjournal.com","snopes.com","sos.ca.gov","sos.state.oh.us",
-  "sos.texas.gov","sos.wa.gov","sph.emory.edu","ssa.gov","stateline.org","stinson.com",
-  "stlouisfed.org","supremecourt.gov","taxfoundation.org","taxpolicycenter.org",
-  "techpolicy.press","thebureauinvestigates.com","theguardian.com","theharrispoll.com",
-  "thehill.com","themarkup.org","thetrace.org","tsinghua.edu.cn","treasury.gov",
-  "ucla.edu","umn.edu","un.org","urban.org","usa.gov","usafacts.org","usaspending.gov",
-  "usatoday.com","uscourts.gov","usda.gov","usgs.gov","usitc.gov","usmayors.org",
-  "uww.universityofcalifornia.edu","verfassungsblog.de","voanews.com","votesmart.org",
-  "voteview.com","warontherocks.com","wisconsinwatch.org","worldbank.org","wsj.com",
-  "yahoo.com","yougov.com","americanactionforum.org","americorps.gov"
+  "senat.fr","senate.gov","senato.it","sencanada.ca","siepr.stanford.edu","sipri.org",
+  "snopes.com","sos.ca.gov","sos.state.oh.us","sos.texas.gov","sos.wa.gov","sph.emory.edu",
+  "ssa.gov","stateline.org","stinson.com","stlouisfed.org","supremecourt.gov","taxfoundation.org",
+  "taxpolicycenter.org","techpolicy.press","thebureauinvestigates.com","theguardian.com","theharrispoll.com","thehill.com",
+  "themarkup.org","thetrace.org","tsinghua.edu.cn","treasury.gov","ucla.edu","umn.edu",
+  "un.org","urban.org","usa.gov","usafacts.org","usaspending.gov","usatoday.com",
+  "uscourts.gov","usda.gov","usgs.gov","usitc.gov","usmayors.org","uww.universityofcalifornia.edu",
+  "verfassungsblog.de","votesmart.org","voteview.com","wisconsinwatch.org","worldbank.org","yougov.com",
+  "americorps.gov","cepr.org","nyccfb.info","cnbc.com","english.elpais.com","crainsnewyork.com",
+  "cityandstateny.com","vitalcitynyc.org","thecity.nyc","gov.texas.gov","open.texas.gov","natlawreview.com",
+  "cliniclegal.org","shrm.org","azcleanelections.gov","texastribune.org","tpr.org","kut.org",
+  "houstonpublicmedia.org","keranews.org","elpasomatters.org","19thnews.org","citylimits.org","marylandmatters.org",
+  "governor.maryland.gov","priorities.maryland.gov","nbcwashington.com","hstoday.us","euronews.com","apmresearchlab.org",
+  "econbrowser.com","econfocus.org","econpolicyjournal.org","econpolicyinstitute.org","federalreservehistory.org","federalreserveeducation.org",
+  "dallasfed.org","clevelandfed.org","newyorkfed.org","philadelphiafed.org","kansascityfed.org","richmondfed.org",
+  "minneapolisfed.org","nationalacademies.org","science.org","nature.com"
 ] as const;
 
 /** ========================== LLM JUDGE (for unknown domains) ========================== */
@@ -393,6 +385,69 @@ function isBlockedDomain(url: string): boolean {
     return false;
   } catch { return false; }
 }
+
+/** Redirect-style query param keys (case-insensitive). */
+const REDIRECT_PARAM_KEYS = new Set([
+  "redirect", "redirect_url", "redirect_uri", "url", "u", "target", "dest", "destination",
+  "next", "continue", "return", "return_url", "link", "out", "goto"
+]);
+
+/** Repeatedly decode until absolute http(s) URL or bound. */
+function tryDecodeToAbsoluteUrl(val: string, maxDecodes = 5): string | null {
+  let current = String(val).trim();
+  for (let i = 0; i < maxDecodes; i++) {
+    if (/^https?:\/\//i.test(current)) return current;
+    try {
+      const next = decodeURIComponent(current);
+      if (next === current) break;
+      current = next.trim();
+    } catch {
+      return null;
+    }
+  }
+  return /^https?:\/\//i.test(current) ? current : null;
+}
+
+/** Extract embedded http(s) URLs from redirect-like query params. */
+function extractEmbeddedUrls(url: string): string[] {
+  const out: string[] = [];
+  try {
+    const parsed = new URL(url);
+    for (const [k, v] of parsed.searchParams) {
+      if (v && REDIRECT_PARAM_KEYS.has(k.toLowerCase())) {
+        const abs = tryDecodeToAbsoluteUrl(v);
+        if (abs) out.push(abs);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
+/** True if url or any embedded redirect target is blocked (recursive, bounded). */
+function isBlockedDomainDeep(url: string, depth = 0, maxDepth = 3): boolean {
+  if (depth > maxDepth) return isBlockedDomain(url);
+  if (isBlockedDomain(url)) return true;
+  for (const emb of extractEmbeddedUrls(url)) {
+    if (isBlockedDomainDeep(emb, depth + 1, maxDepth)) {
+      const h = normalizedHost(emb);
+      if (h) console.warn("blocked_by_embedded_target", { originalUrl: url, embeddedUrl: emb, embeddedHost: h });
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Unwrap one or more redirect wrappers to get canonical destination URL. */
+function unwrapLikelyRedirectUrl(url: string, depth = 0, maxDepth = 3): string {
+  if (depth >= maxDepth) return url;
+  const embedded = extractEmbeddedUrls(url);
+  const first = embedded[0];
+  if (first) return unwrapLikelyRedirectUrl(first, depth + 1, maxDepth);
+  return url;
+}
+
 function bareDomainLabelFromUrl(u: string): string {
   try {
     const host = new URL(u).hostname.replace(/^www\./, "");
@@ -570,7 +625,16 @@ function stripHtml(html: string) {
 async function resolveFinalUrl(url: string, timeoutMs = 4000): Promise<string> {
   try {
     const r = await fetchWithTimeout(url, { method: "HEAD", redirect: "follow" }, timeoutMs);
-    return r.url || url;
+    let finalUrl = r?.url || url;
+    if (!r?.url) {
+      const r2 = await fetchWithTimeout(
+        url,
+        { method: "GET", redirect: "follow", headers: { "Range": "bytes=0-0" } },
+        timeoutMs
+      );
+      finalUrl = r2?.url || url;
+    }
+    return finalUrl;
   } catch {
     return url;
   }
@@ -579,9 +643,11 @@ async function resolveFinalUrl(url: string, timeoutMs = 4000): Promise<string> {
 async function tavilyExtractSafe(url: string): Promise<string> {
   if (!budgetOk()) return "";
 
-  // Resolve redirects early and block if landing on a blocked domain.
-  const resolvedForHead = await resolveFinalUrl(url);
-  if (isBlockedDomain(resolvedForHead)) {
+  const u2 = unwrapLikelyRedirectUrl(url);
+  if (isBlockedDomainDeep(u2)) return "";
+
+  const resolvedForHead = await resolveFinalUrl(u2);
+  if (isBlockedDomainDeep(resolvedForHead)) {
     console.warn("blocked_by_redirect_head", { original: url, final: resolvedForHead });
     return "";
   }
@@ -591,14 +657,15 @@ async function tavilyExtractSafe(url: string): Promise<string> {
     const r = await fetchWithTimeout("https://api.tavily.com/extract", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: TAVILY_API_KEY, urls: [url], format: "markdown" })
+      body: JSON.stringify({ api_key: TAVILY_API_KEY, urls: [u2], format: "markdown" })
     }, EXTRACT_TIMEOUT_MS);
     if (r.ok) {
       const j = await r.json().catch(() => ({}));
       const res = j?.results?.[0] ?? {};
-      const resolvedUrl = String(res.url || url);
-      if (isBlockedDomain(resolvedUrl)) {
-        console.warn("blocked_by_redirect_tavily", { original: url, final: resolvedUrl });
+      const resolvedUrl = String(res.url || u2);
+      const resolvedUnwrapped = unwrapLikelyRedirectUrl(resolvedUrl);
+      if (isBlockedDomainDeep(resolvedUnwrapped)) {
+        console.warn("blocked_by_redirect_tavily", { original: url, final: resolvedUnwrapped });
         return "";
       }
       const content =
@@ -611,16 +678,17 @@ async function tavilyExtractSafe(url: string): Promise<string> {
 
   // 2) Direct HTML (real UA)
   try {
-    const r2 = await fetchWithTimeout(url, {
+    const r2 = await fetchWithTimeout(u2, {
       headers: {
         "User-Agent": "Mozilla/5.0",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
       }
     }, EXTRACT_TIMEOUT_MS);
     if (r2.ok) {
-      const finalUrl = r2.url || url;
-      if (isBlockedDomain(finalUrl)) {
-        console.warn("blocked_by_redirect_html", { original: url, final: finalUrl });
+      const finalUrl = r2.url || u2;
+      const finalUnwrapped = unwrapLikelyRedirectUrl(finalUrl);
+      if (isBlockedDomainDeep(finalUnwrapped)) {
+        console.warn("blocked_by_redirect_html", { original: url, final: finalUnwrapped });
         return "";
       }
       const html = await r2.text();
@@ -629,9 +697,9 @@ async function tavilyExtractSafe(url: string): Promise<string> {
     }
   } catch {}
 
-  // 3) Jina reader proxy
+  // 3) Jina reader proxy (use unwrapped destination only; already verified not blocked)
   try {
-    const proxied = `https://r.jina.ai/http://${url.replace(/^https?:\/\//i, "")}`;
+    const proxied = `https://r.jina.ai/http://${u2.replace(/^https?:\/\//i, "")}`;
     const r3 = await fetchWithTimeout(proxied, {}, EXTRACT_TIMEOUT_MS);
     if (r3.ok) {
       const txt = await r3.text();
@@ -728,19 +796,19 @@ Deno.serve(async (req) => {
       const deduped = urls.filter((u) => (seenUrls.has(u) ? false : (seenUrls.add(u), true)));
       const ranked = rankUrlsByFreshness(deduped);
 
-      // Categorize: blocked, allowed, unknown
+      // Categorize: blocked, allowed, unknown (unwrap redirects, use canonical URL)
       const categorized: Array<{ url: string; domain: string; category: "allowed" | "unknown" }> = [];
-      
+
       for (const u of ranked) {
-        // Skip blocked
-        if (isBlockedDomain(u)) continue;
-        
-        const d = matchAllowedDomain(u);
+        const u2 = unwrapLikelyRedirectUrl(u);
+        if (isBlockedDomainDeep(u2)) continue;
+
+        const d = matchAllowedDomain(u2);
         if (d) {
-          categorized.push({ url: u, domain: d, category: "allowed" });
+          categorized.push({ url: u2, domain: d, category: "allowed" });
         } else {
-          const host = (() => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return "unknown"; } })();
-          categorized.push({ url: u, domain: host, category: "unknown" });
+          const host = (() => { try { return new URL(u2).hostname.replace(/^www\./, ""); } catch { return "unknown"; } })();
+          categorized.push({ url: u2, domain: host, category: "unknown" });
         }
       }
 

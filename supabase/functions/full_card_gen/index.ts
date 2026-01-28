@@ -346,6 +346,117 @@ function matchCardDemographics(opts: {
   return matches.join(', ');
 }
 
+/**
+ * Extract related politician names from full page text (politician cards only).
+ * Uses LLM to find contextually relevant mentions, resolves against ppl_index,
+ * excludes the card owner, returns canonical names as "Name One, Name Two" or null.
+ */
+async function extractRelatedPoliticians(
+  pageText: string,
+  ownerId: string | number | null
+): Promise<string | null> {
+  let ownerName = "";
+  if (ownerId != null) {
+    const oid = typeof ownerId === "string" ? parseInt(ownerId, 10) : ownerId;
+    if (!isNaN(oid)) {
+      const { data: ownerRow } = await supabase
+        .from("ppl_index")
+        .select("name")
+        .eq("id", oid)
+        .maybeSingle();
+      ownerName = String(ownerRow?.name ?? "").trim();
+    }
+  }
+
+  const sys = `You extract U.S. politician names from source text. Return ONLY valid JSON.
+Rules:
+- Output shape: {"names": ["Full Name One", "Full Name Two"]}
+- Include only politicians who are mentioned in a contextually relevant way (e.g. as actors, subjects, or central to the content). Do not include incidental or generic references.
+- Return full names as they typically appear (e.g. "Nancy Pelosi", "Mitch McConnell").
+- If the text asks you to exclude a specific person, do not include that person in the list.
+- If no relevant politician names are found, return {"names": []}.`;
+
+  const excludeLine = ownerName ? `\n- Exclude this person from the list (they are the card owner): ${ownerName}` : "";
+  const user = `From the following source page text, extract the full names of U.S. politicians (members of Congress, senators, cabinet officials, etc.) who are mentioned in a contextually relevant way.${excludeLine}
+
+Return JSON: {"names": ["Name One", "Name Two"]} or {"names": []}.
+
+Source text:
+"""${pageText.slice(0, 120000)}"""`;
+
+  try {
+    const r = await fetch("https://api.mistral.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${MISTRAL_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: MISTRAL_MEDIUM,
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: user }
+        ],
+        temperature: 0.1,
+        max_tokens: 500,
+        response_format: { type: "json_object" }
+      })
+    });
+    if (!r.ok) throw new Error(`Mistral related-extract error ${r.status}`);
+    const j = await r.json();
+    const content = j?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: { names?: string[] } = {};
+    try { parsed = JSON.parse(content); } catch {}
+    const rawNames: string[] = Array.isArray(parsed?.names) ? parsed.names : [];
+    if (rawNames.length === 0) return null;
+
+    const ownerIdNum = ownerId != null ? (typeof ownerId === "string" ? parseInt(ownerId, 10) : ownerId) : null;
+    const seenIds = new Set<number>();
+    const canonicalNames: string[] = [];
+
+    for (const rawName of rawNames) {
+      const name = String(rawName ?? "").trim();
+      if (!name) continue;
+      try {
+        const { data } = await supabase
+          .from("ppl_index")
+          .select("id, name, limit_score")
+          .or(`name.ilike.%${name}%,sub_name.ilike.%${name}%`)
+          .order("limit_score", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (data?.id != null && data.id !== ownerIdNum && !seenIds.has(Number(data.id))) {
+          seenIds.add(Number(data.id));
+          canonicalNames.push(String(data.name ?? "").trim() || name);
+        } else if (!data?.id) {
+          const tokens = name.split(/\s+/).filter(Boolean);
+          const lastName = tokens[tokens.length - 1];
+          if (lastName) {
+            const { data: fb } = await supabase
+              .from("ppl_index")
+              .select("id, name, limit_score")
+              .or(`name.ilike.%${lastName}%,sub_name.ilike.%${lastName}%`)
+              .order("limit_score", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (fb?.id != null && fb.id !== ownerIdNum && !seenIds.has(Number(fb.id))) {
+              seenIds.add(Number(fb.id));
+              canonicalNames.push(String(fb.name ?? "").trim() || name);
+            }
+          }
+        }
+      } catch (_) {
+        // skip this name on any error
+      }
+    }
+
+    return canonicalNames.length > 0 ? canonicalNames.join(", ") : null;
+  } catch (e) {
+    console.warn("extractRelatedPoliticians failed:", e);
+    return null;
+  }
+}
+
 function isValidUuid(s: string | null): boolean {
   if (!s) return false;
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -995,10 +1106,10 @@ Deno.serve(async (req) => {
     const { cardId, isPpl: requestIsPpl, userId } = await readRequestData(req);
     console.log("Request data:", { cardId, requestIsPpl, userId });
 
-    // 2) Load the card_index row
+    // 2) Load the card_index row (owner_id needed for related-profiles exclusion when is_ppl)
     const { data: card, error: cErr } = await supabase
       .from("card_index")
-      .select("id, title, subtext, score, link, web, is_ppl, web_id")
+      .select("id, title, subtext, score, link, web, is_ppl, web_id, owner_id")
       .eq("id", cardId)
       .single();
     if (cErr || !card) {
@@ -1093,6 +1204,17 @@ Deno.serve(async (req) => {
       body: body,
       excerpt: excerpt
     });
+
+    // 6.6) For politician cards only: extract related profiles from full page text and resolve against ppl_index
+    let related: string | null = null;
+    if (isPpl) {
+      try {
+        related = await extractRelatedPoliticians(fullText, card.owner_id ?? null);
+        if (related) console.log("Related profiles extracted:", related.slice(0, 80) + (related.length > 80 ? "..." : ""));
+      } catch (e) {
+        console.warn("Related profiles extraction failed:", e);
+      }
+    }
 
     if (!body) {
       return new Response(JSON.stringify({ error: "Model returned empty body" }), {
@@ -1249,7 +1371,8 @@ Deno.serve(async (req) => {
         tldr: tldr,
         link1: link1 || null,
         excerpt: excerpt,
-        demographics: demographics
+        demographics: demographics,
+        related: related
       };
       const { error: upErr } = await supabase
         .from("card_content")
@@ -1273,6 +1396,7 @@ Deno.serve(async (req) => {
         link1: link1 || null,
         excerpt: excerpt,
         demographics: demographics,
+        related: related,
         created_at: new Date().toISOString()
       };
       const { data: ins, error: insErr } = await supabase

@@ -1,16 +1,16 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated,
-  Image,
-  Linking,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Animated,
+    Image,
+    Linking,
+    Modal,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
 import { trackCardOpen } from '../../utils/cardOpensTracker';
@@ -54,7 +54,10 @@ function InfoSection({
   cardIndexData,
   impactData,
   visible,
-  handleLinkPress
+  handleLinkPress,
+  related,
+  onRelatedProfilesPress,
+  relatedProfilesButtonScale,
 }: {
   gridTitleStyle: { container: any; text: any };
   gridInfoStyle: { text: any };
@@ -67,6 +70,7 @@ function InfoSection({
     tldr: string;
     link1: string | null;
     excerpt: string;
+    related?: string | null;
   } | null;
   cardIndexData: {
     subtext: string;
@@ -77,14 +81,19 @@ function InfoSection({
   impactData: string | null;
   visible: boolean;
   handleLinkPress: (url: string) => void;
+  related?: string | null;
+  onRelatedProfilesPress?: () => void;
 }) {
+  const relatedButtonScale = useRef(new Animated.Value(1)).current;
+
   if (!visible) return null;
-  
+
   // Filter out null/empty links - use only link1 as specified
   const availableLinks = [
     cardContent?.link1
   ].filter((link): link is string => Boolean(link && link.trim() !== ''));
-  
+  const hasRelated = !!(related && String(related).trim());
+
   return (
     <View style={styles.contentSection}>
       {/* Large Grid Card */}
@@ -123,6 +132,34 @@ function InfoSection({
           </Text>
         </View>
       </View>
+      {/* Related Profiles button - below Excerpt, matches legislation Cosponsors button styling */}
+      {hasRelated && onRelatedProfilesPress && (
+        <View style={styles.relatedProfilesButtonRow}>
+          <Animated.View style={{ transform: [{ scale: relatedButtonScale }], alignSelf: 'stretch', width: '100%' }}>
+            <Pressable
+              onPressIn={() => {
+                safeHapticsSelection();
+                Animated.spring(relatedButtonScale, {
+                  toValue: 0.95,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(relatedButtonScale, {
+                  toValue: 1,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPress={onRelatedProfilesPress}
+              style={styles.relatedProfilesButton}
+            >
+              <Text style={styles.relatedProfilesButtonText}>Related Profiles</Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
       {/* Links Row */}
       <View style={styles.linksRow}>
         {availableLinks.map((link, idx) => (
@@ -197,6 +234,7 @@ export default function Sub5() {
     tldr: string;
     link1: string | null;
     excerpt: string;
+    related?: string | null;
   } | null>(null);
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   
@@ -364,7 +402,7 @@ export default function Sub5() {
             const supabase = getSupabaseClient();
             const { data, error } = await supabase
               .from('card_content')
-              .select('title, body_text, tldr, link1, excerpt')
+              .select('title, body_text, tldr, link1, excerpt, related')
               .eq('card_id', parsedCardId)
               .maybeSingle();
             
@@ -818,7 +856,19 @@ export default function Sub5() {
              </View>
            </View>
          ) : (
-           <InfoSection {...infoSectionStyle} cardContent={cardContent} cardIndexData={cardIndexData} impactData={impactData} visible={true} handleLinkPress={handleLinkPress} />
+           <InfoSection
+              {...infoSectionStyle}
+              cardContent={cardContent}
+              cardIndexData={cardIndexData}
+              impactData={impactData}
+              visible={true}
+              handleLinkPress={handleLinkPress}
+              related={cardContent?.related ?? null}
+              onRelatedProfilesPress={() => {
+                safeHapticsSelection();
+                router.push({ pathname: '/related-profiles', params: { related: cardContent?.related ?? '' } });
+              }}
+            />
          )}
       </ScrollView>
 
@@ -1218,5 +1268,30 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
 
-
+  // Related Profiles button row (matches legislation Cosponsors button styling)
+  relatedProfilesButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    marginTop: 10,
+    alignSelf: 'center',
+    width: '95%',
+  },
+  relatedProfilesButton: {
+    backgroundColor: '#050505',
+    borderRadius: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 60,
+    width: '100%',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  relatedProfilesButtonText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '400',
+    textAlign: 'left',
+  },
 }); 
