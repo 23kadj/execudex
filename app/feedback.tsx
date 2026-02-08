@@ -156,28 +156,26 @@ export default function Feedback() {
             />
           </View>
 
-          {/* Character Counter */}
-          <View style={styles.counterContainer}>
+          {/* Character Counter + Submit Button Row */}
+          <View style={styles.counterSubmitRow}>
+            <TouchableOpacity
+              style={[
+                styles.submitButton,
+                isSubmitted && styles.submitButtonSubmitted,
+                !user?.id && styles.submitButtonDisabled
+              ]}
+              onPress={handleSubmit}
+              disabled={isSubmitted || isDisabled || !user?.id}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.submitButtonText}>
+                {!user?.id ? 'Please Sign In' : isSubmitted ? 'Submitted' : 'Submit'}
+              </Text>
+            </TouchableOpacity>
             <Text style={[styles.characterCounter, { color: counterColor }]}>
               {characterCount}/200
             </Text>
           </View>
-
-          {/* Submit Button */}
-          <TouchableOpacity
-            style={[
-              styles.submitButton,
-              isSubmitted && styles.submitButtonSubmitted,
-              !user?.id && styles.submitButtonDisabled
-            ]}
-            onPress={handleSubmit}
-            disabled={isSubmitted || isDisabled || !user?.id}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.submitButtonText}>
-              {!user?.id ? 'Please Sign In' : isSubmitted ? 'Submitted' : 'Submit'}
-            </Text>
-          </TouchableOpacity>
 
           {/* Contact Information */}
           <Text style={styles.contactText}>
@@ -255,10 +253,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#333',
     color: '#999',
   },
-  // CHARACTER COUNTER
-  counterContainer: {
-    alignItems: 'flex-end',
-    marginBottom: 20,
+  // CHARACTER COUNTER + SUBMIT ROW
+  counterSubmitRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
   },
   characterCounter: {
     fontSize: 14,
@@ -269,9 +269,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 12,
     paddingVertical: 16,
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
+    minWidth: '85%',
     alignItems: 'center',
-    marginBottom: 40,
+    justifyContent: 'center',
   },
   submitButtonSubmitted: {
     backgroundColor: '#333',
@@ -290,6 +291,6 @@ const styles = StyleSheet.create({
     color: '#999',
     fontSize: 14,
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: 4,
   },
 });

@@ -66,19 +66,37 @@ export class CardService {
       if (hasContent) {
         console.log(`Card ${cardId} already has content, skipping full_card_gen`);
         
-        // Even if card exists, check if impact needs to be generated for current user
+        // Check if impact needs to be generated or regenerated (demographics changed)
         if (userId) {
           try {
             const supabase = getSupabaseClient();
             const { data: existingImpact } = await supabase
               .from('impact')
-              .select('id')
+              .select('id, onboard_snapshot')
               .eq('user_id', userId)
               .eq('card_id', cardId)
               .maybeSingle();
 
-            if (!existingImpact) {
-              console.log(`Card exists but no impact for user ${userId}, generating impact for card ${cardId}`);
+            let needsImpactGen = !existingImpact;
+            if (existingImpact) {
+              // Compare stored demographics with current user onboard
+              const { data: userRow } = await supabase
+                .from('users')
+                .select('onboard')
+                .eq('uuid', userId)
+                .maybeSingle();
+              const storedSnapshot = (existingImpact.onboard_snapshot ?? '').trim();
+              const currentOnboard = (userRow?.onboard ?? '').trim();
+              if (storedSnapshot !== currentOnboard) {
+                needsImpactGen = true;
+                console.log('Demographics changed, regenerating impact for card', cardId);
+              }
+            }
+
+            if (needsImpactGen) {
+              if (!existingImpact) {
+                console.log(`Card exists but no impact for user ${userId}, generating impact for card ${cardId}`);
+              }
               const { error: impactError } = await supabase.functions.invoke('impact_gen', {
                 body: {
                   id: cardId,
@@ -92,7 +110,7 @@ export class CardService {
                 console.log('Impact generated successfully for existing card');
               }
             } else {
-              console.log('Impact already exists for this user and card');
+              console.log('Impact already exists and demographics match');
             }
           } catch (impactErr) {
             console.error('Exception generating impact for existing card:', impactErr);
@@ -153,28 +171,32 @@ export class CardService {
           const supabase = getSupabaseClient();
           const { data: existingImpact } = await supabase
             .from('impact')
-            .select('id')
+            .select('id, onboard_snapshot')
             .eq('user_id', userId)
             .eq('card_id', cardId)
             .maybeSingle();
 
-          if (!existingImpact) {
-            console.log(`Generating impact for user ${userId} and card ${cardId}`);
-            const { error: impactError } = await supabase.functions.invoke('impact_gen', {
-              body: {
-                id: cardId,
-                user_id: userId
-              }
-            });
+          let needsImpactGen = !existingImpact;
+          if (existingImpact) {
+            const { data: userRow } = await supabase
+              .from('users')
+              .select('onboard')
+              .eq('uuid', userId)
+              .maybeSingle();
+            const storedSnapshot = (existingImpact.onboard_snapshot ?? '').trim();
+            const currentOnboard = (userRow?.onboard ?? '').trim();
+            if (storedSnapshot !== currentOnboard) needsImpactGen = true;
+          }
 
+          if (needsImpactGen) {
+            const { error: impactError } = await supabase.functions.invoke('impact_gen', {
+              body: { id: cardId, user_id: userId }
+            });
             if (impactError) {
               console.error('Error generating impact:', impactError);
-              // Don't throw - impact generation failure shouldn't break card generation
             } else {
               console.log('Impact generated successfully');
             }
-          } else {
-            console.log('Impact already exists, skipping generation');
           }
         } catch (impactErr) {
           console.error('Exception generating impact:', impactErr);

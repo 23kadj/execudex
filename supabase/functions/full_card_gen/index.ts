@@ -931,19 +931,12 @@ async function generatePersonalImpact(opts: {
       };
     }
 
-  // Build demographic summary from onboard data
-  const demographicFields = [
-    "State Code", "Political Standing", "Highest Education Level", "Employment Status",
-    "Income Level", "Race & Ethnicity", "Dependent Status", "Military Status",
-    "Immigration Status", "Government Benefits", "Sexual Orientation", "Voter Eligibility",
-    "Disability Status", "Industry of Work or Study", "Age", "Gender", "Political Involvement"
-  ];
-  
+  // Build demographic summary from ALL onboard data - include every field from the onboard column
+  // (e.g. Additional Information, Where did you hear about us, etc.) so nothing gets cut out
   const demographics: string[] = [];
-  for (const field of demographicFields) {
-    const value = opts.onboardData[field];
-    if (value) {
-      demographics.push(`${field}: ${value}`);
+  for (const [key, value] of Object.entries(opts.onboardData)) {
+    if (key && value != null && String(value).trim()) {
+      demographics.push(`${key}: ${String(value).trim()}`);
     }
   }
 
@@ -954,7 +947,8 @@ async function generatePersonalImpact(opts: {
   const sys = `You write personalized impact assessments for political/legislative information cards.
 Return ONLY JSON like: {"impact":"...","needs_note":false,"reasoning":"..."} with valid JSON keys.
 Rules:
-- IMPACT: Write 0-100 words explaining how this card's information affects the person based on their demographics.
+- IMPACT: Write 0-100 words explaining how this card's information affects the person based on their demographics and profile.
+- You receive the full user profile including "Additional Information" and any other custom fields - use ALL of this when assessing impact. Do not assume the user lacks a characteristic they have stated (e.g. if they wrote "I am a small business owner" in Additional Information, factor that in).
 - If there is little to no direct correlation, write: "There is little to no personal impact for this info card"
 - If there IS correlation, explain the specific impact clearly and concisely.
 - If you find relevant information in the source document that isn't directly in the card but affects the person, you may include it, but set needs_note to true.
@@ -1157,6 +1151,7 @@ Deno.serve(async (req) => {
 
     // 5.5) Fetch user onboard data if user_id is provided
     let onboardData: Record<string, string> = {};
+    let rawOnboardString: string = "";
     if (userId) {
       try {
         console.log("Fetching onboard data for user:", userId);
@@ -1169,6 +1164,7 @@ Deno.serve(async (req) => {
         if (userErr) {
           console.error("Error fetching onboard data:", userErr);
         } else if (userRow?.onboard) {
+          rawOnboardString = String(userRow.onboard);
           onboardData = parseOnboardData(userRow.onboard);
           console.log("Onboard data fetched, fields:", Object.keys(onboardData).length);
         } else {
@@ -1257,11 +1253,12 @@ Deno.serve(async (req) => {
             console.error("Error checking existing impact:", checkErr);
           }
           
+          const onboardSnapshot = rawOnboardString ?? "";
           if (existing) {
-            // Update existing row
+            // Update existing row (including onboard_snapshot)
             const { data, error } = await supabase
               .from("impact")
-              .update({ impact: impactText })
+              .update({ impact: impactText, onboard_snapshot: onboardSnapshot })
               .eq("id", existing.id)
               .select();
             impactData = data;
@@ -1278,7 +1275,8 @@ Deno.serve(async (req) => {
               .insert({
                 user_id: userId,
                 card_id: cardId,
-                impact: impactText
+                impact: impactText,
+                onboard_snapshot: onboardSnapshot
               })
               .select();
             impactData = data;
@@ -1289,7 +1287,7 @@ Deno.serve(async (req) => {
                 console.log("Insert failed due to duplicate, trying update instead");
                 const { data: updateData, error: updateErr } = await supabase
                   .from("impact")
-                  .update({ impact: impactText })
+                  .update({ impact: impactText, onboard_snapshot: onboardSnapshot })
                   .eq("user_id", userId)
                   .eq("card_id", cardId)
                   .select();

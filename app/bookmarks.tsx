@@ -3,7 +3,9 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Image, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useAuth } from '../components/AuthProvider';
+import { CardLoadingIndicator } from '../components/CardLoadingIndicator';
 import { TypeFilterButton } from '../components/TypeFilterButton';
+import { CardService } from '../services/cardService';
 import { NavigationService } from '../services/navigationService';
 import { BookmarkData, getUserBookmarks } from '../utils/bookmarkUtils';
 import { getSupabaseClient } from '../utils/supabase';
@@ -19,8 +21,6 @@ interface ProfileData {
   is_ppl?: boolean; // Optional flag to indicate if this is a politician card
 }
 
-type FilterType = 'ppl' | 'legi' | 'card' | null;
-
 export default function Bookmarks() {
   const router = useRouter();
   const { user } = useAuth();
@@ -28,8 +28,11 @@ export default function Bookmarks() {
   const [profileData, setProfileData] = useState<{ [key: string]: ProfileData }>({});
   const [loading, setLoading] = useState(true);
   const [loadingCardIds, setLoadingCardIds] = useState<Set<string>>(new Set());
-  const [selectedFilter, setSelectedFilter] = useState<FilterType>(null);
+  const [isCardLoading, setIsCardLoading] = useState(false);
+  const currentLoadingCardId = useRef<number | null>(null);
+  const [selectedFilters, setSelectedFilters] = useState<Set<'ppl' | 'legi' | 'card'>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
+  const currentLoadingCardIdRef = useRef<number | null>(null);
   
   // Create animated values for each card
   const scalesRef = useRef<{ [key: string]: Animated.Value }>({});
@@ -172,11 +175,11 @@ export default function Bookmarks() {
   };
 
 
-  // Filter bookmarks based on selected filter and search query
+  // Filter bookmarks based on selected filters and search query
   const filteredBookmarks = bookmarks
     .filter((bookmark) => {
-      if (selectedFilter === null) return true;
-      return bookmark.bookmark_type === selectedFilter;
+      if (selectedFilters.size === 0) return true;
+      return selectedFilters.has(bookmark.bookmark_type);
     })
     .filter((bookmark) => {
       const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -189,9 +192,16 @@ export default function Bookmarks() {
       );
     });
 
-  // Toggle filter: if clicking the same filter, deselect it
   const handleFilterPress = (filterType: 'ppl' | 'legi' | 'card') => {
-    setSelectedFilter(prev => prev === filterType ? null : filterType);
+    setSelectedFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(filterType)) {
+        next.delete(filterType);
+      } else {
+        next.add(filterType);
+      }
+      return next;
+    });
   };
 
   const dismissKeyboard = () => Keyboard.dismiss();
@@ -252,16 +262,30 @@ export default function Bookmarks() {
           }, user?.id);
           break;
         
-      case 'card':
-        // Navigate to appropriate card info card based on card type
-        const isPoliticianCard = profile.is_ppl;
-        // Ensure cardId is a string
+      case 'card': {
+        const isPoliticianCard = profile.is_ppl ?? true;
         const cardId = bookmark.owner_id ? String(bookmark.owner_id) : '';
         if (!cardId) {
           console.error('Invalid cardId in bookmark:', bookmark);
           return;
         }
-        
+        const parsedCardId = parseInt(cardId, 10);
+        if (isNaN(parsedCardId) || parsedCardId <= 0) {
+          console.error('Invalid cardId:', cardId);
+          return;
+        }
+        currentLoadingCardId.current = parsedCardId;
+        let wasCancelled = false;
+        try {
+          await CardService.generateFullCard(parsedCardId, setIsCardLoading, isPoliticianCard);
+        } catch (error: any) {
+          if (error?.message === 'CANCELLED') {
+            wasCancelled = true;
+          } else {
+            console.error('Error generating full card:', error);
+          }
+        }
+        if (wasCancelled) return;
         const baseParams = {
           cardTitle: profile.name || 'No Data',
           sourcePage: 'bookmarks',
@@ -270,32 +294,24 @@ export default function Bookmarks() {
           pageCount: '1',
           cardId: cardId,
         };
-        
         if (isPoliticianCard) {
-          // Navigate to politician card info card
           router.push({
             pathname: '/profile/sub5',
-            params: {
-              ...baseParams,
-              profileName: profile.sub_name, // Owner name from ppl_index
-            }
+            params: { ...baseParams, profileName: profile.sub_name }
           });
         } else {
-          // Navigate to legislation card info card
           router.push({
             pathname: '/legislation/legi5',
-            params: {
-              ...baseParams,
-              billName: profile.sub_name, // Owner name from legi_index
-            }
+            params: { ...baseParams, billName: profile.sub_name }
           });
         }
         break;
       }
+      }
     } catch (error) {
       console.error('Error navigating:', error);
     } finally {
-      // Remove this card from the loading set
+      currentLoadingCardId.current = null;
       setLoadingCardIds(prev => {
         const newSet = new Set(prev);
         newSet.delete(bookmark.id);
@@ -304,8 +320,17 @@ export default function Bookmarks() {
     }
   };
 
+  const handleCancelCardLoading = () => {
+    if (currentLoadingCardId.current !== null) {
+      CardService.cancelCardGeneration(currentLoadingCardId.current);
+      currentLoadingCardId.current = null;
+    }
+    setIsCardLoading(false);
+  };
+
   return (
     <TouchableWithoutFeedback onPress={dismissKeyboard} accessible={false}>
+    <View style={styles.wrapper}>
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.headerContainer}>
@@ -346,17 +371,17 @@ export default function Bookmarks() {
         <View style={styles.filterContainer}>
           <TypeFilterButton
             label="Politicians"
-            isSelected={selectedFilter === 'ppl'}
+            isSelected={selectedFilters.has('ppl')}
             onPress={() => handleFilterPress('ppl')}
           />
           <TypeFilterButton
             label="Legislation"
-            isSelected={selectedFilter === 'legi'}
+            isSelected={selectedFilters.has('legi')}
             onPress={() => handleFilterPress('legi')}
           />
           <TypeFilterButton
             label="Info Cards"
-            isSelected={selectedFilter === 'card'}
+            isSelected={selectedFilters.has('card')}
             onPress={() => handleFilterPress('card')}
           />
         </View>
@@ -452,11 +477,21 @@ export default function Bookmarks() {
         )}
       </ScrollView>
     </View>
+    <CardLoadingIndicator
+      visible={isCardLoading}
+      onCancel={handleCancelCardLoading}
+      title="Loading Card"
+      subtitle="Please keep the app open while we prepare your card..."
+    />
+    </View>
     </TouchableWithoutFeedback>
   );
 }
 
 const styles = StyleSheet.create({
+  wrapper: {
+    flex: 1,
+  },
   container: { 
     flex: 1, 
     backgroundColor: '#000' 

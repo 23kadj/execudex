@@ -285,7 +285,8 @@ export class CardGenerationService {
 
   /**
    * Main function to handle card generation for politician pages
-   * NEW LOGIC: Prioritize existing web content before checking card limits
+   * Prioritizes existing web content, then searches for new content if needed.
+   * No card count limits - users can generate as many cards as they want.
    */
   static async generatePoliticianCards(
     politicianId: number, 
@@ -294,14 +295,12 @@ export class CardGenerationService {
   ): Promise<CardGenerationResult> {
     try {
       let keyword = '';
-      let maxCards = 0;
 
       if (screen === 'sub4' && category) {
         // Category page (sub4)
         keyword = this.mapCategoryToEnum(category);
-        maxCards = 15;
 
-        // STEP 2: Check for existing web content FIRST (priority)
+        // STEP 1: Check for existing web content first (priority)
         const existingWebIds = await this.checkExistingWebContentForCategory(politicianId, keyword);
         
         if (existingWebIds.length > 0) {
@@ -309,13 +308,7 @@ export class CardGenerationService {
           return await this.executePplCardGen(politicianId, existingWebIds);
         }
 
-        // STEP 3: No existing content - check card count
-        const cardCount = await this.checkCategoryCardCount(politicianId, keyword);
-        if (cardCount >= maxCards) {
-          return { success: false, message: `Card limit reached (${maxCards} cards)` };
-        }
-
-        // STEP 4: Search for new content
+        // STEP 2: No existing content - search for new content
         console.log(`No existing web content found for category ${keyword}, searching for new content`);
         const round2Result = await this.executePplRound2(politicianId, [keyword]);
         if (!round2Result.success) {
@@ -337,9 +330,8 @@ export class CardGenerationService {
           default:
             return { success: false, message: 'Invalid screen type' };
         }
-        maxCards = 100;
 
-        // STEP 2: Check for existing web content FIRST (priority)
+        // STEP 1: Check for existing web content first (priority)
         let existingWebIds = await this.checkExistingWebContentForPage(politicianId, screen);
         
         if (existingWebIds.length === 0) {
@@ -352,13 +344,7 @@ export class CardGenerationService {
           return await this.executePplCardGen(politicianId, existingWebIds);
         }
 
-        // STEP 3: No existing content - check card count
-        const cardCount = await this.checkPoliticianCardCount(politicianId, screen);
-        if (cardCount >= maxCards) {
-          return { success: false, message: `Card limit reached (${maxCards} cards)` };
-        }
-
-        // STEP 4: Search for new content
+        // STEP 2: No existing content - search for new content
         console.log(`No existing web content found for page ${screen}, searching for new content`);
         const round2Result = await this.executePplRound2(politicianId, [keyword]);
         if (!round2Result.success) {
@@ -374,18 +360,10 @@ export class CardGenerationService {
 
   /**
    * Main function to handle card generation for legislation pages
+   * No card count limits - users can generate as many cards as they want.
    */
   static async generateLegislationCards(legislationId: number): Promise<CardGenerationResult> {
     try {
-      const cardCount = await this.checkLegislationCardCount(legislationId);
-      const maxCards = 100;
-
-      // Check if card limit reached
-      if (cardCount >= maxCards) {
-        return { success: false, message: `Card limit reached (${maxCards} cards)` };
-      }
-
-      // Execute bill_coverage script
       return await this.executeBillCoverage(legislationId);
     } catch (error) {
       console.error('Error in generateLegislationCards:', error);
@@ -601,63 +579,18 @@ export class CardGenerationService {
 
   /**
    * Check if generate button should be shown for politician main screens
-   * NEW LOGIC: Show button if EITHER under card limit OR unused sources available
+   * Always show - no card count limits, users can generate as many cards as they want
    */
-  static async shouldShowGenerateButtonForPage(politicianId: number, screen: string): Promise<boolean> {
-    try {
-      const cardCount = await this.checkPoliticianCardCount(politicianId, screen);
-      const maxCards = 100;
-      
-      // If under card limit, always show button
-      if (cardCount < maxCards) {
-        return true;
-      }
-      
-      // If at card limit, check for unused sources
-      let existingWebIds = await this.checkExistingWebContentForPage(politicianId, screen);
-      
-      if (existingWebIds.length === 0) {
-        // Fallback: check for any unused web content
-        existingWebIds = await this.checkAnyExistingWebContent(politicianId);
-      }
-      
-      // Show button if unused sources available (even if at card limit)
-      return existingWebIds.length > 0;
-    } catch (error) {
-      console.error('Error in shouldShowGenerateButtonForPage:', error);
-      return false;
-    }
+  static async shouldShowGenerateButtonForPage(_politicianId: number, _screen: string): Promise<boolean> {
+    return true;
   }
 
   /**
    * Check if generate button should be shown for politician category pages
-   * NEW LOGIC: Show button if EITHER under card limit OR unused sources available
+   * Always show - no card count limits, users can generate as many cards as they want
    */
-  static async shouldShowGenerateButtonForCategory(politicianId: number, category: string): Promise<boolean> {
-    try {
-      const cardCount = await this.checkCategoryCardCount(politicianId, category);
-      const maxCards = 15;
-      
-      // If under card limit, always show button
-      if (cardCount < maxCards) {
-        return true;
-      }
-      
-      // If at card limit, check for unused sources
-      const existingWebIds = await this.checkExistingWebContentForCategory(politicianId, category);
-      
-      if (existingWebIds.length === 0) {
-        // Fallback: check for any unused web content
-        const anyUnusedIds = await this.checkAnyExistingWebContent(politicianId);
-        return anyUnusedIds.length > 0;
-      }
-      
-      // Show button if unused sources available (even if at card limit)
-      return existingWebIds.length > 0;
-    } catch (error) {
-      console.error('Error in shouldShowGenerateButtonForCategory:', error);
-      return false;
-    }
+  static async shouldShowGenerateButtonForCategory(_politicianId: number, _category: string): Promise<boolean> {
+    return true;
   }
 
   /**

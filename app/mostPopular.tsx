@@ -1,9 +1,11 @@
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useRef, useState } from 'react';
 import { Animated, Image, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useAuth } from '../components/AuthProvider';
+import { CardLoadingIndicator } from '../components/CardLoadingIndicator';
 import { TypeFilterButton } from '../components/TypeFilterButton';
+import { CardService } from '../services/cardService';
 import { NavigationService } from '../services/navigationService';
 import { getSupabaseClient } from '../utils/supabase';
 
@@ -17,15 +19,15 @@ interface ProfileData {
   item_type: 'ppl' | 'legi' | 'card';
 }
 
-type FilterType = 'ppl' | 'legi' | 'card' | null;
-
 export default function MostPopular() {
   const router = useRouter();
   const { user } = useAuth();
   const [profiles, setProfiles] = useState<ProfileData[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingProfileKeys, setLoadingProfileKeys] = useState<Set<string>>(new Set());
-  const [selectedFilter, setSelectedFilter] = useState<FilterType>(null);
+  const [isCardLoading, setIsCardLoading] = useState(false);
+  const currentLoadingCardId = useRef<number | null>(null);
+  const [selectedFilters, setSelectedFilters] = useState<Set<'ppl' | 'legi' | 'card'>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   
   // Create animated values for each card
@@ -39,11 +41,7 @@ export default function MostPopular() {
     return scalesRef.current[key];
   };
 
-  useEffect(() => {
-    fetchMostPopular();
-  }, []);
-
-  const fetchMostPopular = async () => {
+  const fetchMostPopular = useCallback(async () => {
     setLoading(true);
     try {
       const supabase = getSupabaseClient();
@@ -160,13 +158,19 @@ export default function MostPopular() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  // Filter profiles based on selected filter and search query
+  useFocusEffect(
+    useCallback(() => {
+      fetchMostPopular();
+    }, [fetchMostPopular])
+  );
+
+  // Filter profiles based on selected filters and search query
   const filteredProfiles = profiles
     .filter((profile) => {
-      if (selectedFilter === null) return true;
-      return profile.item_type === selectedFilter;
+      if (selectedFilters.size === 0) return true;
+      return selectedFilters.has(profile.item_type);
     })
     .filter((profile) => {
       const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -177,9 +181,16 @@ export default function MostPopular() {
       );
     });
 
-  // Toggle filter: if clicking the same filter, deselect it
   const handleFilterPress = (filterType: 'ppl' | 'legi' | 'card') => {
-    setSelectedFilter(prev => prev === filterType ? null : filterType);
+    setSelectedFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(filterType)) {
+        next.delete(filterType);
+      } else {
+        next.add(filterType);
+      }
+      return next;
+    });
   };
 
   const dismissKeyboard = () => Keyboard.dismiss();
@@ -209,10 +220,26 @@ export default function MostPopular() {
 
     try {
       if (profile.item_type === 'card') {
-        // Navigate to card info card based on card type
-        const isPoliticianCard = profile.is_ppl;
+        const isPoliticianCard = profile.is_ppl ?? true;
         const cardId = String(profile.id);
-        
+        const parsedCardId = parseInt(cardId, 10);
+        if (isNaN(parsedCardId) || parsedCardId <= 0) {
+          console.error('Invalid cardId:', cardId);
+          return;
+        }
+        currentLoadingCardId.current = parsedCardId;
+        let wasCancelled = false;
+        try {
+          await CardService.generateFullCard(parsedCardId, setIsCardLoading, isPoliticianCard);
+        } catch (error: any) {
+          if (error?.message === 'CANCELLED') {
+            wasCancelled = true;
+          } else {
+            console.error('Error generating full card:', error);
+          }
+        }
+        if (wasCancelled) return;
+        currentLoadingCardId.current = null;
         const baseParams = {
           cardTitle: profile.name || 'No Data',
           sourcePage: 'mostPopular',
@@ -221,22 +248,15 @@ export default function MostPopular() {
           pageCount: '1',
           cardId: cardId,
         };
-        
         if (isPoliticianCard) {
           router.push({
             pathname: '/profile/sub5',
-            params: {
-              ...baseParams,
-              profileName: profile.sub_name,
-            }
+            params: { ...baseParams, profileName: profile.sub_name }
           });
         } else {
           router.push({
             pathname: '/legislation/legi5',
-            params: {
-              ...baseParams,
-              billName: profile.sub_name,
-            }
+            params: { ...baseParams, billName: profile.sub_name }
           });
         }
       } else if (profile.item_type === 'ppl') {
@@ -269,7 +289,7 @@ export default function MostPopular() {
     } catch (error) {
       console.error('Error navigating:', error);
     } finally {
-      // Remove this profile from the loading set
+      currentLoadingCardId.current = null;
       setLoadingProfileKeys(prev => {
         const newSet = new Set(prev);
         newSet.delete(profileKey);
@@ -278,8 +298,17 @@ export default function MostPopular() {
     }
   };
 
+  const handleCancelCardLoading = () => {
+    if (currentLoadingCardId.current !== null) {
+      CardService.cancelCardGeneration(currentLoadingCardId.current);
+      currentLoadingCardId.current = null;
+    }
+    setIsCardLoading(false);
+  };
+
   return (
     <TouchableWithoutFeedback onPress={dismissKeyboard} accessible={false}>
+    <View style={styles.wrapper}>
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.headerContainer}>
@@ -319,17 +348,17 @@ export default function MostPopular() {
         <View style={styles.filterContainer}>
           <TypeFilterButton
             label="Politicians"
-            isSelected={selectedFilter === 'ppl'}
+            isSelected={selectedFilters.has('ppl')}
             onPress={() => handleFilterPress('ppl')}
           />
           <TypeFilterButton
             label="Legislation"
-            isSelected={selectedFilter === 'legi'}
+            isSelected={selectedFilters.has('legi')}
             onPress={() => handleFilterPress('legi')}
           />
           <TypeFilterButton
             label="Info Cards"
-            isSelected={selectedFilter === 'card'}
+            isSelected={selectedFilters.has('card')}
             onPress={() => handleFilterPress('card')}
           />
         </View>
@@ -424,11 +453,21 @@ export default function MostPopular() {
         )}
       </ScrollView>
     </View>
+    <CardLoadingIndicator
+      visible={isCardLoading}
+      onCancel={handleCancelCardLoading}
+      title="Loading Card"
+      subtitle="Please keep the app open while we prepare your card..."
+    />
+    </View>
     </TouchableWithoutFeedback>
   );
 }
 
 const styles = StyleSheet.create({
+  wrapper: {
+    flex: 1,
+  },
   container: { 
     flex: 1, 
     backgroundColor: '#000' 

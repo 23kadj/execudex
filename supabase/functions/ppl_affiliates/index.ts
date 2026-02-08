@@ -487,15 +487,23 @@ Deno.serve(async (req) => {
 
     const names = await extractAffiliateNames(combined, pplId, fullName);
     const relatedValue = names.length > 0 ? names.join(", ") : null;
+    const affiliatesStatus = names.length > 0 ? "available" : "fail";
 
     const { error: updErr } = await supabase
       .from("ppl_index")
-      .update({ related: relatedValue, affiliates: "available" })
+      .update({ related: relatedValue, affiliates: affiliatesStatus })
       .eq("id", pplId);
 
     if (updErr) {
       await supabase.from("ppl_index").update({ affiliates: "fail" }).eq("id", pplId);
       return new Response(JSON.stringify({ ok: false, reason: "db_update_failed" }), { status: 500, headers: corsHeaders });
+    }
+
+    if (names.length === 0) {
+      return new Response(
+        JSON.stringify({ ok: false, reason: "no_affiliates_found", affiliates: "fail", related: null, count: 0 }),
+        { headers: corsHeaders }
+      );
     }
 
     return new Response(

@@ -14,7 +14,7 @@ interface CardLoadingIndicatorProps {
   subtitle?: string;
 }
 
-export function CardLoadingIndicator({ 
+function CardLoadingIndicator({ 
   visible,
   onCancel,
   title,
@@ -131,3 +131,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
 });
+
+export { CardLoadingIndicator };
+export default CardLoadingIndicator;

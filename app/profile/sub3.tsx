@@ -1178,7 +1178,8 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
           )}
         </View>
         {renderGrid()}
-        {/* Related Profiles button — below category grid, above first preview card */}
+        {/* Related Profiles button — only show when affiliates is null or available, hide when fail */}
+        {affiliatesStatus !== 'fail' && (
         <View style={styles.relatedProfilesButtonRow}>
           <Animated.View style={{ transform: [{ scale: relatedProfilesButtonScale }], alignSelf: 'stretch', width: '100%' }}>
             <Pressable
@@ -1213,6 +1214,7 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
             </Pressable>
           </Animated.View>
         </View>
+        )}
         {renderCards()}
         
         {/* Generate New Cards Button */}

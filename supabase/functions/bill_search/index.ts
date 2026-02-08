@@ -213,6 +213,21 @@ function parseBillCodeFromText(txt: string): string | null {
   return `${prefix} ${num}`.replace(/\s+/g, " ").trim();
 }
 
+/** Heuristic filter for bad/blocked-page titles */
+function isSuspiciousBillTitle(title: string | null | undefined): boolean {
+  if (!title) return true;
+  const t = title.trim();
+  if (!t) return true;
+  const lower = t.toLowerCase();
+  if (/^\d{4}\)?$/.test(t)) return true; // "2026" or "2026)"
+  if (/^just a moment\.*/i.test(lower)) return true;
+  if (/^checking your browser/i.test(lower)) return true;
+  if (/^please wait/i.test(lower)) return true;
+  if (/^access denied/i.test(lower)) return true;
+  if (/^attention required/i.test(lower)) return true;
+  return false;
+}
+
 /** Extract a human-readable bill title from page text (word title, not bill id) */
 function extractBillWordTitleFromText(txt: string, billCode: string | null): string | null {
   if (!txt) return null;
@@ -242,6 +257,7 @@ function extractBillWordTitleFromText(txt: string, billCode: string | null): str
     if (/^actions\s*-/i.test(line)) continue;
     if (/^navigation$/i.test(line)) continue;
     if (/^(house|senate)\s+calendar/i.test(line)) continue;
+    if (isSuspiciousBillTitle(line)) continue;
     if (line.length >= 5 && /[a-zA-Z]/.test(line)) {
       let out = line.replace(/\s+/g, " ").trim();
       // If fallback line includes bill code prefix, strip it so we return ONLY the word title.
@@ -1041,7 +1057,7 @@ async function enrichBillMetadata(legiId: number, baseUrl: string): Promise<void
           if (/^\\d{4}$/.test(cleanedTitle)) cleanedTitle = wordTitle.replace(/\s+/g, " ").trim();
 
           const chosenName =
-            cleanedTitle && cleanedTitle.length <= 30
+            cleanedTitle && cleanedTitle.length <= 30 && !isSuspiciousBillTitle(cleanedTitle)
               ? cleanedTitle
               : (billCodeFromUrl || null);
 
@@ -1896,7 +1912,7 @@ Deno.serve(async (req) => {
     let displayName = nameNoSpaces;
     if (wordTitle) {
       const cleanedTitle = wordTitle.replace(/\s+/g, " ").trim();
-      if (cleanedTitle && cleanedTitle.length <= 30) {
+      if (cleanedTitle && cleanedTitle.length <= 30 && !isSuspiciousBillTitle(cleanedTitle)) {
         displayName = cleanedTitle;
       }
     }

@@ -57,6 +57,7 @@ function InfoSection({
   handleLinkPress,
   related,
   onRelatedProfilesPress,
+  onQAPress,
   relatedProfilesButtonScale,
 }: {
   gridTitleStyle: { container: any; text: any };
@@ -83,8 +84,10 @@ function InfoSection({
   handleLinkPress: (url: string) => void;
   related?: string | null;
   onRelatedProfilesPress?: () => void;
+  onQAPress?: () => void;
 }) {
   const relatedButtonScale = useRef(new Animated.Value(1)).current;
+  const qaButtonScale = useRef(new Animated.Value(1)).current;
 
   if (!visible) return null;
 
@@ -132,6 +135,34 @@ function InfoSection({
           </Text>
         </View>
       </View>
+      {/* Q & A button - always visible, above Related Profiles */}
+      {onQAPress && (
+        <View style={styles.relatedProfilesButtonRow}>
+          <Animated.View style={{ transform: [{ scale: qaButtonScale }], alignSelf: 'stretch', width: '100%' }}>
+            <Pressable
+              onPressIn={() => {
+                safeHapticsSelection();
+                Animated.spring(qaButtonScale, {
+                  toValue: 0.95,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(qaButtonScale, {
+                  toValue: 1,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPress={onQAPress}
+              style={styles.relatedProfilesButton}
+            >
+              <Text style={styles.relatedProfilesButtonText}>Q & A</Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
       {/* Related Profiles button - below Excerpt, matches legislation Cosponsors button styling */}
       {hasRelated && onRelatedProfilesPress && (
         <View style={styles.relatedProfilesButtonRow}>
@@ -554,26 +585,21 @@ export default function Sub5() {
       
       setIsLoadingImpact(true);
       try {
+        const supabase = getSupabaseClient();
         const result = await safeNativeCall(
           'supabase',
           'impact.select',
           { card_id: parsedCardId, user_id: user.id },
           async () => {
-            const supabase = getSupabaseClient();
             const { data, error } = await supabase
               .from('impact')
-              .select('impact')
+              .select('impact, onboard_snapshot')
               .eq('card_id', parsedCardId)
               .eq('user_id', user.id)
               .maybeSingle();
             
-            // Handle errors gracefully - don't throw to prevent TurboModule crash
             if (error) {
-              // PGRST116 = no rows returned (expected, not an error)
-              if (error.code === 'PGRST116') {
-                return null;
-              }
-              // For other errors, log but return null instead of throwing
+              if (error.code === 'PGRST116') return null;
               console.error('[SUB5] Impact query error:', error);
               return null;
             }
@@ -583,8 +609,30 @@ export default function Sub5() {
         );
         
         if (result && result.impact) {
+          // Check if demographics match; if not, regenerate impact and refetch
+          const storedSnapshot = (result.onboard_snapshot ?? '').trim();
+          const { data: userRow } = await supabase
+            .from('users')
+            .select('onboard')
+            .eq('uuid', user.id)
+            .maybeSingle();
+          const currentOnboard = (userRow?.onboard ?? '').trim();
+          if (storedSnapshot !== currentOnboard) {
+            console.log('[SUB5] Demographics changed, regenerating impact');
+            await supabase.functions.invoke('impact_gen', {
+              body: { id: parsedCardId, user_id: user.id }
+            });
+            const { data: refetched } = await supabase
+              .from('impact')
+              .select('impact')
+              .eq('card_id', parsedCardId)
+              .eq('user_id', user.id)
+              .maybeSingle();
+            setImpactData(refetched?.impact ?? result.impact);
+          } else {
+            setImpactData(result.impact);
+          }
           console.log('[SUB5] Impact data fetched successfully');
-          setImpactData(result.impact);
         } else {
           console.log('[SUB5] No impact data found');
           setImpactData(null);
@@ -864,6 +912,12 @@ export default function Sub5() {
               visible={true}
               handleLinkPress={handleLinkPress}
               related={cardContent?.related ?? null}
+              onQAPress={() => {
+                safeHapticsSelection();
+                if (cardId) {
+                  router.push({ pathname: '/card-questions', params: { cardId } });
+                }
+              }}
               onRelatedProfilesPress={() => {
                 safeHapticsSelection();
                 router.push({ pathname: '/related-profiles', params: { related: cardContent?.related ?? '' } });

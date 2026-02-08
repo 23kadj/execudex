@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Animated,
   Image,
   Linking,
   Modal,
@@ -41,7 +42,8 @@ function InfoSection({
   cardIndexData,
   impactData,
   visible,
-  handleLinkPress
+  handleLinkPress,
+  onQAPress,
 }: {
   gridTitleStyle: { container: any; text: any };
   gridInfoStyle: { text: any };
@@ -64,7 +66,10 @@ function InfoSection({
   impactData: string | null;
   visible: boolean;
   handleLinkPress: (url: string) => void;
+  onQAPress?: () => void;
 }) {
+  const qaButtonScale = React.useRef(new Animated.Value(1)).current;
+
   if (!visible) return null;
   
   // Filter out null/empty links - use only link1 as specified
@@ -110,6 +115,34 @@ function InfoSection({
           </Text>
         </View>
       </View>
+      {/* Q & A button - always visible */}
+      {onQAPress && (
+        <View style={styles.relatedProfilesButtonRow}>
+          <Animated.View style={{ transform: [{ scale: qaButtonScale }], alignSelf: 'stretch', width: '100%' }}>
+            <Pressable
+              onPressIn={() => {
+                safeHapticsSelection();
+                Animated.spring(qaButtonScale, {
+                  toValue: 0.95,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(qaButtonScale, {
+                  toValue: 1,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPress={onQAPress}
+              style={styles.relatedProfilesButton}
+            >
+              <Text style={styles.relatedProfilesButtonText}>Q & A</Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
       {/* Links Row */}
       <View style={styles.linksRow}>
         {availableLinks.map((link, idx) => (
@@ -494,26 +527,21 @@ export default function Legi5() {
       
       setIsLoadingImpact(true);
       try {
+        const supabase = getSupabaseClient();
         const result = await safeNativeCall(
           'supabase',
           'impact.select',
           { card_id: parsedCardId, user_id: user.id },
           async () => {
-            const supabase = getSupabaseClient();
             const { data, error } = await supabase
               .from('impact')
-              .select('impact')
+              .select('impact, onboard_snapshot')
               .eq('card_id', parsedCardId)
               .eq('user_id', user.id)
               .maybeSingle();
             
-            // Handle errors gracefully - don't throw to prevent TurboModule crash
             if (error) {
-              // PGRST116 = no rows returned (expected, not an error)
-              if (error.code === 'PGRST116') {
-                return null;
-              }
-              // For other errors, log but return null instead of throwing
+              if (error.code === 'PGRST116') return null;
               console.error('[LEGI5] Impact query error:', error);
               return null;
             }
@@ -523,8 +551,30 @@ export default function Legi5() {
         );
         
         if (result && result.impact) {
+          // Check if demographics match; if not, regenerate impact and refetch
+          const storedSnapshot = (result.onboard_snapshot ?? '').trim();
+          const { data: userRow } = await supabase
+            .from('users')
+            .select('onboard')
+            .eq('uuid', user.id)
+            .maybeSingle();
+          const currentOnboard = (userRow?.onboard ?? '').trim();
+          if (storedSnapshot !== currentOnboard) {
+            console.log('[LEGI5] Demographics changed, regenerating impact');
+            await supabase.functions.invoke('impact_gen', {
+              body: { id: parsedCardId, user_id: user.id }
+            });
+            const { data: refetched } = await supabase
+              .from('impact')
+              .select('impact')
+              .eq('card_id', parsedCardId)
+              .eq('user_id', user.id)
+              .maybeSingle();
+            setImpactData(refetched?.impact ?? result.impact);
+          } else {
+            setImpactData(result.impact);
+          }
           console.log('[LEGI5] Impact data fetched successfully');
-          setImpactData(result.impact);
         } else {
           console.log('[LEGI5] No impact data found');
           setImpactData(null);
@@ -740,7 +790,22 @@ export default function Legi5() {
             </View>
           </View>
         ) : (
-          <InfoSection {...infoSectionStyle} cardContent={cardContent} cardIndexData={cardIndexData} impactData={impactData} visible={true} handleLinkPress={handleLinkPress} />
+          <InfoSection
+            {...infoSectionStyle}
+            cardContent={cardContent}
+            cardIndexData={cardIndexData}
+            impactData={impactData}
+            visible={true}
+            handleLinkPress={handleLinkPress}
+            onQAPress={
+              cardId
+                ? () => {
+                    safeHapticsSelection();
+                    router.push({ pathname: '/card-questions', params: { cardId } });
+                  }
+                : undefined
+            }
+          />
         )}
       </ScrollView>
 
@@ -1133,5 +1198,32 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
     marginTop: 0,
+  },
+
+  // Q & A button (matches Related Profiles styling in sub5)
+  relatedProfilesButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    marginTop: 10,
+    alignSelf: 'center',
+    width: '95%',
+  },
+  relatedProfilesButton: {
+    backgroundColor: '#050505',
+    borderRadius: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 60,
+    width: '100%',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  relatedProfilesButtonText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '400',
+    textAlign: 'left',
   },
 }); 

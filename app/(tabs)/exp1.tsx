@@ -1,8 +1,8 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Dimensions, Image, Keyboard, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Animated, Image, Keyboard, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
 import { ProfileLoadingIndicator } from '../../components/ProfileLoadingIndicator';
 import { NavigationService } from '../../services/navigationService';
@@ -56,11 +56,9 @@ const exp1 = React.memo(() => {
 
   // State for button label cycling
   const [category1Label, setCategory1Label] = useState('Profile Type');
-  const [category2Label, setCategory2Label] = useState('Influence');
+  const [category2Label, setCategory2Label] = useState('Bill Status');
   const [category3Label, setCategory3Label] = useState('Political Party');
   const [category4Label, setCategory4Label] = useState('Political Position');
-  const [category5Label, setCategory5Label] = useState('Bill Status');
-  const [category6Label, setCategory6Label] = useState('Congress');
   const [policyAreaLabel, setPolicyAreaLabel] = useState('Policy Category');
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
 
@@ -229,11 +227,9 @@ const exp1 = React.memo(() => {
 
   // Predefined cycling lists for each button
   const category1Labels = ['Profile Type', 'Politician', 'Legislation', 'Both'];
-  const category2Labels = ['Influence', 'Low', 'Moderate', 'High'];
+  const category2Labels = ['Bill Status', 'Passed', 'Processing'];
   const category3Labels = ['Political Party', 'Democrat', 'Republican', 'Independent', 'Other'];
   const category4Labels = ['Political Position', 'President', 'Vice President', 'Cabinet', 'Senator', 'Representative', 'Governor', 'Mayor', 'Candidate'];
-  const category5Labels = ['Bill Status', 'Passed', 'Processing'];
-  const category6Labels = ['Congress', '115th - Present', '110th - 114th', '100th - 109th', '1st - 99th']; // Now rotates through Congress options
 
   // Cycling functions for each button
   const cycleCategory1 = () => {
@@ -247,9 +243,9 @@ const exp1 = React.memo(() => {
     const nextIndex = (currentIndex + 1) % category2Labels.length;
     setCategory2Label(category2Labels[nextIndex]);
     
-    // Auto-set Profile Type to Politician when Influence is changed
-    if (category2Labels[nextIndex] !== 'Influence') {
-      setCategory1Label('Politician');
+    // Auto-set Profile Type to Legislation when Bill Status is changed
+    if (category2Labels[nextIndex] !== 'Bill Status') {
+      setCategory1Label('Legislation');
     }
   };
 
@@ -275,36 +271,13 @@ const exp1 = React.memo(() => {
     }
   };
 
-  const cycleCategory5 = () => {
-    const currentIndex = category5Labels.indexOf(category5Label);
-    const nextIndex = (currentIndex + 1) % category5Labels.length;
-    setCategory5Label(category5Labels[nextIndex]);
-    
-    // Auto-set Profile Type to Legislation when Bill Status is changed
-    if (category5Labels[nextIndex] !== 'Bill Status') {
-      setCategory1Label('Legislation');
-    }
-  };
-
-  const cycleCategory6 = () => {
-    const currentIndex = category6Labels.indexOf(category6Label);
-    const nextIndex = (currentIndex + 1) % category6Labels.length;
-    setCategory6Label(category6Labels[nextIndex]);
-    
-    // Auto-set Profile Type to Legislation when Congress is changed
-    if (category6Labels[nextIndex] !== 'Congress') {
-      setCategory1Label('Legislation');
-    }
-  };
 
   // Reset all filter buttons to their default values
   const resetFilters = useCallback(() => {
     setCategory1Label('Profile Type');
-    setCategory2Label('Influence');
+    setCategory2Label('Bill Status');
     setCategory3Label('Political Party');
     setCategory4Label('Political Position');
-    setCategory5Label('Bill Status');
-    setCategory6Label('Congress');
     setPolicyAreaLabel('Policy Category');
     setSubjectFilter(null);
   }, []);
@@ -328,13 +301,12 @@ const exp1 = React.memo(() => {
     return truncated ? `${truncated}...` : `${text.substring(0, maxChars - 3)}...`;
   }, []);
 
-  // Handle search functionality
-  const handleSearch = useCallback(async () => {
+  // Handle search profiles with filters only (no search query)
+  const handleSearchProfiles = useCallback(async () => {
     // Add re-entrancy guard to prevent double submission
     if (isSearchingRef.current) return;
     
-    const q = searchQuery.trim();
-    // Allow empty search now - removed the early return
+    const q = ''; // Always use empty query for Search Profiles
 
     isSearchingRef.current = true;
     if (isMountedRef.current) setIsSearchLoading(true);
@@ -354,29 +326,6 @@ const exp1 = React.memo(() => {
         let pplQuery = supabase
           .from('ppl_index')
           .select('id, name, sub_name, limit_score, party_type, office_type');
-        
-        // Only apply name filter if there's a search query
-        if (q && q.length > 0) {
-          pplQuery = pplQuery.or(`name.ilike.%${q}%,sub_name.ilike.%${q}%`);
-        }
-
-        // Apply influence filter if selected
-        if (category2Label !== 'Influence') {
-          switch (category2Label) {
-            case 'Low':
-              // Low influence: 0 to 0.44
-              pplQuery = pplQuery.gte('limit_score', 0).lte('limit_score', 0.44);
-              break;
-            case 'Moderate':
-              // Moderate influence: 0.45 to 0.64
-              pplQuery = pplQuery.gte('limit_score', 0.45).lte('limit_score', 0.64);
-              break;
-            case 'High':
-              // High influence: 0.65 to 1
-              pplQuery = pplQuery.gte('limit_score', 0.65).lte('limit_score', 1);
-              break;
-          }
-        }
 
         // Apply party filter if selected
         if (category3Label !== 'Political Party') {
@@ -425,40 +374,6 @@ const exp1 = React.memo(() => {
         }));
       }
 
-      // Helper function to generate congress value arrays for filtering
-      const generateCongressValues = (filterRange: string): string[] => {
-        const getOrdinalSuffix = (num: number): string => {
-          const lastDigit = num % 10;
-          const lastTwoDigits = num % 100;
-          
-          if (lastTwoDigits >= 11 && lastTwoDigits <= 13) {
-            return 'th';
-          }
-          
-          switch (lastDigit) {
-            case 1: return 'st';
-            case 2: return 'nd';
-            case 3: return 'rd';
-            default: return 'th';
-          }
-        };
-
-        switch (filterRange) {
-          case '1st - 99th':
-            return Array.from({ length: 99 }, (_, i) => `${i + 1}${getOrdinalSuffix(i + 1)}`);
-          case '100th - 109th':
-            return Array.from({ length: 10 }, (_, i) => `${100 + i}${getOrdinalSuffix(100 + i)}`);
-          case '110th - 114th':
-            return Array.from({ length: 5 }, (_, i) => `${110 + i}${getOrdinalSuffix(110 + i)}`);
-          case '115th - Present':
-            // Generate from 115th to current congress (119th) and beyond for future-proofing
-            const currentCongress = 119; // This could be made dynamic based on current year
-            return Array.from({ length: currentCongress - 114 }, (_, i) => `${115 + i}${getOrdinalSuffix(115 + i)}`);
-          default:
-            return [];
-        }
-      };
-
       // Build legislation query with filters
       let legislationResults: any[] = [];
       
@@ -467,26 +382,15 @@ const exp1 = React.memo(() => {
           .from('legi_index')
           .select('id, name, sub_name, congress, bill_status, subject');
         
-        // Only apply name filter if there's a search query
-        if (q && q.length > 0) {
-          legiQueryWithFilters = legiQueryWithFilters.or(`name.ilike.%${q}%,sub_name.ilike.%${q}%`);
-        }
-
         // Apply subject filter if selected
         if (subjectFilter) {
           legiQueryWithFilters = legiQueryWithFilters.ilike('subject', `%${subjectFilter}%`);
         }
 
-        // Apply congress filter if selected
-        if (category6Label !== 'Congress') {
-          const congressValues = generateCongressValues(category6Label);
-          legiQueryWithFilters = legiQueryWithFilters.in('congress', congressValues);
-        }
-
         // Apply bill status filter if selected
-        if (category5Label !== 'Bill Status') {
+        if (category2Label !== 'Bill Status') {
           let statusValue = '';
-          switch (category5Label) {
+          switch (category2Label) {
             case 'Passed': statusValue = 'passed'; break;
             case 'Processing': statusValue = 'processing'; break;
           }
@@ -516,11 +420,171 @@ const exp1 = React.memo(() => {
       // Build filter parameters based on changed categories (for displaying filter count)
       const filters = {
         profileType: category1Label !== 'Profile Type' ? category1Label : null,
-        influence: category2Label !== 'Influence' ? category2Label : null,
+        billStatus: category2Label !== 'Bill Status' ? category2Label : null,
         party: category3Label !== 'Political Party' ? category3Label : null,
         position: category4Label !== 'Political Position' ? category4Label : null,
-        billStatus: category5Label !== 'Bill Status' ? category5Label : null,
-        congress: category6Label !== 'Congress' ? category6Label : null,
+        subject: subjectFilter || null,
+      };
+
+      // Navigate to results page with search results and filters
+      router.push({
+        pathname: '/results',
+        params: {
+          searchResults: JSON.stringify(searchResults),
+          searchQuery: '',
+          filters: JSON.stringify(filters)
+        }
+      });
+
+      // Use Keyboard.dismiss() only, let system handle blur naturally
+      Keyboard.dismiss();
+
+    } catch (error) {
+      console.error('Search error:', error);
+      // You could add error handling here (e.g., show a toast message)
+    } finally {
+      if (isMountedRef.current) setIsSearchLoading(false);
+      // Add a small delay before allowing the next search to prevent rapid successive searches
+      setTimeout(() => {
+        isSearchingRef.current = false;
+      }, 100);
+    }
+  }, [router, category1Label, category2Label, category3Label, category4Label, subjectFilter]);
+
+  // Handle search functionality
+  const handleSearch = useCallback(async () => {
+    // Add re-entrancy guard to prevent double submission
+    if (isSearchingRef.current) return;
+    
+    const q = searchQuery.trim();
+    // Allow empty search now - removed the early return
+
+    isSearchingRef.current = true;
+    if (isMountedRef.current) setIsSearchLoading(true);
+    
+    try {
+      // Use lazy-loaded Supabase client
+      const supabase = getSupabaseClient();
+      
+      // Determine which tables to query based on Profile Type filter
+      const shouldQueryPpl = category1Label === 'Politician' || category1Label === 'Both' || category1Label === 'Profile Type';
+      const shouldQueryLegi = category1Label === 'Legislation' || category1Label === 'Both' || category1Label === 'Profile Type';
+      
+      // Build politician query with filters
+      let politicianResults: any[] = [];
+      
+      if (shouldQueryPpl) {
+        let pplQuery = supabase
+          .from('ppl_index')
+          .select('id, name, sub_name, limit_score, party_type, office_type');
+        
+        // Only apply name filter if there's a search query
+        if (q && q.length > 0) {
+          pplQuery = pplQuery.or(`name.ilike.%${q}%,sub_name.ilike.%${q}%`);
+        }
+
+
+        // Apply party filter if selected
+        if (category3Label !== 'Political Party') {
+          let partyValue = '';
+          switch (category3Label) {
+            case 'Democrat': partyValue = 'D'; break;
+            case 'Republican': partyValue = 'R'; break;
+            case 'Independent': partyValue = 'I'; break;
+            case 'Other': partyValue = 'other'; break;
+          }
+          if (partyValue) {
+            pplQuery = pplQuery.eq('party_type', partyValue);
+          }
+        }
+
+        // Apply position filter if selected
+        if (category4Label !== 'Political Position') {
+          let officeTypeValue = '';
+          switch (category4Label) {
+            case 'President': officeTypeValue = 'president'; break;
+            case 'Vice President': officeTypeValue = 'vice_president'; break;
+            case 'Cabinet': officeTypeValue = 'cabinet'; break;
+            case 'Senator': officeTypeValue = 'senator'; break;
+            case 'Representative': officeTypeValue = 'representative'; break;
+            case 'Governor': officeTypeValue = 'governor'; break;
+            case 'Mayor': officeTypeValue = 'mayor'; break;
+            case 'Candidate': officeTypeValue = 'candidate'; break;
+          }
+          if (officeTypeValue) {
+            pplQuery = pplQuery.eq('office_type', officeTypeValue);
+          }
+        }
+
+        pplQuery = pplQuery.order('limit_score', { ascending: false });
+
+        const { data: pplData, error: pplError } = await pplQuery;
+        if (pplError) throw pplError;
+
+        // Transform politician results to match the expected format
+        politicianResults = (pplData || []).map((item: any) => ({
+          id: item.id,
+          title: item.name,
+          subtitle: item.sub_name,
+          type: 'politician' as const,
+          limit_score: item.limit_score || 0
+        }));
+      }
+
+      // Build legislation query with filters
+      let legislationResults: any[] = [];
+      
+      if (shouldQueryLegi) {
+        let legiQueryWithFilters = supabase
+          .from('legi_index')
+          .select('id, name, sub_name, congress, bill_status, subject');
+        
+        // Only apply name filter if there's a search query
+        if (q && q.length > 0) {
+          legiQueryWithFilters = legiQueryWithFilters.or(`name.ilike.%${q}%,sub_name.ilike.%${q}%`);
+        }
+
+        // Apply subject filter if selected
+        if (subjectFilter) {
+          legiQueryWithFilters = legiQueryWithFilters.ilike('subject', `%${subjectFilter}%`);
+        }
+
+        // Apply bill status filter if selected
+        if (category2Label !== 'Bill Status') {
+          let statusValue = '';
+          switch (category2Label) {
+            case 'Passed': statusValue = 'passed'; break;
+            case 'Processing': statusValue = 'processing'; break;
+          }
+          if (statusValue) {
+            legiQueryWithFilters = legiQueryWithFilters.eq('bill_status', statusValue);
+          }
+        }
+
+        legiQueryWithFilters = legiQueryWithFilters.order('id', { ascending: true });
+
+        const { data: legiData, error: legiError } = await legiQueryWithFilters;
+        if (legiError) throw legiError;
+
+        // Transform legislation results to match the expected format (without limit_score)
+        legislationResults = (legiData || []).map((item: any) => ({
+          id: item.id,
+          title: item.name,
+          subtitle: item.sub_name,
+          type: 'legislation' as const,
+          limit_score: 0 // Set to 0 since we're not using limit_score for legislation
+        }));
+      }
+
+      // Combine both result sets
+      const searchResults = [...politicianResults, ...legislationResults];
+
+      // Build filter parameters based on changed categories (for displaying filter count)
+      const filters = {
+        profileType: category1Label !== 'Profile Type' ? category1Label : null,
+        billStatus: category2Label !== 'Bill Status' ? category2Label : null,
+        party: category3Label !== 'Political Party' ? category3Label : null,
+        position: category4Label !== 'Political Position' ? category4Label : null,
         subject: subjectFilter || null,
       };
 
@@ -548,7 +612,7 @@ const exp1 = React.memo(() => {
         isSearchingRef.current = false;
       }, 100);
     }
-  }, [searchQuery, router, category1Label, category2Label, category3Label, category4Label, category5Label, category6Label, subjectFilter]);
+  }, [searchQuery, router, category1Label, category2Label, category3Label, category4Label, subjectFilter]);
 
   // Animated scale values for cards
   const card1Scale = useRef(new Animated.Value(1)).current;
@@ -565,30 +629,20 @@ const exp1 = React.memo(() => {
   const politicianCard4Scale = useRef(new Animated.Value(1)).current;
   const politicianCard5Scale = useRef(new Animated.Value(1)).current;
   
-  // Animated scale values for search category grid buttons (first grid)
-  const searchGrid1Button1Scale = useRef(new Animated.Value(1)).current;
-  const searchGrid1Button2Scale = useRef(new Animated.Value(1)).current;
-  const searchGrid1Button3Scale = useRef(new Animated.Value(1)).current;
-  const searchGrid1Button4Scale = useRef(new Animated.Value(1)).current;
-  const searchGrid1Button5Scale = useRef(new Animated.Value(1)).current;
-  const searchGrid1Button6Scale = useRef(new Animated.Value(1)).current;
-  const searchGridResetButtonScale = useRef(new Animated.Value(1)).current;
-  const searchGrid1ButtonFullScale = useRef(new Animated.Value(1)).current;
-
   // Determine which buttons should be disabled based on Category 1 and subject filter
   const isCategoryDisabled = useCallback((categoryNumber: number) => {
     if (categoryNumber === 1) return false; // Profile Type always enabled
     
     // If subject filter is applied, disable politician-related buttons
     if (subjectFilter) {
-      return categoryNumber === 2 || categoryNumber === 3 || categoryNumber === 4; // Disable influence, politician-only
+      return categoryNumber === 3 || categoryNumber === 4; // Disable politician-only (Political Party, Political Position)
     }
     
     switch (category1Label) {
       case 'Politician':
-        return categoryNumber === 5 || categoryNumber === 6; // Disable legislation-only
+        return categoryNumber === 2; // Disable Bill Status (legislation-only)
       case 'Legislation':
-        return categoryNumber === 2 || categoryNumber === 3 || categoryNumber === 4; // Disable influence, politician-only
+        return categoryNumber === 3 || categoryNumber === 4; // Disable politician-only (Political Party, Political Position)
       default:
         return false; // Both or default - all enabled
     }
@@ -608,6 +662,8 @@ const exp1 = React.memo(() => {
   
   // Animated scale values for recommended buttons
   const mostPopularButtonScale = useRef(new Animated.Value(1)).current;
+  const mostRecentButtonScale = useRef(new Animated.Value(1)).current;
+  const cardSearchButtonScale = useRef(new Animated.Value(1)).current;
   const recommendedCardsButtonScale = useRef(new Animated.Value(1)).current;
   const recommendedProfilesButtonScale = useRef(new Animated.Value(1)).current;
   // Animated scale values for legislation cards (matching home.tsx format)
@@ -637,7 +693,7 @@ const exp1 = React.memo(() => {
             <TextInput
               ref={searchInputRef}
               style={styles.searchBarInput}
-              placeholder="Search Explore Page"
+              placeholder="Search Profiles"
               placeholderTextColor="#666"
               value={String(searchQuery ?? '')}
               onChangeText={(text) => setSearchQuery(String(text ?? ''))}
@@ -660,251 +716,326 @@ const exp1 = React.memo(() => {
           <View style={styles.searchGridContainer}>
             <View style={styles.searchGridRow}>
               <AnimatedPressable
-                onPressIn={() => {
+                onPress={() => {
                   Haptics.selectionAsync();
-                  Animated.spring(searchGrid1Button1Scale, {
-                    toValue: 0.95,
-                    friction: 6,
-                    useNativeDriver: true,
-                  }).start();
+                  cycleCategory1();
                 }}
-                onPressOut={() => {
-                  Animated.spring(searchGrid1Button1Scale, {
-                    toValue: 1,
-                    friction: 6,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPress={cycleCategory1}
-                style={[
-                  styles.searchGridButton1,
-                  { transform: [{ scale: searchGrid1Button1Scale }] }
-                ]}
+                style={styles.searchGridButton1}
               >
                 <Text style={styles.searchGridButtonText1}>{category1Label}</Text>
               </AnimatedPressable>
               <AnimatedPressable
-                onPressIn={() => {
-                  if (!isCategoryDisabled(2)) {
-                    Haptics.selectionAsync();
-                    Animated.spring(searchGrid1Button2Scale, {
-                      toValue: 0.95,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPressOut={() => {
-                  if (!isCategoryDisabled(2)) {
-                    Animated.spring(searchGrid1Button2Scale, {
-                      toValue: 1,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPress={isCategoryDisabled(2) ? undefined : cycleCategory2}
+                onPress={
+                  isCategoryDisabled(2)
+                    ? undefined
+                    : () => {
+                        Haptics.selectionAsync();
+                        cycleCategory2();
+                      }
+                }
                 style={[
                   styles.searchGridButton2,
                   isCategoryDisabled(2) && styles.searchGridButtonDisabled,
-                  { transform: [{ scale: searchGrid1Button2Scale }] }
                 ]}
               >
-                <Text style={[
-                  styles.searchGridButtonText2,
-                  isCategoryDisabled(2) && styles.searchGridButtonTextDisabled
-                ]}>{category2Label}</Text>
+                <Text
+                  style={[
+                    styles.searchGridButtonText2,
+                    isCategoryDisabled(2) && styles.searchGridButtonTextDisabled,
+                  ]}
+                >
+                  {category2Label}
+                </Text>
               </AnimatedPressable>
             </View>
             <View style={styles.searchGridRow}>
               <AnimatedPressable
-                onPressIn={() => {
-                  if (!isCategoryDisabled(3)) {
-                    Haptics.selectionAsync();
-                    Animated.spring(searchGrid1Button3Scale, {
-                      toValue: 0.95,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPressOut={() => {
-                  if (!isCategoryDisabled(3)) {
-                    Animated.spring(searchGrid1Button3Scale, {
-                      toValue: 1,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPress={isCategoryDisabled(3) ? undefined : cycleCategory3}
+                onPress={
+                  isCategoryDisabled(3)
+                    ? undefined
+                    : () => {
+                        Haptics.selectionAsync();
+                        cycleCategory3();
+                      }
+                }
                 style={[
                   styles.searchGridButton3,
                   isCategoryDisabled(3) && styles.searchGridButtonDisabled,
-                  { transform: [{ scale: searchGrid1Button3Scale }] }
                 ]}
               >
-                <Text style={[
-                  styles.searchGridButtonText3,
-                  isCategoryDisabled(3) && styles.searchGridButtonTextDisabled
-                ]}>{category3Label}</Text>
+                <Text
+                  style={[
+                    styles.searchGridButtonText3,
+                    isCategoryDisabled(3) && styles.searchGridButtonTextDisabled,
+                  ]}
+                >
+                  {category3Label}
+                </Text>
               </AnimatedPressable>
               <AnimatedPressable
-                onPressIn={() => {
-                  if (!isCategoryDisabled(4)) {
-                    Haptics.selectionAsync();
-                    Animated.spring(searchGrid1Button4Scale, {
-                      toValue: 0.95,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPressOut={() => {
-                  if (!isCategoryDisabled(4)) {
-                    Animated.spring(searchGrid1Button4Scale, {
-                      toValue: 1,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPress={isCategoryDisabled(4) ? undefined : cycleCategory4}
+                onPress={
+                  isCategoryDisabled(4)
+                    ? undefined
+                    : () => {
+                        Haptics.selectionAsync();
+                        cycleCategory4();
+                      }
+                }
                 style={[
                   styles.searchGridButton4,
                   isCategoryDisabled(4) && styles.searchGridButtonDisabled,
-                  { transform: [{ scale: searchGrid1Button4Scale }] }
                 ]}
               >
-                <Text style={[
-                  styles.searchGridButtonText4,
-                  isCategoryDisabled(4) && styles.searchGridButtonTextDisabled
-                ]}>{category4Label}</Text>
-              </AnimatedPressable>
-            </View>
-            <View style={styles.searchGridRow}>
-              <AnimatedPressable
-                onPressIn={() => {
-                  if (!isCategoryDisabled(5)) {
-                    Haptics.selectionAsync();
-                    Animated.spring(searchGrid1Button5Scale, {
-                      toValue: 0.95,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPressOut={() => {
-                  if (!isCategoryDisabled(5)) {
-                    Animated.spring(searchGrid1Button5Scale, {
-                      toValue: 1,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPress={isCategoryDisabled(5) ? undefined : cycleCategory5}
-                style={[
-                  styles.searchGridButton5,
-                  isCategoryDisabled(5) && styles.searchGridButtonDisabled,
-                  { transform: [{ scale: searchGrid1Button5Scale }] }
-                ]}
-              >
-                <Text style={[
-                  styles.searchGridButtonText5,
-                  isCategoryDisabled(5) && styles.searchGridButtonTextDisabled
-                ]}>{category5Label}</Text>
-              </AnimatedPressable>
-              <AnimatedPressable
-                onPressIn={() => {
-                  if (!isCategoryDisabled(6)) {
-                    Haptics.selectionAsync();
-                    Animated.spring(searchGrid1Button6Scale, {
-                      toValue: 0.95,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPressOut={() => {
-                  if (!isCategoryDisabled(6)) {
-                    Animated.spring(searchGrid1Button6Scale, {
-                      toValue: 1,
-                      friction: 6,
-                      useNativeDriver: true,
-                    }).start();
-                  }
-                }}
-                onPress={isCategoryDisabled(6) ? undefined : cycleCategory6}
-                style={[
-                  styles.searchGridButton6,
-                  isCategoryDisabled(6) && styles.searchGridButtonDisabled,
-                  { transform: [{ scale: searchGrid1Button6Scale }] }
-                ]}
-              >
-                <Text style={[
-                  styles.searchGridButtonText6,
-                  isCategoryDisabled(6) && styles.searchGridButtonTextDisabled
-                ]}>{category6Label}</Text>
+                <Text
+                  style={[
+                    styles.searchGridButtonText4,
+                    isCategoryDisabled(4) && styles.searchGridButtonTextDisabled,
+                  ]}
+                >
+                  {category4Label}
+                </Text>
               </AnimatedPressable>
             </View>
             <View style={styles.searchGridRowFull}>
               <AnimatedPressable
-                onPressIn={() => {
-                  Haptics.selectionAsync();
-                  Animated.spring(searchGrid1ButtonFullScale, {
-                    toValue: 0.95,
-                    friction: 6,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPressOut={() => {
-                  Animated.spring(searchGrid1ButtonFullScale, {
-                    toValue: 1,
-                    friction: 6,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPress={() => {
-                  // Navigate to subjects page
-                  router.push('/subjects');
-                }}
+                onPress={
+                  category1Label === 'Politician'
+                    ? undefined
+                    : () => {
+                        Haptics.selectionAsync();
+                        router.push('/subjects');
+                      }
+                }
                 style={[
                   styles.searchGridButtonFull,
-                  { transform: [{ scale: searchGrid1ButtonFullScale }] }
+                  category1Label === 'Politician' && styles.searchGridButtonDisabled,
                 ]}
               >
-                <Text style={styles.searchGridButtonFullText} numberOfLines={1}>
+                <Text
+                  style={[
+                    styles.searchGridButtonFullText,
+                    category1Label === 'Politician' && styles.searchGridButtonTextDisabled,
+                  ]}
+                  numberOfLines={1}
+                >
                   {policyAreaLabel}
                 </Text>
               </AnimatedPressable>
             </View>
             <View style={styles.searchGridRowFull}>
               <AnimatedPressable
-                onPressIn={() => {
+                onPress={() => {
                   Haptics.selectionAsync();
-                  Animated.spring(searchGridResetButtonScale, {
-                    toValue: 0.95,
-                    friction: 6,
-                    useNativeDriver: true,
-                  }).start();
+                  resetFilters();
                 }}
-                onPressOut={() => {
-                  Animated.spring(searchGridResetButtonScale, {
-                    toValue: 1,
-                    friction: 6,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPress={resetFilters}
-                style={[
-                  styles.searchGridButtonFull,
-                  { transform: [{ scale: searchGridResetButtonScale }] }
-                ]}
+                style={styles.searchGridButtonFull}
               >
                 <Text style={styles.searchGridButtonFullText}>Reset Filter</Text>
               </AnimatedPressable>
             </View>
+            <View style={styles.searchGridRowFull}>
+              <AnimatedPressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  handleSearchProfiles();
+                }}
+                style={styles.searchGridButtonFull}
+              >
+                <Text style={styles.searchGridButtonFullText}>Search Profiles</Text>
+              </AnimatedPressable>
+            </View>
+          </View>
+
+          {/* Most Popular Button */}
+          <View style={styles.recommendedButtonsWrapper}>
+            <Animated.View
+              style={{
+                transform: [{ scale: mostPopularButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(mostPopularButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(mostPopularButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  router.push('/mostPopular');
+                }}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Most Popular</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>Check our most viewed profiles and cards</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
+
+            {/* Most Recent Button */}
+            <Animated.View
+              style={{
+                transform: [{ scale: mostRecentButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(mostRecentButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(mostRecentButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  router.push('/most-recent');
+                }}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Most Recent</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>Access the most recently added profiles and cards</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
+
+            {/* Card Search Button */}
+            <Animated.View
+              style={{
+                transform: [{ scale: cardSearchButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(cardSearchButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(cardSearchButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  router.push('/card-search');
+                }}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Card Search</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>Find specific cards across various profiles</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
+
+            {/* Recommended Cards Button */}
+            <Animated.View
+              style={{
+                transform: [{ scale: recommendedCardsButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(recommendedCardsButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(recommendedCardsButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  router.push('/cards');
+                }}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Recommended Cards</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>View cards potentially matching your interests</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
+
+            {/* Recommended Profiles Button */}
+            <Animated.View
+              style={{
+                transform: [{ scale: recommendedProfilesButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(recommendedProfilesButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(recommendedProfilesButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={() => {
+                  router.push('/profiles1');
+                }}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Recommended Profiles</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>View which profiles are relevant to you</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
           </View>
           
           {/* Trending Politicians Text */}
@@ -1146,122 +1277,6 @@ const exp1 = React.memo(() => {
 
 
           </ScrollView>
-
-          {/* Most Popular Button */}
-          <View style={styles.recommendedButtonsWrapper}>
-            <Animated.View
-              style={{
-                transform: [{ scale: mostPopularButtonScale }],
-                width: '100%',
-                alignItems: 'center',
-              }}
-            >
-              <Pressable
-                onPressIn={() => {
-                  Haptics.selectionAsync();
-                  Animated.spring(mostPopularButtonScale, {
-                    toValue: 0.95,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPressOut={() => {
-                  Animated.spring(mostPopularButtonScale, {
-                    toValue: 1,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPress={() => {
-                  router.push('/mostPopular');
-                }}
-                style={styles.recommendedButton}
-              >
-                <View style={styles.recommendedButtonContent}>
-                  <View style={styles.legislationTopRow}>
-                    <Text style={styles.legislationTitleNew}>Most Popular</Text>
-                  </View>
-                  <View style={styles.legislationBottomRow}>
-                    <Text style={styles.legislationSubtitleNew}>Check our most viewed profiles and cards</Text>
-                  </View>
-                </View>
-              </Pressable>
-            </Animated.View>
-
-            {/* Recommended Cards Button */}
-            <Animated.View
-              style={{
-                transform: [{ scale: recommendedCardsButtonScale }],
-                width: '100%',
-                alignItems: 'center',
-              }}
-            >
-              <Pressable
-                onPressIn={() => {
-                  Haptics.selectionAsync();
-                  Animated.spring(recommendedCardsButtonScale, {
-                    toValue: 0.95,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPressOut={() => {
-                  Animated.spring(recommendedCardsButtonScale, {
-                    toValue: 1,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPress={() => {
-                  router.push('/cards');
-                }}
-                style={styles.recommendedButton}
-              >
-                <View style={styles.recommendedButtonContent}>
-                  <View style={styles.legislationTopRow}>
-                    <Text style={styles.legislationTitleNew}>Recommended Cards</Text>
-                  </View>
-                  <View style={styles.legislationBottomRow}>
-                    <Text style={styles.legislationSubtitleNew}>View cards potentially matching your interests</Text>
-                  </View>
-                </View>
-              </Pressable>
-            </Animated.View>
-
-            {/* Recommended Profiles Button */}
-            <Animated.View
-              style={{
-                transform: [{ scale: recommendedProfilesButtonScale }],
-                width: '100%',
-                alignItems: 'center',
-              }}
-            >
-              <Pressable
-                onPressIn={() => {
-                  Haptics.selectionAsync();
-                  Animated.spring(recommendedProfilesButtonScale, {
-                    toValue: 0.95,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPressOut={() => {
-                  Animated.spring(recommendedProfilesButtonScale, {
-                    toValue: 1,
-                    useNativeDriver: true,
-                  }).start();
-                }}
-                onPress={() => {
-                  router.push('/profiles1');
-                }}
-                style={styles.recommendedButton}
-              >
-                <View style={styles.recommendedButtonContent}>
-                  <View style={styles.legislationTopRow}>
-                    <Text style={styles.legislationTitleNew}>Recommended Profiles</Text>
-                  </View>
-                  <View style={styles.legislationBottomRow}>
-                    <Text style={styles.legislationSubtitleNew}>View which profiles are relevant to you</Text>
-                  </View>
-                </View>
-              </Pressable>
-            </Animated.View>
-          </View>
       
       {/* Trending Legislation Text */}
       <View style={styles.sectionHeader}>
@@ -1745,7 +1760,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: 0,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 10,
     marginBottom: 10,
   },
   recommendedButton: {
@@ -1896,11 +1911,11 @@ const styles = StyleSheet.create({
     width: '95%',
     alignSelf: 'center',
     borderRadius: 32,
-    height: 365,
+    height: 320,
     marginTop: 0,
-    marginBottom: 5,
-    paddingTop: 18,
-    paddingBottom: 18,
+    marginBottom: 0,
+    paddingTop: 15,
+    paddingBottom: 10,
     justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: '#101010',
@@ -1914,9 +1929,11 @@ const styles = StyleSheet.create({
   searchGridButton1: {
     backgroundColor: '#090909',
     borderRadius: 15,
-    height: 58,
-    width: '43%',
-    marginLeft: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 50,
+    width: '44.5%',
+    marginLeft: '4%',
     marginHorizontal: 0,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1924,9 +1941,11 @@ const styles = StyleSheet.create({
   searchGridButton2: {
     backgroundColor: '#090909',
     borderRadius: 15,
-    height: 58,
-    width: '43%',
-    marginRight: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 50,
+    width: '44.5%',
+    marginRight: '4%',
     marginHorizontal: 0,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1934,9 +1953,11 @@ const styles = StyleSheet.create({
   searchGridButton3: {
     backgroundColor: '#090909',
     borderRadius: 15,
-    height: 58,
-    width: '43%',
-    marginLeft: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 50,
+    width: '44.5%',
+    marginLeft: '4%',
     marginHorizontal: 0,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1944,29 +1965,11 @@ const styles = StyleSheet.create({
   searchGridButton4: {
     backgroundColor: '#090909',
     borderRadius: 15,
-    height: 58,
-    width: '43%',
-    marginRight: 20,
-    marginHorizontal: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchGridButton5: {
-    backgroundColor: '#090909',
-    borderRadius: 15,
-    height: 58,
-    width: '43%',
-    marginLeft: 20,
-    marginHorizontal: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchGridButton6: {
-    backgroundColor: '#090909',
-    borderRadius: 15,
-    height: 58,
-    width: '43%',
-    marginRight: 20,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 50,
+    width: '44.5%',
+    marginRight: '4%',
     marginHorizontal: 0,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1995,18 +1998,6 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     textAlign: 'center',
   },
-  searchGridButtonText5: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '400',
-    textAlign: 'center',
-  },
-  searchGridButtonText6: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '400',
-    textAlign: 'center',
-  },
   // Disabled button styles
   searchGridButtonDisabled: {
     backgroundColor: '#050505',
@@ -2023,9 +2014,11 @@ const styles = StyleSheet.create({
   },
   searchGridButtonFull: {
     backgroundColor: '#090909',
-    borderRadius: 15,
-    height: 54,
-    width: '90%',
+    borderRadius: 14,
+    borderColor: '#101010',
+    borderWidth: 1,
+    height: 50,
+    width: '92%',
     marginLeft: 20,
     marginRight: 20,
     marginHorizontal: 0,
