@@ -8,6 +8,8 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TAVILY_API_KEY = Deno.env.get("TAVILY_API_KEY")!;
 const WEB_BUCKET = Deno.env.get("WEB_BUCKET") || "web";
+/** Optional: higher RPM for https://r.jina.ai Reader (Votesmart often blocks direct Edge fetches with 403). */
+const JINA_API_KEY = Deno.env.get("JINA_API_KEY") || "";
 
 /** Timeouts */
 const SEARCH_TIMEOUT_MS = 10_000;
@@ -49,14 +51,19 @@ function slugify(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-// Validate URL matches required format: justfacts.votesmart.org/bill/... with title in path
-function isValidVoteSmartBillUrl(url: string, title: string): boolean {
+function isVoteSmartDomain(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "votesmart.org" || host.endsWith(".votesmart.org");
+}
+
+// Validate URL matches VoteSmart bill format /bill/... with optional title matching for search results.
+function isValidVoteSmartBillUrl(url: string, title: string, requireTitleMatch = true): boolean {
   try {
     const urlObj = new URL(url);
     const hostname = urlObj.hostname.toLowerCase();
     
-    // Must be justfacts.votesmart.org (or www.justfacts.votesmart.org)
-    if (!hostname.includes("justfacts.votesmart.org")) {
+    // Must be votesmart domain
+    if (!isVoteSmartDomain(hostname)) {
       return false;
     }
     
@@ -68,6 +75,10 @@ function isValidVoteSmartBillUrl(url: string, title: string): boolean {
       return false;
     }
     
+    if (!requireTitleMatch) {
+      return true;
+    }
+
     // Check if title (or significant parts) appears in the URL path
     const titleSlug = slugify(title);
     const titleWords = titleSlug.split("-").filter(w => w.length > 3); // Filter out short words
@@ -81,6 +92,10 @@ function isValidVoteSmartBillUrl(url: string, title: string): boolean {
       }
     }
     
+    if (titleWords.length === 0) {
+      return true;
+    }
+
     // Require at least 2 matching words, or if title is short, require at least 1
     const minMatches = titleWords.length > 3 ? 2 : 1;
     return matchingWords >= minMatches;
@@ -142,6 +157,163 @@ async function tavilyExtract(url: string): Promise<string> {
   return content;
 }
 
+/** Same host/path on justfacts vs www for bill pages — Tavily often works on one and not the other. */
+function alternateVoteSmartBillUrls(url: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (u: string) => {
+    if (!seen.has(u)) {
+      seen.add(u);
+      out.push(u);
+    }
+  };
+  try {
+    const u = new URL(url);
+    if (!isVoteSmartDomain(u.hostname)) {
+      push(url);
+      return out;
+    }
+    const path = `${u.pathname}${u.search}`;
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    push(url);
+    if (host === "votesmart.org") {
+      push(`https://justfacts.votesmart.org${path}`);
+    } else if (host === "justfacts.votesmart.org") {
+      push(`https://votesmart.org${path}`);
+    }
+  } catch {
+    push(url);
+  }
+  return out;
+}
+
+function roughHtmlToText(html: string): string {
+  let s = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gis, " ");
+  s = s.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gis, " ");
+  s = s.replace(/<[^>]+>/g, "\n");
+  s = s.replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+  s = s.replace(/\n{3,}/g, "\n\n").trim();
+  return s;
+}
+
+async function fetchViaJinaReader(url: string): Promise<string> {
+  // https://r.jina.ai/https://example.com — browser-backed fetch; avoids Votesmart Edge IP blocks.
+  const readerUrl = `https://r.jina.ai/${url}`;
+  const headers: Record<string, string> = {
+    Accept: "text/markdown,text/plain;q=0.9,*/*;q=0.8",
+  };
+  if (JINA_API_KEY.trim()) {
+    headers.Authorization = `Bearer ${JINA_API_KEY.trim()}`;
+  }
+  const res = await fetchWithTimeout(readerUrl, {
+    method: "GET",
+    headers,
+    redirect: "follow",
+    timeoutMs: Math.max(EXTRACT_TIMEOUT_MS, 45_000),
+  });
+  if (!res || !res.ok) {
+    throw new Error(`Jina reader HTTP ${res?.status}`);
+  }
+  const text = (await res.text()).trim();
+  if (text.length < 400) {
+    throw new Error(`Jina reader body too short (${text.length} chars)`);
+  }
+  return text;
+}
+
+async function fetchVoteSmartPageAsFallbackText(url: string): Promise<string> {
+  const res = await fetchWithTimeout(url, {
+    method: "GET",
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    redirect: "follow",
+    timeoutMs: EXTRACT_TIMEOUT_MS,
+  });
+  if (!res || !res.ok) throw new Error(`direct fetch HTTP ${res?.status}`);
+  const html = await res.text();
+  const text = roughHtmlToText(html);
+  if (text.trim().length < 400) {
+    throw new Error(`direct fetch body too short (${text.trim().length} chars)`);
+  }
+  return text;
+}
+
+/** Try the 3-tier fallback chain (Tavily -> Jina -> direct) for a single URL, sequentially (cost-ordered). */
+async function extractFromCandidate(url: string): Promise<{ content: string; finalUrl: string } | null> {
+  try {
+    const viaTavily = await tavilyExtract(url);
+    if (viaTavily.trim().length > 0) {
+      console.log(`[RECORDS_OPEN] Tavily extract ok for ${url} (${viaTavily.trim().length} chars)`);
+      return { content: viaTavily, finalUrl: url };
+    }
+  } catch (e) {
+    console.log(`[RECORDS_OPEN] tavily failed for ${url}: ${e}`);
+  }
+
+  try {
+    const viaJina = await fetchViaJinaReader(url);
+    console.log(`[RECORDS_OPEN] Jina reader ok for ${url} (${viaJina.trim().length} chars)`);
+    return { content: viaJina, finalUrl: url };
+  } catch (e) {
+    console.log(`[RECORDS_OPEN] jina failed for ${url}: ${e}`);
+  }
+
+  try {
+    const viaDirect = await fetchVoteSmartPageAsFallbackText(url);
+    console.log(`[RECORDS_OPEN] Direct fetch ok for ${url} (${viaDirect.trim().length} chars)`);
+    return { content: viaDirect, finalUrl: url };
+  } catch (e) {
+    console.log(`[RECORDS_OPEN] direct failed for ${url}: ${e}`);
+  }
+
+  return null;
+}
+
+/**
+ * Tavily extract is flaky on some votesmart.org URLs. Try every seed's URL
+ * variants concurrently (bounded batches) instead of one at a time — the
+ * original version tried every candidate's full 3-tier chain sequentially
+ * (seed by seed, variant by variant), which could take minutes in the worst
+ * case (each tier has its own multi-second timeout) when the first several
+ * candidates all failed. Each candidate's own tiers still run in cost order
+ * (cheap Tavily first), only the candidates run in parallel with each other.
+ */
+async function extractBillContentWithFallbacks(seedUrls: string[]): Promise<{ content: string; finalUrl: string }> {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  for (const seed of seedUrls) {
+    for (const alt of alternateVoteSmartBillUrls(seed)) {
+      if (!seen.has(alt)) {
+        seen.add(alt);
+        candidates.push(alt);
+      }
+    }
+  }
+
+  if (!candidates.length) throw new Error("no candidate URLs");
+
+  const CONCURRENCY = 4;
+  for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+    const batch = candidates.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(batch.map((url) => extractFromCandidate(url)));
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value) return r.value;
+    }
+  }
+
+  console.error(`[RECORDS_OPEN] All extraction fallbacks failed for seeds:`, seedUrls);
+  throw new Error("empty extract after fallbacks");
+}
+
 /** ========================== STORAGE ========================== */
 async function putParts(basePath: string, content: string): Promise<string[]> {
   const parts: string[] = [];
@@ -189,10 +361,10 @@ Deno.serve(async (req) => {
       return json(400, { error: "Missing required field: card_id", success: false });
     }
 
-    // Fetch card from card_index to get title and owner_id
+    // Fetch card from card_index to get title, owner, and existing link (if available)
     const { data: card, error: cardError } = await supabase
       .from("card_index")
-      .select("id, title, owner_id, is_ppl")
+      .select("id, title, owner_id, is_ppl, link")
       .eq("id", cardId)
       .single();
 
@@ -207,45 +379,60 @@ Deno.serve(async (req) => {
 
     const ownerId = card.owner_id;
     const isPpl = card.is_ppl ?? true;
+    const existingLink = String(card.link || "").trim();
 
-    // Perform Tavily search: "{title} votesmart"
-    const searchQuery = `${title} votesmart`;
-    console.log(`[RECORDS_OPEN] Searching for: ${searchQuery}`);
-
-    let searchUrls: string[] = [];
-    try {
-      searchUrls = await tavilySearch(searchQuery);
-      if (searchUrls.length === 0) {
-        console.log(`[RECORDS_OPEN] No search results found`);
-        return json(200, { error: "This voting record is currently unavailable.", success: false });
-      }
-    } catch (searchErr) {
-      console.error(`[RECORDS_OPEN] Search error:`, searchErr);
-      return json(200, { error: "This voting record is currently unavailable.", success: false });
+    let extractionSeeds: string[] = [];
+    if (existingLink && isValidVoteSmartBillUrl(existingLink, title, false)) {
+      extractionSeeds.push(existingLink);
+      console.log(`[RECORDS_OPEN] Stored card link seed for extraction: ${existingLink}`);
+    } else if (existingLink) {
+      console.log(`[RECORDS_OPEN] Stored card link is not a valid VoteSmart bill URL, falling back to search: ${existingLink}`);
     }
 
-    // Filter URLs to only include valid Vote Smart bill URLs
-    const validUrls = searchUrls.filter(url => isValidVoteSmartBillUrl(url, title));
-    
-    if (validUrls.length === 0) {
-      console.log(`[RECORDS_OPEN] No valid Vote Smart bill URLs found in search results`);
-      return json(200, { error: "This voting record is currently unavailable.", success: false });
-    }
+    if (extractionSeeds.length === 0) {
+      // Perform Tavily search: "{title} votesmart"
+      const searchQuery = `${title} votesmart`;
+      console.log(`[RECORDS_OPEN] Searching for: ${searchQuery}`);
 
-    // Use the first valid URL from search results
-    const targetUrl = validUrls[0];
-    console.log(`[RECORDS_OPEN] Extracting from: ${targetUrl}`);
-
-    // Extract content from the URL
-    let scrapedContent: string = "";
-    try {
-      scrapedContent = await tavilyExtract(targetUrl);
-      if (!scrapedContent || scrapedContent.trim().length === 0) {
-        console.log(`[RECORDS_OPEN] No content extracted`);
+      let searchUrls: string[] = [];
+      try {
+        searchUrls = await tavilySearch(searchQuery);
+        if (searchUrls.length === 0) {
+          console.log(`[RECORDS_OPEN] No search results found`);
+          return json(200, { error: "This voting record is currently unavailable.", success: false });
+        }
+      } catch (searchErr) {
+        console.error(`[RECORDS_OPEN] Search error:`, searchErr);
         return json(200, { error: "This voting record is currently unavailable.", success: false });
       }
+
+      // Filter URLs to only include valid Vote Smart bill URLs
+      const strictValidUrls = searchUrls.filter(url => isValidVoteSmartBillUrl(url, title, true));
+      const fallbackValidUrls = searchUrls.filter(url => isValidVoteSmartBillUrl(url, title, false));
+      const validUrls = strictValidUrls.length > 0 ? strictValidUrls : fallbackValidUrls;
+
+      if (validUrls.length === 0) {
+        console.log(`[RECORDS_OPEN] No valid Vote Smart bill URLs found in search results`);
+        return json(200, { error: "This voting record is currently unavailable.", success: false });
+      }
+
+      extractionSeeds = [...new Set(validUrls)];
+      console.log(`[RECORDS_OPEN] Extraction seeds from search (${extractionSeeds.length}):`, extractionSeeds);
+    }
+
+    let scrapedContent = "";
+    let targetUrl = "";
+    try {
+      const { content, finalUrl } = await extractBillContentWithFallbacks(extractionSeeds);
+      scrapedContent = content;
+      targetUrl = finalUrl;
+      console.log(`[RECORDS_OPEN] Extraction succeeded; using URL: ${targetUrl}`);
     } catch (extractErr) {
-      console.error(`[RECORDS_OPEN] Extract error:`, extractErr);
+      console.error(`[RECORDS_OPEN] Extraction failed for seeds ${extractionSeeds}:`, extractErr);
+    }
+
+    if (!scrapedContent.trim() || !targetUrl) {
+      console.log(`[RECORDS_OPEN] No content extracted after trying all seeds`);
       return json(200, { error: "This voting record is currently unavailable.", success: false });
     }
 
