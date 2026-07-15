@@ -32,37 +32,33 @@ export async function registerPushToken(userId: string): Promise<string | null> 
     });
     const pushToken = tokenData.data;
 
-    // Store token in database
-    const supabase = getSupabaseClient();
-    const { error } = await supabase
-      .from('user_push_tokens')
-      .upsert({
-        user_id: userId,
-        push_token: pushToken,
-        device_type: Platform.OS,
-        updated_at: new Date().toISOString()
-      }, {
-        onConflict: 'user_id,device_type'
-      });
+    // Store token in database. A genuinely empty {} error (confirmed via
+    // JSON.stringify — not just hidden non-enumerable fields) has been
+    // observed here, which rules out RLS/schema errors (those always carry a
+    // message/code) and points to a swallowed network-layer failure instead.
+    // One retry after a short delay covers a transient blip; if it still
+    // comes back empty, give up quietly rather than blocking anything.
+    const attemptUpsert = () =>
+      getSupabaseClient()
+        .from('user_push_tokens')
+        .upsert({
+          user_id: userId,
+          push_token: pushToken,
+          device_type: Platform.OS,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'user_id,device_type'
+        });
+
+    let { error } = await attemptUpsert();
+    if (error) {
+      console.warn('[PushTokenService] First upsert attempt failed, retrying once:', error.message || error);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      ({ error } = await attemptUpsert());
+    }
 
     if (error) {
-      // Neither the raw object nor its message/code/details/hint fields have
-      // surfaced anything useful so far — dump everything we can about its
-      // actual shape so the next occurrence is diagnosable instead of another
-      // guess.
-      let safeStringified = '(stringify failed)';
-      try { safeStringified = JSON.stringify(error); } catch {}
-      console.error('[PushTokenService] Error storing push token:', {
-        message: error.message,
-        code: (error as any).code,
-        details: (error as any).details,
-        hint: (error as any).hint,
-        name: (error as any).name,
-        typeofError: typeof error,
-        keys: Object.keys(error),
-        stringified: safeStringified,
-        toStringResult: String(error),
-      });
+      console.error('[PushTokenService] Error storing push token after retry:', error.message || JSON.stringify(error));
       return null;
     }
 
