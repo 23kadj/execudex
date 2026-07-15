@@ -10,12 +10,27 @@ const WEB_BUCKET     = Deno.env.get("WEB_BUCKET") || "web";
 const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY")!;
 const PART_LEN = 150_000; // chunk stored pages into ~150k-char parts
 const FETCH_TIMEOUT_MS = Number(Deno.env.get("WIKI_TIMEOUT_MS") ?? 15000);
+const BULK_ENRICH_CONCURRENCY = 5; // cap concurrent per-bill enrichment chains (each is ~4 Tavily + up to 7 Mistral calls)
 
 /** ========================== SUPABASE ========================== */
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, { global: { fetch } });
 
 /** ========================== HELPERS ========================== */
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Run async work over items with bounded concurrency (prevents unbounded fan-out) */
+async function runLimited<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let idx = 0;
+  async function launch(): Promise<void> {
+    const my = idx++;
+    if (my >= items.length) return;
+    out[my] = await worker(items[my]);
+    return launch();
+  }
+  await Promise.all([...Array(Math.min(limit, items.length))].map(() => launch()));
+  return out;
+}
 
 function toOrdinal(n: number): string {
   const s = ["th", "st", "nd", "rd"], v = n % 100;
@@ -1013,6 +1028,11 @@ async function enrichBillMetadata(legiId: number, baseUrl: string): Promise<void
     updates.data_update = new Date().toISOString();
 
     // --------- NAME NORMALIZATION BASED ON WORD TITLE LENGTH ---------
+    // The extraction tasks below (name, subject, latest_action, cosponsors,
+    // committees, actions) each write a distinct field on `updates` and don't
+    // depend on each other's output — run them concurrently instead of
+    // sequentially so the ~5-6 Tavily+Mistral round trips overlap.
+    const doNameNormalization = async () => {
     try {
       const existingNameRaw = (legiRow?.name ?? "").toString().trim();
       const billCodeFromUrl = billIdFromCongressUrl(verifiedMainUrl);
@@ -1072,8 +1092,10 @@ async function enrichBillMetadata(legiId: number, baseUrl: string): Promise<void
     } catch (e) {
       console.error(`[enrichBillMetadata] Failed to normalize name for legi_id ${legiId}:`, e);
     }
+    };
 
     // Extract subject/policy area from main page using Mistral
+    const doSubject = async () => {
     if (mainPageText && (!skipPopulatedFields || !hasSubject)) {
       try {
         const subjectSys = `You are a precise data extractor. Extract data from congressional bill pages. Return ONLY valid JSON with the exact structure requested.`;
@@ -1107,8 +1129,10 @@ TEXT FROM PAGE:
     } else if (skipPopulatedFields && hasSubject) {
       console.log(`[enrichBillMetadata] Skipping subject extraction for legi_id ${legiId} (already populated)`);
     }
+    };
 
     // Extract and reformat latest action using Mistral
+    const doLatestAction = async () => {
     if (mainPageText && (!skipPopulatedFields || !hasLatestAction)) {
       try {
         const actionSys = `You are a precise editor. Extract and reformat legislative action text into clear, readable English. Return ONLY valid JSON with the exact structure requested.`;
@@ -1163,8 +1187,10 @@ TEXT FROM PAGE:
         `[enrichBillMetadata] Skipping latest_action extraction for legi_id ${legiId} (already populated)`
       );
     }
+    };
 
     // Extract cosponsors from /cosponsors page
+    const doCosponsors = async () => {
     if (!skipPopulatedFields || !hasCosponsors) {
       try {
       const cosponsorsUrlRaw = `${verifiedMainUrl}/cosponsors`;
@@ -1226,8 +1252,10 @@ TEXT FROM PAGE:
     } else if (skipPopulatedFields && hasCosponsors) {
       console.log(`[enrichBillMetadata] Skipping cosponsors extraction for legi_id ${legiId} (already populated)`);
     }
+    };
 
     // Extract committees from /committees page and format as readable sentences
+    const doCommittees = async () => {
     if (!skipPopulatedFields || !hasCommittees) {
       try {
       const committeesUrlRaw = `${verifiedMainUrl}/committees`;
@@ -1340,8 +1368,10 @@ COMMITTEE RECORDS (JSON):
     } else if (skipPopulatedFields && hasCommittees) {
       console.log(`[enrichBillMetadata] Skipping committees extraction for legi_id ${legiId} (already populated)`);
     }
+    };
 
     // Extract actions from /all-actions page
+    const doActions = async () => {
     if (!skipPopulatedFields || !hasActions) {
       try {
       const actionsUrlRaw = `${verifiedMainUrl}/all-actions`;
@@ -1499,8 +1529,20 @@ ACTION RECORDS (JSON):
     } else if (skipPopulatedFields && hasActions) {
       console.log(`[enrichBillMetadata] Skipping actions extraction for legi_id ${legiId} (already populated)`);
     }
+    };
+
+    await Promise.all([
+      doNameNormalization(),
+      doSubject(),
+      doLatestAction(),
+      doCosponsors(),
+      doCommittees(),
+      doActions(),
+    ]);
 
     // Extract most recent vote from actions and prepend to latest_action
+    // (runs after the concurrent extraction above settles, since it reads
+    // both updates.actions and updates.latest_action)
     // Check both newly extracted actions (updates.actions) and existing actions from database
     const actionsToCheck = updates.actions 
       ? String(updates.actions)
@@ -1743,12 +1785,10 @@ Deno.serve(async (req) => {
       
       // Batch enrichment (multiple bills)
       if (legiIds && legiIds.length > 0) {
-        const results = await Promise.all(
-          legiIds.map(async (id: number) => {
-            const result = await enrichBillMetadataById(id);
-            return { legi_id: id, success: result.success, error: result.error };
-          })
-        );
+        const results = await runLimited(legiIds, BULK_ENRICH_CONCURRENCY, async (id: number) => {
+          const result = await enrichBillMetadataById(id);
+          return { legi_id: id, success: result.success, error: result.error };
+        });
         
         const successful = results.filter(r => r.success).length;
         const failed = results.filter(r => !r.success);
@@ -1785,12 +1825,10 @@ Deno.serve(async (req) => {
         }
         
         const billIds = bills.map(b => b.id);
-        const results = await Promise.all(
-          billIds.map(async (id: number) => {
-            const result = await enrichBillMetadataById(id);
-            return { legi_id: id, success: result.success, error: result.error };
-          })
-        );
+        const results = await runLimited(billIds, BULK_ENRICH_CONCURRENCY, async (id: number) => {
+          const result = await enrichBillMetadataById(id);
+          return { legi_id: id, success: result.success, error: result.error };
+        });
         
         const successful = results.filter(r => r.success).length;
         const failed = results.filter(r => !r.success);

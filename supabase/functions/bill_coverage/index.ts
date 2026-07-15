@@ -22,6 +22,9 @@ const SEARCH_MAX_URLS     = 20;
 const BATCH_URLS_PER_RUN  = 5;
 const MAX_TITLE_WORDS     = 15;
 const MAX_PER_SOURCE      = 12;
+const EXTRACT_POOL_LIMIT  = 10;     // extraction can handle more concurrency
+const LLM_POOL_LIMIT      = 3;      // LLM judge calls should be rate-limited
+const STORAGE_POOL_LIMIT  = 8;      // storage can be parallel
 
 /** Budget / time guards */
 const RUN_BUDGET_MS       = Number(Deno.env.get("RUN_BUDGET_MS") ?? 110_000);
@@ -793,7 +796,6 @@ async function searchAndStoreSources(
   billName: string,
   year: string | null
 ): Promise<{ fetched_urls: string[]; stored: number; debug: any }> {
-  let fetched_urls: string[] = [];
   let stored = 0;
 
   const query = buildSearchQuery(billName, year);
@@ -826,134 +828,151 @@ async function searchAndStoreSources(
   debug.llm_judgments = { blocked: 0, allowlist_passed: 0, unknown_rejected: 0, unknown_accepted: 0, llm_error: 0 };
   debug.llm_verdicts = [] as any[];
 
+  // Stage 0: dedup + blocked-domain filter (cheap, synchronous, order-sensitive)
+  type Candidate = { urlStr: string; host: string; isAllowed: boolean; normalizedUrl: string };
+  const candidates: Candidate[] = [];
+  const seenInBatch = new Set<string>();
   for (const urlStr of urls) {
-    if (!budgetOk()) break;
-    
-    // Check for duplicates
     const normalizedUrl = normalizeUrl(urlStr);
-    if (existingLinks.has(normalizedUrl)) {
+    if (existingLinks.has(normalizedUrl) || seenInBatch.has(normalizedUrl)) {
       debug.duplicates_skipped++;
       continue;
     }
-    
-    const host = hostFromUrl(urlStr) || "";
-    
-    // 1. Check if blocked
     if (isBlockedDomain(urlStr)) {
       debug.llm_judgments.blocked++;
       continue;
     }
-    
-    // 2. Check if in allow list
+    seenInBatch.add(normalizedUrl);
+    const host = hostFromUrl(urlStr) || "";
     const isAllowed = Array.from(ALLOWED_DOMAINS).some(d => matchesDomainPattern(urlStr, d));
-    
+    candidates.push({ urlStr, host, isAllowed, normalizedUrl });
+  }
+
+  // Stage 1: extract text (concurrent)
+  type Extracted = Candidate & { text: string };
+  const extractTasks = candidates.map((c) => async (): Promise<Extracted | null> => {
+    if (!budgetOk()) return null;
     try {
       let text = "";
       try {
-        text = await tavilyExtract(urlStr);
+        text = await tavilyExtract(c.urlStr);
         if (!text) throw new Error("empty");
       } catch {
         try {
-          const html = await fetchHTMLWithUA(urlStr);
+          const html = await fetchHTMLWithUA(c.urlStr);
           const plain = stripHtml(html);
           text = trim(plain || html);
         } catch {
-          text = trim(await fetchViaJinaReader(urlStr));
+          text = trim(await fetchViaJinaReader(c.urlStr));
         }
       }
-      if (!text) continue;
-      debug.after_extract++;
-      
-      // 3. If allowed, pass through. If unknown, run LLM judge
-      if (isAllowed) {
-        debug.llm_judgments.allowlist_passed++;
-      } else {
-        // Unknown domain - run LLM judge
-        const snippet = text.slice(0, 4000);
-        const verdict = await _mistralJudgeSmall({
-          meta: { url: urlStr, host, title: undefined, detected_date: null, lang: null },
-          snippet,
-          topic: billName,
-          nowIso: nowIsoStr
-        });
-        
-        if (!verdict) {
-          debug.llm_judgments.llm_error++;
-          debug.llm_verdicts.push({ url: urlStr, host, status: "llm_error" });
-          continue;
-        }
-        
-        const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
-        const excluded = verdict.content_flags.press_release || 
-                        verdict.content_flags.news_clip_or_blog_rollup || 
-                        verdict.content_flags.opinion_or_editorial;
-        
-        let rejectReason = "";
-        
-        // Policy checks
-        if (!verdict.recency_ok) {
-          rejectReason = "stale (>12 months)";
-        } else if (excluded) {
-          const flags = [];
-          if (verdict.content_flags.press_release) flags.push("press_release");
-          if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
-          if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
-          rejectReason = `excluded_content: ${flags.join(", ")}`;
-        } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
-          rejectReason = "affiliation_fail";
-        } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
-          rejectReason = `partisan (${verdict.institution})`;
-        } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
-          rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
-        }
-        
-        if (rejectReason) {
-          debug.llm_judgments.unknown_rejected++;
-          debug.llm_verdicts.push({
-            url: urlStr,
-            host,
-            status: "rejected",
-            reason: rejectReason,
-            verdict: verdict.verdict,
-            score: verdict.score,
-            institution: verdict.institution,
-            partisanship: verdict.partisanship,
-            recency_ok: verdict.recency_ok,
-            content_flags: verdict.content_flags,
-            llm_reasons: verdict.reasons
-          });
-          continue;
-        }
-        
-        debug.llm_judgments.unknown_accepted++;
-        debug.llm_verdicts.push({
-          url: urlStr,
-          host,
-          status: "accepted",
-          score: verdict.score,
-          institution: verdict.institution
-        });
-      }
+      if (!text) return null;
+      return { ...c, text };
+    } catch {
+      return null;
+    }
+  });
+  const extractedRaw = await runPool(EXTRACT_POOL_LIMIT, extractTasks);
+  const extracted = extractedRaw.filter((x): x is Extracted => !!x);
+  debug.after_extract = extracted.length;
 
-      const label = bareDomainLabelFromUrl(urlStr);
-      const webId = await insertWebContent(id, urlStr);
-      const parts = splitForStorage(text, STORAGE_PART_LEN);
-      const paths: string[] = [];
-      for (let i = 0; i < parts.length; i++) {
-        const suffix = parts.length > 1 ? `.${i + 1}` : "";
-        const key = `legi/${id}/coverage.${webId}.${label}${suffix}.txt`;
-        await putToStorage(key, parts[i]);
-        paths.push(key);
-      }
-      await supabase.from("web_content").update({ path: paths[0] }).eq("id", webId);
-      fetched_urls.push(urlStr);
-      stored++;
-      debug.stored++;
-      // Add to existing links set to prevent duplicates in same batch
-      existingLinks.add(normalizedUrl);
-      if (!budgetOk()) break;
-    } catch { /* skip */ }
-  }
+  // Stage 2: LLM judge (only for unknown domains; allowed domains pass straight through)
+  type Judged = Extracted & { pass: true };
+  const judgeTasks = extracted.map((item) => async (): Promise<Judged | null> => {
+    if (item.isAllowed) {
+      debug.llm_judgments.allowlist_passed++;
+      return { ...item, pass: true };
+    }
+
+    const snippet = item.text.slice(0, 4000);
+    const verdict = await _mistralJudgeSmall({
+      meta: { url: item.urlStr, host: item.host, title: undefined, detected_date: null, lang: null },
+      snippet,
+      topic: billName,
+      nowIso: nowIsoStr
+    });
+
+    if (!verdict) {
+      debug.llm_judgments.llm_error++;
+      debug.llm_verdicts.push({ url: item.urlStr, host: item.host, status: "llm_error" });
+      return null;
+    }
+
+    const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
+    const excluded = verdict.content_flags.press_release ||
+                    verdict.content_flags.news_clip_or_blog_rollup ||
+                    verdict.content_flags.opinion_or_editorial;
+
+    let rejectReason = "";
+
+    // Policy checks
+    if (!verdict.recency_ok) {
+      rejectReason = "stale (>12 months)";
+    } else if (excluded) {
+      const flags = [];
+      if (verdict.content_flags.press_release) flags.push("press_release");
+      if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
+      if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
+      rejectReason = `excluded_content: ${flags.join(", ")}`;
+    } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
+      rejectReason = "affiliation_fail";
+    } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
+      rejectReason = `partisan (${verdict.institution})`;
+    } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
+      rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
+    }
+
+    if (rejectReason) {
+      debug.llm_judgments.unknown_rejected++;
+      debug.llm_verdicts.push({
+        url: item.urlStr,
+        host: item.host,
+        status: "rejected",
+        reason: rejectReason,
+        verdict: verdict.verdict,
+        score: verdict.score,
+        institution: verdict.institution,
+        partisanship: verdict.partisanship,
+        recency_ok: verdict.recency_ok,
+        content_flags: verdict.content_flags,
+        llm_reasons: verdict.reasons
+      });
+      return null;
+    }
+
+    debug.llm_judgments.unknown_accepted++;
+    debug.llm_verdicts.push({
+      url: item.urlStr,
+      host: item.host,
+      status: "accepted",
+      score: verdict.score,
+      institution: verdict.institution
+    });
+    return { ...item, pass: true };
+  });
+  const judgedRaw = await runPool(LLM_POOL_LIMIT, judgeTasks);
+  const accepted = judgedRaw.filter((x): x is Judged => !!x);
+
+  // Stage 3: insert + store (concurrent)
+  const fetched_urls: string[] = [];
+  const storeTasks = accepted.map((item) => async () => {
+    if (!budgetOk()) return;
+    const label = bareDomainLabelFromUrl(item.urlStr);
+    const webId = await insertWebContent(id, item.urlStr);
+    const parts = splitForStorage(item.text, STORAGE_PART_LEN);
+    const paths: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const suffix = parts.length > 1 ? `.${i + 1}` : "";
+      const key = `legi/${id}/coverage.${webId}.${label}${suffix}.txt`;
+      await putToStorage(key, parts[i]);
+      paths.push(key);
+    }
+    await supabase.from("web_content").update({ path: paths[0] }).eq("id", webId);
+    fetched_urls.push(item.urlStr);
+    stored++;
+    debug.stored++;
+  });
+  await runPool(STORAGE_POOL_LIMIT, storeTasks);
 
   return { fetched_urls, stored, debug };
 }
@@ -975,137 +994,152 @@ async function searchAndStoreSourcesRound2Open(
   if (got.http_status) debug.http_status = got.http_status;
   if (got.http_body)   debug.http_body   = got.http_body;
 
-  const fetched_urls: string[] = [];
-  const web_ids: number[] = [];
   const nowIsoStr = nowIso();
   debug.llm_judgments = { unknown_rejected: 0, unknown_accepted: 0, llm_error: 0 };
   debug.llm_verdicts = [] as any[];
 
+  // Stage 0: dedup + blocked-domain filter (cheap, synchronous, order-sensitive)
+  type Candidate = { urlStr: string; host: string; isAllowed: boolean; normalizedUrl: string };
+  const candidates: Candidate[] = [];
+  const seenInBatch = new Set<string>();
   for (const urlStr of got.urls) {
-    if (!budgetOk()) break;
-    
-    // Check for duplicates
     const normalizedUrl = normalizeUrl(urlStr);
-    if (existingLinks.has(normalizedUrl)) {
+    if (existingLinks.has(normalizedUrl) || seenInBatch.has(normalizedUrl)) {
       debug.duplicates_skipped++;
       continue;
     }
-    
+    if (isBlockedDomain(urlStr)) continue;
+    seenInBatch.add(normalizedUrl);
     const host = hostFromUrl(urlStr) || "";
-    
-    // Check if blocked
-    if (isBlockedDomain(urlStr)) {
-      continue;
-    }
-    
-    // Check if in allow list - pass through without LLM
     const isAllowed = Array.from(ALLOWED_DOMAINS).some(d => matchesDomainPattern(urlStr, d));
-    
+    candidates.push({ urlStr, host, isAllowed, normalizedUrl });
+  }
+
+  // Stage 1: extract text (concurrent)
+  type Extracted = Candidate & { text: string };
+  const extractTasks = candidates.map((c) => async (): Promise<Extracted | null> => {
+    if (!budgetOk()) return null;
     try {
       let text = "";
       try {
-        text = await tavilyExtract(urlStr);
+        text = await tavilyExtract(c.urlStr);
         if (!text) throw new Error("empty");
       } catch {
         try {
-          const html = await fetchHTMLWithUA(urlStr);
+          const html = await fetchHTMLWithUA(c.urlStr);
           const plain = stripHtml(html);
           text = trim(plain || html);
         } catch {
-          text = trim(await fetchViaJinaReader(urlStr));
+          text = trim(await fetchViaJinaReader(c.urlStr));
         }
       }
-      if (!text) continue;
-      debug.after_extract++;
-      
-      // Skip LLM judge if allowed domain
-      if (isAllowed) {
-        debug.llm_judgments.unknown_accepted++;
-      } else {
-        // LLM judge for unknown domains (full gate)
-        const snippet = text.slice(0, 4000);
-        const verdict = await _mistralJudgeSmall({
-          meta: { url: urlStr, host, title: undefined, detected_date: null, lang: null },
-          snippet,
-          topic: billName,
-          nowIso: nowIsoStr
-        });
-        
-        if (!verdict) {
-          debug.llm_judgments.llm_error++;
-          debug.llm_verdicts.push({ url: urlStr, host, status: "llm_error" });
-          continue;
-        }
-        
-        const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
-        const excluded = verdict.content_flags.press_release || 
-                        verdict.content_flags.news_clip_or_blog_rollup || 
-                        verdict.content_flags.opinion_or_editorial;
-        
-        let rejectReason = "";
-        
-        // Policy checks
-        if (!verdict.recency_ok) {
-          rejectReason = "stale (>12 months)";
-        } else if (excluded) {
-          const flags = [];
-          if (verdict.content_flags.press_release) flags.push("press_release");
-          if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
-          if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
-          rejectReason = `excluded_content: ${flags.join(", ")}`;
-        } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
-          rejectReason = "affiliation_fail";
-        } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
-          rejectReason = `partisan (${verdict.institution})`;
-        } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
-          rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
-        }
-        
-        if (rejectReason) {
-          debug.llm_judgments.unknown_rejected++;
-          debug.llm_verdicts.push({
-            url: urlStr,
-            host,
-            status: "rejected",
-            reason: rejectReason,
-            verdict: verdict.verdict,
-            score: verdict.score,
-            institution: verdict.institution,
-            partisanship: verdict.partisanship,
-            recency_ok: verdict.recency_ok,
-            content_flags: verdict.content_flags,
-            llm_reasons: verdict.reasons
-          });
-          continue;
-        }
-        
-        debug.llm_judgments.unknown_accepted++;
-        debug.llm_verdicts.push({
-          url: urlStr,
-          host,
-          status: "accepted",
-          score: verdict.score,
-          institution: verdict.institution
-        });
-      }
+      if (!text) return null;
+      return { ...c, text };
+    } catch {
+      return null;
+    }
+  });
+  const extractedRaw = await runPool(EXTRACT_POOL_LIMIT, extractTasks);
+  const extracted = extractedRaw.filter((x): x is Extracted => !!x);
+  debug.after_extract = extracted.length;
 
-      const label = bareDomainLabelFromUrl(urlStr);
-      const webId = await insertWebContent(id, urlStr);
-      const parts = splitForStorage(text, STORAGE_PART_LEN);
-      for (let i = 0; i < parts.length; i++) {
-        const suffix = parts.length > 1 ? `.${i + 1}` : "";
-        const key = `legi/${id}/coverage.${webId}.${label}${suffix}.txt`;
-        await putToStorage(key, parts[i]);
-      }
-      await supabase.from("web_content").update({ path: `legi/${id}/coverage.${webId}.${label}.txt` }).eq("id", webId);
+  // Stage 2: LLM judge (only for unknown domains; allowed domains pass straight through)
+  type Judged = Extracted & { pass: true };
+  const judgeTasks = extracted.map((item) => async (): Promise<Judged | null> => {
+    if (item.isAllowed) {
+      debug.llm_judgments.unknown_accepted++;
+      return { ...item, pass: true };
+    }
 
-      fetched_urls.push(urlStr);
-      web_ids.push(webId);
-      debug.stored++;
-      // Add to existing links set to prevent duplicates in same batch
-      existingLinks.add(normalizedUrl);
-    } catch { /* skip */ }
-  }
+    const snippet = item.text.slice(0, 4000);
+    const verdict = await _mistralJudgeSmall({
+      meta: { url: item.urlStr, host: item.host, title: undefined, detected_date: null, lang: null },
+      snippet,
+      topic: billName,
+      nowIso: nowIsoStr
+    });
+
+    if (!verdict) {
+      debug.llm_judgments.llm_error++;
+      debug.llm_verdicts.push({ url: item.urlStr, host: item.host, status: "llm_error" });
+      return null;
+    }
+
+    const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
+    const excluded = verdict.content_flags.press_release ||
+                    verdict.content_flags.news_clip_or_blog_rollup ||
+                    verdict.content_flags.opinion_or_editorial;
+
+    let rejectReason = "";
+
+    // Policy checks
+    if (!verdict.recency_ok) {
+      rejectReason = "stale (>12 months)";
+    } else if (excluded) {
+      const flags = [];
+      if (verdict.content_flags.press_release) flags.push("press_release");
+      if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
+      if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
+      rejectReason = `excluded_content: ${flags.join(", ")}`;
+    } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
+      rejectReason = "affiliation_fail";
+    } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
+      rejectReason = `partisan (${verdict.institution})`;
+    } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
+      rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
+    }
+
+    if (rejectReason) {
+      debug.llm_judgments.unknown_rejected++;
+      debug.llm_verdicts.push({
+        url: item.urlStr,
+        host: item.host,
+        status: "rejected",
+        reason: rejectReason,
+        verdict: verdict.verdict,
+        score: verdict.score,
+        institution: verdict.institution,
+        partisanship: verdict.partisanship,
+        recency_ok: verdict.recency_ok,
+        content_flags: verdict.content_flags,
+        llm_reasons: verdict.reasons
+      });
+      return null;
+    }
+
+    debug.llm_judgments.unknown_accepted++;
+    debug.llm_verdicts.push({
+      url: item.urlStr,
+      host: item.host,
+      status: "accepted",
+      score: verdict.score,
+      institution: verdict.institution
+    });
+    return { ...item, pass: true };
+  });
+  const judgedRaw = await runPool(LLM_POOL_LIMIT, judgeTasks);
+  const accepted = judgedRaw.filter((x): x is Judged => !!x);
+
+  // Stage 3: insert + store (concurrent)
+  const fetched_urls: string[] = [];
+  const web_ids: number[] = [];
+  const storeTasks = accepted.map((item) => async () => {
+    if (!budgetOk()) return;
+    const label = bareDomainLabelFromUrl(item.urlStr);
+    const webId = await insertWebContent(id, item.urlStr);
+    const parts = splitForStorage(item.text, STORAGE_PART_LEN);
+    for (let i = 0; i < parts.length; i++) {
+      const suffix = parts.length > 1 ? `.${i + 1}` : "";
+      const key = `legi/${id}/coverage.${webId}.${label}${suffix}.txt`;
+      await putToStorage(key, parts[i]);
+    }
+    await supabase.from("web_content").update({ path: `legi/${id}/coverage.${webId}.${label}.txt` }).eq("id", webId);
+
+    fetched_urls.push(item.urlStr);
+    web_ids.push(webId);
+    debug.stored++;
+  });
+  await runPool(STORAGE_POOL_LIMIT, storeTasks);
 
   return { fetched_urls, web_ids, debug };
 }

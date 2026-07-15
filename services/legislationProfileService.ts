@@ -7,6 +7,7 @@ interface LegiIndex {
   sub_name: string | null;
   indexed: boolean | null;
   weak?: boolean | null;
+  bill_lvl?: string | null;
 }
 
 interface LegiProfile {
@@ -59,7 +60,7 @@ export class LegislationProfileService {
       // Step 2: Check if profile_index is needed (for storage files and required fields)
       if (checkResult.needsIndexing) {
         console.log('Profile index needed, executing profile_index');
-        await this.executeStep1IfNeeded(legislationId, onProgress);
+        await this.executeStep1IfNeeded(legislationId, checkResult.indexData, onProgress);
       }
       
       // Step 3: Always check and ensure profile data exists in legi_profiles
@@ -180,7 +181,8 @@ export class LegislationProfileService {
         needsIndexing: !hasRequiredFields || !hasStorageFiles,
         needsOverview: !hasProfile, // Will be determined in handleProfileChecks
         needsCards: false,    // Will be determined in handleProfileChecks
-        indexData
+        indexData,
+        profileData: profileData || undefined // already fetched above — reused by handleProfileChecks
       };
     } catch (error) {
       console.error('Error in checkProfileValidation:', error);
@@ -251,17 +253,23 @@ export class LegislationProfileService {
    */
   private static async handleProfileChecks(legislationId: number, checkResult: ProfileCheckResult, onProgress?: ProgressCallback): Promise<void> {
     try {
-      // Check legi_profiles table
-      const supabase = getSupabaseClient();
-      const { data: profileData, error: profileError } = await supabase
-        .from('legi_profiles')
-        .select('owner_id, overview')
-        .eq('owner_id', legislationId)
-        .single();
+      // checkProfileValidation() already fetched this row (it only skips the
+      // fetch when indexed=true, in which case handleProfileChecks is never
+      // reached at all) — reuse it instead of querying legi_profiles again.
+      let profileData = checkResult.profileData;
+      if (profileData === undefined) {
+        const supabase = getSupabaseClient();
+        const { data, error: profileError } = await supabase
+          .from('legi_profiles')
+          .select('owner_id, overview')
+          .eq('owner_id', legislationId)
+          .single();
 
-      if (profileError && profileError.code !== 'PGRST116') {
-        console.error('Error fetching profile data:', profileError);
-        return;
+        if (profileError && profileError.code !== 'PGRST116') {
+          console.error('Error fetching profile data:', profileError);
+          return;
+        }
+        profileData = data || undefined;
       }
 
       const hasProfile = !!profileData;
@@ -363,21 +371,10 @@ export class LegislationProfileService {
   /**
    * Step 1: Execute profile_index script only if bill_lvl is missing
    */
-  private static async executeStep1IfNeeded(legislationId: number, onProgress?: ProgressCallback): Promise<void> {
+  private static async executeStep1IfNeeded(legislationId: number, indexData: LegiIndex | undefined, onProgress?: ProgressCallback): Promise<void> {
     try {
-      // Check if bill_lvl is already present
-      const supabase = getSupabaseClient();
-      const { data: indexData, error: indexError } = await supabase
-        .from('legi_index')
-        .select('bill_lvl')
-        .eq('id', legislationId)
-        .single();
-
-      if (indexError) {
-        console.error('Error checking bill_lvl for legislation ID:', legislationId, indexError);
-        throw indexError;
-      }
-
+      // bill_lvl was already fetched by checkProfileValidation() — reuse it
+      // instead of re-querying legi_index.
       if (indexData?.bill_lvl) {
         console.log(`Bill level already exists for legislation ID ${legislationId}: ${indexData.bill_lvl}, skipping profile_index`);
         return;

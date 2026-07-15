@@ -333,15 +333,15 @@ Deno.serve(async (req) => {
       console.warn(`No synopsis files found for id ${id}, will write "No Data"`);
       hasData = false;
     } else {
-      // 3) Build corpus
-      const parts: string[] = [];
-      for (const p of synopsisPaths) {
-        try { parts.push(await downloadText(p)); }
-        catch (e) { 
-          console.warn("download failed:", p, e); 
-          // Continue with other files if some fail
+      // 3) Build corpus (downloads are independent — fetch in parallel)
+      const partResults = await Promise.all(synopsisPaths.map(async (p) => {
+        try { return await downloadText(p); }
+        catch (e) {
+          console.warn("download failed:", p, e);
+          return "";
         }
-      }
+      }));
+      const parts = partResults.filter((t) => !!t);
       corpus = trim(parts.join("\n\n---\n\n"));
       if (!corpus) {
         console.warn(`Synopsis files were empty for id ${id}, will write "No Data"`);
@@ -364,10 +364,12 @@ Deno.serve(async (req) => {
       agenda   = trim(String(j?.agenda   ?? ""));
       impact   = trim(String(j?.impact   ?? ""));
 
-      // 5) Enforce ranges softly (no truncation)
-      overview = await enforceRangeSoft("overview", overview, corpus, billName, RANGES.overview.min, RANGES.overview.max);
-      agenda   = await enforceRangeSoft("agenda",   agenda,   corpus, billName, RANGES.agenda.min,   RANGES.agenda.max);
-      impact   = await enforceRangeSoft("impact",   impact,   corpus, billName, RANGES.impact.min,   RANGES.impact.max);
+      // 5) Enforce ranges softly (no truncation) — the three fields are independent, run concurrently
+      [overview, agenda, impact] = await Promise.all([
+        enforceRangeSoft("overview", overview, corpus, billName, RANGES.overview.min, RANGES.overview.max),
+        enforceRangeSoft("agenda",   agenda,   corpus, billName, RANGES.agenda.min,   RANGES.agenda.max),
+        enforceRangeSoft("impact",   impact,   corpus, billName, RANGES.impact.min,   RANGES.impact.max),
+      ]);
     }
 
     // 6) Upsert into legi_profiles (always overwrite)

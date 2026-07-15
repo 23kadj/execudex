@@ -279,21 +279,23 @@ async function writeParts(ownerId: number, link: string, parts: string[]) {
     return { web_id: webId, path: "", length: 0 };
   });
 
-  // Then upload each part deterministically in original order
-  for (let i = 0; i < parts.length; i++) {
-    const rr = rowResults[i];
-    if (!rr) continue;
+  // Then upload each part (concurrency-limited); order doesn't matter for storage writes
+  const uploadJobs = rowResults.map((rr, i) => ({ rr, part: parts[i], i }));
+  const uploadResults = await runLimited(uploadJobs, CONCURRENCY, async ({ rr, part, i }): Promise<Out | null> => {
+    if (!rr) return null;
     const webId = rr.web_id;
     const partIdx = parts.length === 1 ? "" : `.${i + 1}`;
     const key = `legi/${ownerId}/billtext.${webId}.congress${partIdx}.txt`;
 
-    await putToStorage(key, parts[i]);
+    await putToStorage(key, part);
 
     const { error: updErr } = await supabase.from("web_content").update({ path: key }).eq("id", webId);
     if (updErr) console.warn("web_content path update failed:", webId, updErr);
 
-    outputs.push({ web_id: webId, path: key, length: parts[i].length });
-  }
+    return { web_id: webId, path: key, length: part.length };
+  });
+
+  for (const r of uploadResults) if (r) outputs.push(r);
 
   return outputs;
 }

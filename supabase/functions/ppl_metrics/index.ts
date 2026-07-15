@@ -205,12 +205,14 @@ Respond strictly as {"about": true|false}.`.trim();
 }
 
 /** ========================== NUMBER NORMALIZATION ========================== */
-// Robust numeric parser: number -> int; "203,000" -> 203000; other -> null
+// Robust numeric parser: number -> int; "203,000" -> 203000; "37.0" -> 37; other -> null
 function parseIntish(x: any): number | null {
   if (typeof x === "number" && Number.isFinite(x)) return Math.round(x);
   if (typeof x === "string") {
-    const s = x.replace(/[\s,._]/g, ""); // strip common separators
-    if (/^-?\d+$/.test(s)) return Math.round(Number(s));
+    // strip thousands separators only — NOT '.', which is a decimal point.
+    // stripping '.' here used to turn a stray decimal like "37.0" into "370".
+    const s = x.replace(/[\s,_]/g, "");
+    if (/^-?\d+(\.\d+)?$/.test(s)) return Math.round(Number(s));
   }
   return null;
 }
@@ -606,8 +608,13 @@ async function findMetricsForPerson(
     }
   }
 
-  // FALLBACK: Ballotpedia after polling fails
-  if (!picked && !expired()) {
+  // FALLBACK: Ballotpedia/vote-count after polling fails.
+  // Votes exist as a data source for politicians who don't have much polling
+  // presence — restrict this fallback to base tier only. Hard/soft ("known")
+  // politicians should never be reduced to a bare vote count just because our
+  // polling search came up empty on this run; if no current approval/disapproval
+  // was found for them, report "no data" and preserve whatever was there before.
+  if (!picked && !expired() && (tier || "").toLowerCase() === "base") {
     const fallback = buildBallotpediaFallbackQuery(fullName);
     let urls: string[] = [];
     try { urls = await tavilySearch(fallback.queries[0], MAX_RESULTS_PER_SEARCH); } catch {}

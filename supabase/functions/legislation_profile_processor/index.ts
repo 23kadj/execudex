@@ -161,65 +161,74 @@ async function processLegislationProfile(id: number) {
       results.steps_completed.push("profile_index (skipped - already exists)");
     }
 
-    // STEP 2: Check legi_profiles table
-    const { data: profileRow, error: profileError } = await supabase
-      .from("legi_profiles")
-      .select("*")
-      .eq("owner_id", id)
-      .single();
+    // STEP 2 (bill_overview) and STEP 3 (bill_text) don't depend on each
+    // other's output, only on Step 1 having run — run them concurrently.
+    const step2 = async () => {
+      const { data: profileRow, error: profileError } = await supabase
+        .from("legi_profiles")
+        .select("*")
+        .eq("owner_id", id)
+        .single();
 
-    if (profileError || !profileRow) {
-      console.log(`Step 2: No profile found for legislation ${id}, calling bill_overview...`);
-      try {
-        await callBillOverview(id);
-        results.steps_completed.push("bill_overview");
-        console.log(`Step 2 completed: bill_overview for legislation ${id}`);
-      } catch (error) {
-        const errorMsg = `Step 2 failed (bill_overview): ${error.message}`;
-        results.steps_failed.push(errorMsg);
-        throw new Error(errorMsg);
+      if (profileError || !profileRow) {
+        console.log(`Step 2: No profile found for legislation ${id}, calling bill_overview...`);
+        try {
+          await callBillOverview(id);
+          results.steps_completed.push("bill_overview");
+          console.log(`Step 2 completed: bill_overview for legislation ${id}`);
+        } catch (error) {
+          const errorMsg = `Step 2 failed (bill_overview): ${error.message}`;
+          results.steps_failed.push(errorMsg);
+          throw new Error(errorMsg);
+        }
+      } else {
+        console.log(`Step 2: Profile already exists for legislation ${id}, skipping bill_overview`);
+        results.steps_completed.push("bill_overview (skipped - already exists)");
       }
-    } else {
-      console.log(`Step 2: Profile already exists for legislation ${id}, skipping bill_overview`);
-      results.steps_completed.push("bill_overview (skipped - already exists)");
-    }
+    };
 
-    // STEP 3: Check card_index for existing cards
-    const { data: existingCards, error: cardsError } = await supabase
-      .from("card_index")
-      .select("id")
-      .eq("owner_id", id)
-      .eq("is_ppl", false);
+    const step3 = async () => {
+      // Check card_index for existing cards
+      const { data: existingCards, error: cardsError } = await supabase
+        .from("card_index")
+        .select("id")
+        .eq("owner_id", id)
+        .eq("is_ppl", false);
 
-    if (cardsError) {
-      console.warn(`Error checking existing cards for legislation ${id}:`, cardsError);
-    }
-
-    const hasExistingCards = existingCards && existingCards.length > 0;
-
-    if (!hasExistingCards) {
-      console.log(`Step 3: No cards found for legislation ${id}, calling bill_text...`);
-      try {
-        await callBillText(id);
-        results.steps_completed.push("bill_text");
-        console.log(`Step 3a completed: bill_text for legislation ${id}`);
-      } catch (error) {
-        const errorMsg = `Step 3a failed (bill_text): ${error.message}`;
-        results.steps_failed.push(errorMsg);
-        throw new Error(errorMsg);
+      if (cardsError) {
+        console.warn(`Error checking existing cards for legislation ${id}:`, cardsError);
       }
 
-      console.log(`Step 4: bill_cards SKIPPED for legislation ${id} (initial profile processing)`);
-      results.steps_completed.push("bill_cards (skipped - initial processing)");
+      const hasExistingCards = existingCards && existingCards.length > 0;
 
-      console.log(`Step 5: bill_coverage SKIPPED for legislation ${id} (initial profile processing)`);
-      results.steps_completed.push("bill_coverage (skipped - initial processing)");
-    } else {
-      console.log(`Step 3-5: Cards already exist for legislation ${id}, skipping card generation steps`);
-      results.steps_completed.push("bill_text (skipped - cards exist)");
-      results.steps_completed.push("bill_cards (skipped - cards exist)");
-      results.steps_completed.push("bill_coverage (skipped - cards exist)");
-    }
+      if (!hasExistingCards) {
+        console.log(`Step 3: No cards found for legislation ${id}, calling bill_text...`);
+        try {
+          await callBillText(id);
+          results.steps_completed.push("bill_text");
+          console.log(`Step 3a completed: bill_text for legislation ${id}`);
+        } catch (error) {
+          const errorMsg = `Step 3a failed (bill_text): ${error.message}`;
+          results.steps_failed.push(errorMsg);
+          throw new Error(errorMsg);
+        }
+
+        console.log(`Step 4: bill_cards SKIPPED for legislation ${id} (initial profile processing)`);
+        results.steps_completed.push("bill_cards (skipped - initial processing)");
+
+        console.log(`Step 5: bill_coverage SKIPPED for legislation ${id} (initial profile processing)`);
+        results.steps_completed.push("bill_coverage (skipped - initial processing)");
+      } else {
+        console.log(`Step 3-5: Cards already exist for legislation ${id}, skipping card generation steps`);
+        results.steps_completed.push("bill_text (skipped - cards exist)");
+        results.steps_completed.push("bill_cards (skipped - cards exist)");
+        results.steps_completed.push("bill_coverage (skipped - cards exist)");
+      }
+    };
+
+    const [step2Result, step3Result] = await Promise.allSettled([step2(), step3()]);
+    if (step2Result.status === "rejected") throw step2Result.reason;
+    if (step3Result.status === "rejected") throw step3Result.reason;
 
     // All steps completed successfully
     results.final_status = "complete";
