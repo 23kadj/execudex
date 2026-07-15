@@ -2,20 +2,21 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  Image,
-  Keyboard,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  TouchableWithoutFeedback,
-  View
+    Alert,
+    Animated,
+    Image,
+    Keyboard,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    TouchableWithoutFeedback,
+    View
 } from 'react-native';
+import { useAuth } from '../../components/AuthProvider';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { SearchFilterButton } from '../../components/SearchFilterButton';
 import { CardGenerationService } from '../../services/cardGenerationService';
@@ -23,8 +24,6 @@ import { CardService } from '../../services/cardService';
 import { CardData, getCategoryFromTitle, getCategoryMapping, getScreenDisplayName } from '../../utils/cardData';
 import { filterCardsByWords, getMostCommonWords, shouldShowSearchAssistance } from '../../utils/searchAssistanceUtils';
 import { getSupabaseClient } from '../../utils/supabase';
-import { NotificationService } from '../../services/notificationService';
-import { useAuth } from '../../components/AuthProvider';
 
 // #region agent log - module level
 fetch('http://127.0.0.1:7242/ingest/19849a76-36b4-425e-bfd9-bdf864de6ad5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'sub4.tsx:MODULE',message:'Module loaded',data:{CardLoadingIndicator:typeof CardLoadingIndicator,SearchFilterButton:typeof SearchFilterButton,Pressable:typeof Pressable,ScrollView:typeof ScrollView},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
@@ -539,54 +538,42 @@ export default function Sub4() {
           beforeGenerationTimestamp
         );
         
-        // Map category values to display names, handling "more" category specially
-        const categoryMapping = getCategoryMapping();
-        const categoryDisplayNames = generatedCategoryScreenPairs.map(({ category, screen }) => {
-          if (category === 'more') {
-            // Format "more" category with screen name
-            const screenDisplayName = getScreenDisplayName(screen);
-            return `${categoryMapping[category]}: ${screenDisplayName}`;
-          } else {
-            return categoryMapping[category] || category;
-          }
-        }).filter(Boolean);
-        
-        // Check if requested category was found in generated cards
-        const requestedCategoryFound = generatedCategoryScreenPairs.some(
-          ({ category: cat }) => cat === category
+        // Get IDs of newly generated cards for new-gen redirect
+        const generatedCardIds = await CardGenerationService.getGeneratedCardIds(
+          ownerId,
+          true, // isPpl
+          beforeGenerationTimestamp
         );
         
-        // Build success message
-        let message = `Generated ${cardsGenerated} card${cardsGenerated !== 1 ? 's' : ''} successfully!`;
-        
-        if (categoryDisplayNames.length > 0) {
-          message += `\n\nThe new cards can be found in the following categories: ${categoryDisplayNames.join(', ')}.`;
-        }
-        
-        if (!requestedCategoryFound && categoryDisplayNames.length > 0) {
-          message += `\n\nThere weren't enough cards for the requested section, we apologize for the inconvenience.`;
-        }
-        
-        // Show success message
-        Alert.alert(
-          'Success',
-          message,
-          [{ text: 'OK' }]
-        );
-
-        // Send notifications to subscribed users
-        if (generatedCategoryScreenPairs.length > 0 && cardsGenerated > 0) {
-          NotificationService.handleCardGenerationNotification(
-            ownerId,
-            true, // isPpl
-            profileName,
-            generatedCategoryScreenPairs,
-            user?.id
-          ).catch(error => {
-            console.error('Error sending notifications:', error);
+        // Redirect to new-gen page when we have newly generated cards
+        if (generatedCardIds.length > 0) {
+          router.push({
+            pathname: '/new-gen',
+            params: { cardIds: generatedCardIds.join(',') },
           });
+        } else {
+          const categoryMapping = getCategoryMapping();
+          const categoryDisplayNames = generatedCategoryScreenPairs.map(({ category, screen }) => {
+            if (category === 'more') {
+              const screenDisplayName = getScreenDisplayName(screen);
+              return `${categoryMapping[category]}: ${screenDisplayName}`;
+            } else {
+              return categoryMapping[category] || category;
+            }
+          }).filter(Boolean);
+          const requestedCategoryFound = generatedCategoryScreenPairs.some(
+            ({ category: cat }) => cat === category
+          );
+          let message = `Generated ${cardsGenerated} card${cardsGenerated !== 1 ? 's' : ''} successfully!`;
+          if (categoryDisplayNames.length > 0) {
+            message += `\n\nThe new cards can be found in the following categories: ${categoryDisplayNames.join(', ')}.`;
+          }
+          if (!requestedCategoryFound && categoryDisplayNames.length > 0) {
+            message += `\n\nThere weren't enough cards for the requested section, we apologize for the inconvenience.`;
+          }
+          Alert.alert('Success', message, [{ text: 'OK' }]);
         }
-        
+
         // Refresh cards after generation
         const fetchAllCards = async () => {
           setLoadingCards(true);

@@ -361,8 +361,33 @@ async function callBillSearch(bill_id: string, congress_num: number): Promise<{ 
   }
 }
 
+/** Best-effort log to bill_update_runs — never throws, so a logging hiccup can't fail the run */
+async function logRun(runId: number | null, patch: Record<string, any>): Promise<void> {
+  if (runId == null) return;
+  try {
+    await supabase.from("bill_update_runs").update(patch).eq("id", runId);
+  } catch (e) {
+    console.warn("Failed to update bill_update_runs:", e);
+  }
+}
+
+/** Sweep legacy legi_index rows still missing sub_name/bill_id/etc. (fire-and-forget) */
+function triggerBackfillSweep(): void {
+  fetch(`${SUPABASE_URL}/functions/v1/bill_search`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${SERVICE_ROLE}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ enrich: true }),
+  })
+    .then(async (r) => console.log("Backfill sweep triggered:", r.status, await r.text().catch(() => "")))
+    .catch((e) => console.warn("Backfill sweep failed to trigger:", e));
+}
+
 /** ========================== HTTP HANDLER ========================== */
 Deno.serve(async (req) => {
+  let runId: number | null = null;
   try {
     if (req.method === "GET") {
       return new Response(
@@ -370,7 +395,7 @@ Deno.serve(async (req) => {
         { status: 200 }
       );
     }
-    
+
     if (req.method !== "POST") {
       return new Response(
         JSON.stringify({ ok: false, error: "Use POST" }),
@@ -378,15 +403,27 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Optional run_id — passed by the pg_cron wrapper so this run's outcome can be
+    // reconciled against the row it pre-inserted into bill_update_runs. Manual/adhoc
+    // invocations (no run_id) skip logging entirely.
+    {
+      const ctype = req.headers.get("content-type") || "";
+      if (ctype.includes("application/json")) {
+        const peekBody = await req.clone().json().catch(() => ({}));
+        if (typeof peekBody?.run_id === "number") runId = peekBody.run_id;
+      }
+    }
+
     // STEP 1: Extract content from congress.gov most-viewed-bills page
     let extractedContent: string;
     try {
       extractedContent = await extractMostViewedBills();
     } catch (error: any) {
+      await logRun(runId, { status: "error", finished_at: new Date().toISOString(), error: `extract_failed: ${error?.message || String(error)}` });
       return new Response(
-        JSON.stringify({ 
-          ok: false, 
-          error: `Failed to extract from most-viewed-bills page: ${error?.message || String(error)}` 
+        JSON.stringify({
+          ok: false,
+          error: `Failed to extract from most-viewed-bills page: ${error?.message || String(error)}`
         }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
@@ -430,9 +467,10 @@ Deno.serve(async (req) => {
     }
 
     if (extracted.length === 0) {
+      await logRun(runId, { status: "success", finished_at: new Date().toISOString(), summary: { extracted: 0, new: 0, successful: 0 } });
       return new Response(
-        JSON.stringify({ 
-          ok: true, 
+        JSON.stringify({
+          ok: true,
           message: "No legislation entries found in file",
           extracted: 0,
           existing: 0,
@@ -455,24 +493,33 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${newEntries.length} new entries to process`);
 
-    // Limit to 10 entries at a time
-    const MAX_ENTRIES = 10;
-    const entriesToProcess = newEntries.slice(0, MAX_ENTRIES);
-    const remaining = newEntries.length - entriesToProcess.length;
-    
-    if (remaining > 0) {
-      console.log(`Processing first ${MAX_ENTRIES} entries (${remaining} remaining for next run)`);
-    }
+    // The pre-filter above under-detects existing bills (older legi_index rows are
+    // often missing bill_id, since it's only backfilled by enrichment) — bill_search's
+    // own duplicate check catches the rest, but each such "duplicate" burns a candidate
+    // for free. Rather than hard-capping at a fixed slice (which can spend its whole
+    // budget re-discovering already-known bills), keep walking the candidate list until
+    // we land a real target number of new entries, or hit a safety/time cap.
+    const TARGET_NEW = 10;
+    const MAX_ATTEMPTS = 60;
+    const RUN_BUDGET_MS = 100000;
+    const startedAt = Date.now();
 
-    // Call bill_search for each new entry
     const results: Array<{ bill_id: string; congress: string; success: boolean; error?: string; response?: any }> = [];
-    
-    for (const entry of entriesToProcess) {
+    let successCount = 0;
+    let attempted = 0;
+
+    for (const entry of newEntries) {
+      if (attempted >= MAX_ATTEMPTS) break;
+      if (successCount >= TARGET_NEW) break;
+      if (Date.now() - startedAt > RUN_BUDGET_MS) break;
+
+      attempted++;
       console.log(`Calling bill_search for ${entry.bill_id} (${entry.congress}, congress_num: ${entry.congress_num})...`);
       const result = await callBillSearch(entry.bill_id, entry.congress_num);
-      
+
       console.log(`bill_search result for ${entry.bill_id}:`, { ok: result.ok, error: result.error, response: result.response });
-      
+
+      if (result.ok) successCount++;
       results.push({
         bill_id: entry.bill_id,
         congress: entry.congress,
@@ -480,41 +527,51 @@ Deno.serve(async (req) => {
         error: result.error,
         response: result.response
       });
-      
+
       // Small delay to avoid overwhelming the API
       await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    const remaining = newEntries.length - attempted;
+    if (remaining > 0) {
+      console.log(`Attempted ${attempted} candidates (${successCount} new, ${remaining} remaining for next run)`);
     }
 
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
 
+    // Sweep legacy rows still missing sub_name/bill_id from earlier runs whose
+    // enrichment never completed — doesn't block this response.
+    triggerBackfillSweep();
+
+    const summary = {
+      extracted: extracted.length,
+      existing: existingKeys.size,
+      new: newEntries.length,
+      processed: results.length,
+      successful,
+      failed,
+      remaining: remaining
+    };
+
+    await logRun(runId, { status: "success", finished_at: new Date().toISOString(), summary });
+
     return new Response(
-      JSON.stringify({
-        ok: true,
-        summary: {
-          extracted: extracted.length,
-          existing: existingKeys.size,
-          new: newEntries.length,
-          processed: results.length,
-          successful,
-          failed,
-          remaining: remaining
-        },
-        results: results
-      }),
+      JSON.stringify({ ok: true, summary, results }),
       { headers: { "Content-Type": "application/json" } }
     );
 
   } catch (error: any) {
     console.error("Error in bill_update:", error);
+    await logRun(runId, { status: "error", finished_at: new Date().toISOString(), error: error?.message || String(error) });
     return new Response(
-      JSON.stringify({ 
-        ok: false, 
-        error: error?.message || String(error) 
+      JSON.stringify({
+        ok: false,
+        error: error?.message || String(error)
       }),
-      { 
+      {
         status: 500,
-        headers: { "Content-Type": "application/json" } 
+        headers: { "Content-Type": "application/json" }
       }
     );
   }

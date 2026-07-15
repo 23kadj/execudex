@@ -15,7 +15,6 @@ import {
 import { useAuth } from '../components/AuthProvider';
 import { CardGenerationService } from '../services/cardGenerationService';
 import { NavigationService } from '../services/navigationService';
-import { NotificationService } from '../services/notificationService';
 import { getSupabaseClient } from '../utils/supabase';
 
 // Simple skeleton loader component
@@ -482,27 +481,6 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
           // Check if button should still be shown using new visibility function
           const shouldShow = await CardGenerationService.shouldShowGenerateButtonForOverview(parseInt(legislationId));
           setShowGenerateButton(shouldShow);
-
-          // Send notifications to subscribed users
-          if (cardsGenerated > 0) {
-            const generatedCategoryScreenPairs = await CardGenerationService.getGeneratedCardCategories(
-              parseInt(legislationId),
-              false, // isPpl
-              beforeGenerationTimestamp
-            );
-
-            if (generatedCategoryScreenPairs.length > 0) {
-              NotificationService.handleCardGenerationNotification(
-                parseInt(legislationId),
-                false, // isPpl
-                name,
-                generatedCategoryScreenPairs,
-                user?.id
-              ).catch(error => {
-                console.error('Error sending notifications:', error);
-              });
-            }
-          }
         }
       } else {
         console.error('Card generation failed:', result.message);

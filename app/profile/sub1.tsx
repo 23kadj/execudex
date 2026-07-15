@@ -7,7 +7,6 @@ import { useAuth } from '../../components/AuthProvider';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
 import { CardService } from '../../services/cardService';
-import { NotificationService } from '../../services/notificationService';
 import { CardData, fetchCardsByScreen, getCardIndexScreenForPage, getCategoryMapping, getScreenDisplayName, searchCardsForPage } from '../../utils/cardData';
 import { getSupabaseClient } from '../../utils/supabase';
 
@@ -264,33 +263,12 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
           beforeGenerationTimestamp
         );
         
-        // Map category values to display names, handling "more" category specially
-        const categoryMapping = getCategoryMapping();
-        const categoryDisplayNames = generatedCategoryScreenPairs.map(({ category, screen }) => {
-          if (category === 'more') {
-            // Format "more" category with screen name
-            const screenDisplayName = getScreenDisplayName(screen);
-            return `${categoryMapping[category]}: ${screenDisplayName}`;
-          } else {
-            return categoryMapping[category] || category;
-          }
-        }).filter(Boolean);
-        
-        // Check if requested category (agenda) was found
-        const requestedCategoryFound = generatedCategoryScreenPairs.some(({ category: cat }) => 
-          ['economy', 'immigration', 'healthcare', 'environment', 'defense', 'education', 'more'].includes(cat)
+        // Get IDs of newly generated cards for new-gen redirect
+        const generatedCardIds = await CardGenerationService.getGeneratedCardIds(
+          ownerId,
+          true, // isPpl
+          beforeGenerationTimestamp
         );
-        
-        // Build success message
-        let message = `Generated ${cardsGenerated} card${cardsGenerated !== 1 ? 's' : ''} successfully!`;
-        
-        if (categoryDisplayNames.length > 0) {
-          message += `\n\nThe new cards can be found in the following categories: ${categoryDisplayNames.join(', ')}.`;
-        }
-        
-        if (!requestedCategoryFound && categoryDisplayNames.length > 0) {
-          message += `\n\nThere weren't enough cards for the requested section, we apologize for the inconvenience.`;
-        }
         
         // Refresh cards after generation
         const cards = await fetchCardsByScreen({
@@ -304,25 +282,35 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
         // Check if button should still be shown using new logic
         const shouldShow = await CardGenerationService.shouldShowGenerateButtonForPage(ownerId, 'sub1');
         setShowGenerateButton(shouldShow);
-        
-        // Show success message
-        Alert.alert(
-          'Success',
-          message,
-          [{ text: 'OK' }]
-        );
 
-        // Send notifications to subscribed users
-        if (generatedCategoryScreenPairs.length > 0 && cardsGenerated > 0) {
-          NotificationService.handleCardGenerationNotification(
-            ownerId,
-            true, // isPpl
-            name,
-            generatedCategoryScreenPairs,
-            user?.id
-          ).catch(error => {
-            console.error('Error sending notifications:', error);
+        // Redirect to new-gen page when we have newly generated cards
+        if (generatedCardIds.length > 0) {
+          router.push({
+            pathname: '/new-gen',
+            params: { cardIds: generatedCardIds.join(',') },
           });
+        } else {
+          // Fallback: show success message if no cards to display
+          const categoryMapping = getCategoryMapping();
+          const categoryDisplayNames = generatedCategoryScreenPairs.map(({ category, screen }) => {
+            if (category === 'more') {
+              const screenDisplayName = getScreenDisplayName(screen);
+              return `${categoryMapping[category]}: ${screenDisplayName}`;
+            } else {
+              return categoryMapping[category] || category;
+            }
+          }).filter(Boolean);
+          const requestedCategoryFound = generatedCategoryScreenPairs.some(({ category: cat }) => 
+            ['economy', 'immigration', 'healthcare', 'environment', 'defense', 'education', 'more'].includes(cat)
+          );
+          let message = `Generated ${cardsGenerated} card${cardsGenerated !== 1 ? 's' : ''} successfully!`;
+          if (categoryDisplayNames.length > 0) {
+            message += `\n\nThe new cards can be found in the following categories: ${categoryDisplayNames.join(', ')}.`;
+          }
+          if (!requestedCategoryFound && categoryDisplayNames.length > 0) {
+            message += `\n\nThere weren't enough cards for the requested section, we apologize for the inconvenience.`;
+          }
+          Alert.alert('Success', message, [{ text: 'OK' }]);
         }
       }
     } catch (error) {

@@ -883,6 +883,18 @@ async function enrichBillMetadataById(legiId: number): Promise<{ success: boolea
 
     // Call the enrichment function using the verified (or corrected) URL
     await enrichBillMetadata(legiId, urlToUse);
+
+    // Also backfill sub_name/bill_lvl/bill_status/bill_id/congress if still missing.
+    // enrichBillMetadata only fills subject/latest_action/cosponsors/committees/actions —
+    // it never touches these fields, so a bill whose handleLegiById call failed once at
+    // creation time (network hiccup, Mistral error) would otherwise stay permanently
+    // missing sub_name and never show up on the Most Recent page.
+    try {
+      await handleLegiById(legiId);
+    } catch (e) {
+      console.warn(`[enrichBillMetadataById] handleLegiById backfill failed for legi_id ${legiId}:`, e);
+    }
+
     return { success: true };
   } catch (e: any) {
     return { 
@@ -1808,7 +1820,7 @@ Deno.serve(async (req) => {
         const { data: bills, error } = await supabase
           .from("legi_index")
           .select("id")
-          .or("subject.is.null,cosponsors.is.null,committees.is.null,actions.is.null,latest_action.is.null,data_update.is.null");
+          .or("subject.is.null,cosponsors.is.null,committees.is.null,actions.is.null,latest_action.is.null,data_update.is.null,sub_name.is.null,bill_id.is.null");
         
         if (error) {
           return new Response(JSON.stringify({ ok: false, error: error.message }), {
@@ -2048,28 +2060,43 @@ Deno.serve(async (req) => {
           .in('user_id', enabledUserIds);
         
         if (pushTokens && pushTokens.length > 0) {
-          const pushMessages = pushTokens.map(tokenData => ({
-            to: tokenData.push_token,
-            sound: 'notification.wav',
-            title: title,
-            body: body,
-            data: { navigateTo: 'notifications' },
-            badge: 1,
+          // Send push notifications and inspect each ticket so a stale
+          // (uninstalled/unregistered) token doesn't fail silently forever.
+          const pushResults = await Promise.all(pushTokens.map(async (tokenData) => {
+            const pushMsg = {
+              to: tokenData.push_token,
+              sound: 'notification.wav',
+              title: title,
+              body: body,
+              data: { navigateTo: 'notifications' },
+              badge: 1,
+            };
+            try {
+              const res = await fetch('https://exp.host/--/api/v2/push/send', {
+                method: 'POST',
+                headers: {
+                  Accept: 'application/json',
+                  'Accept-Encoding': 'gzip, deflate',
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(pushMsg),
+              });
+              const json = await res.json().catch(() => null);
+              return { push_token: tokenData.push_token, ticket: json?.data };
+            } catch (e) {
+              console.error('[bill_search] Push send failed:', e);
+              return { push_token: tokenData.push_token, ticket: null };
+            }
           }));
-          
-          const pushPromises = pushMessages.map(pushMsg =>
-            fetch('https://exp.host/--/api/v2/push/send', {
-              method: 'POST',
-              headers: {
-                Accept: 'application/json',
-                'Accept-Encoding': 'gzip, deflate',
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(pushMsg),
-            })
-          );
-          
-          await Promise.all(pushPromises);
+
+          const staleTokens = pushResults
+            .filter(r => r.ticket?.status === 'error' && r.ticket?.details?.error === 'DeviceNotRegistered')
+            .map(r => r.push_token);
+          if (staleTokens.length > 0) {
+            await supabase.from('user_push_tokens').delete().in('push_token', staleTokens);
+            console.log(`[bill_search] Pruned ${staleTokens.length} stale push token(s)`);
+          }
+
           console.log(`[bill_search] Sent ${pushTokens.length} push notifications`);
         }
       } catch (err) {

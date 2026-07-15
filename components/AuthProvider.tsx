@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Session, User } from '@supabase/supabase-js';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { logStartup } from '../utils/startupLogger';
 import { getSupabaseClient } from '../utils/supabase';
 
@@ -21,6 +21,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const pushTokenRegisteredForRef = useRef<string | null>(null);
+
+  // Register the push token once per login, not only when a user explicitly
+  // subscribes to a profile — most users never triggered a subscribe, so their
+  // token was never stored and server-side notifications had nowhere to send to.
+  useEffect(() => {
+    if (!user?.id || pushTokenRegisteredForRef.current === user.id) return;
+    pushTokenRegisteredForRef.current = user.id;
+    (async () => {
+      try {
+        const { registerPushToken } = await import('../services/pushTokenService');
+        await registerPushToken(user.id);
+      } catch (error) {
+        console.error('[AuthProvider] Error registering push token:', error);
+      }
+    })();
+  }, [user?.id]);
 
   useEffect(() => {
     // Defer Supabase initialization to avoid native module crashes during mount
