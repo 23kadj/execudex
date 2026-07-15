@@ -7,10 +7,14 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TAVILY_API_KEY = Deno.env.get("TAVILY_API_KEY")!;
+const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY")!;
+/** Higher RPM for https://r.jina.ai Reader (Votesmart often blocks direct Edge fetches / bare Tavily extract). */
+const JINA_API_KEY = Deno.env.get("JINA_API_KEY") || "";
 
 /** Timeouts */
 const SEARCH_TIMEOUT_MS = 10_000;
 const EXTRACT_TIMEOUT_MS = 15_000;
+const MISTRAL_TIMEOUT_MS = 20_000;
 
 /** ========================== SUPABASE ========================== */
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, { global: { fetch } });
@@ -59,6 +63,73 @@ function cleanTitle(title: string): string {
   cleaned = cleaned.trim();
   
   return cleaned;
+}
+
+function isVoteSmartDomain(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "votesmart.org" || host.endsWith(".votesmart.org");
+}
+
+function nameToSlug(name: string): string {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** Count how many name tokens ("mark", "kelly") appear as whole segments of a URL's name slug */
+function nameTokenMatchCount(nameSlug: string, fullName: string): number {
+  const slugTokens = new Set(nameSlug.split("-").filter(Boolean));
+  const nameTokens = nameToSlug(fullName).split("-").filter((t) => t.length > 1);
+  return nameTokens.filter((t) => slugTokens.has(t)).length;
+}
+
+/**
+ * Expected: /candidate/key-votes/{candidateId}/{nameSlug}
+ * A lastName-substring check let e.g. "chris-kelly" or "kelly-ayotte" pass for
+ * "Mark Kelly" (both contain "kelly" as a substring) — require the URL's name
+ * slug to match at least 2 of the person's name tokens as whole words instead
+ * (or all tokens, for single-token names), so common surnames don't cause a
+ * different politician's voting record to be attached.
+ */
+function isKeyVotesCandidateUrl(url: string, fullName: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    if (!isVoteSmartDomain(urlObj.hostname)) return false;
+    const segments = urlObj.pathname.toLowerCase().split("/").filter(Boolean);
+    if (segments.length < 4) return false;
+    if (segments[0] !== "candidate" || segments[1] !== "key-votes") return false;
+    if (!/^\d+$/.test(segments[2])) return false;
+    if (!segments[3]) return false;
+    const nameTokens = nameToSlug(fullName).split("-").filter((t) => t.length > 1);
+    const minMatches = Math.min(2, nameTokens.length);
+    return nameTokenMatchCount(segments[3], fullName) >= minMatches;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeBillNumber(value: string): string {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/\./g, "")
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function extractBillUrls(content: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const billLinkPattern = /\[([A-Z]+(?:\s+[A-Z]+){0,3}\s*\d+)\]\((https?:\/\/votesmart\.org\/bill\/[^\)\s]+)\)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = billLinkPattern.exec(content)) !== null) {
+    const billNumber = (match[1] || "").trim();
+    const link = (match[2] || "").trim();
+    if (!billNumber || !link) continue;
+    const key = normalizeBillNumber(billNumber);
+    if (!map.has(key)) {
+      map.set(key, link);
+    }
+  }
+  return map;
 }
 
 /** Abortable fetch helper */
@@ -112,245 +183,204 @@ async function tavilyExtract(url: string): Promise<string> {
   return content;
 }
 
-/** ========================== PARSING ========================== */
-interface VotingRecord {
-  date: string; // MM/DD/YYYY
-  legislationName: string;
-  billNumber: string; // e.g., "HR 4405", "AB 2405", "SB 1102", "S J Res 63"
-  outcome: string; // "signs", "vetoes", "line item vetoes", "votes yes", "votes no"
+async function fetchViaJinaReader(url: string): Promise<string> {
+  // https://r.jina.ai/https://example.com — browser-backed fetch; avoids Votesmart Edge IP blocks.
+  const readerUrl = `https://r.jina.ai/${url}`;
+  const headers: Record<string, string> = {
+    Accept: "text/markdown,text/plain;q=0.9,*/*;q=0.8",
+  };
+  if (JINA_API_KEY.trim()) {
+    headers.Authorization = `Bearer ${JINA_API_KEY.trim()}`;
+  }
+  const res = await fetchWithTimeout(readerUrl, {
+    method: "GET",
+    headers,
+    redirect: "follow",
+    timeoutMs: Math.max(EXTRACT_TIMEOUT_MS, 45_000),
+  });
+  if (!res || !res.ok) {
+    throw new Error(`Jina reader HTTP ${res?.status}`);
+  }
+  const text = (await res.text()).trim();
+  if (text.length < 400) {
+    throw new Error(`Jina reader body too short (${text.length} chars)`);
+  }
+  return text;
+}
+
+function roughHtmlToText(html: string): string {
+  let s = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gis, " ");
+  s = s.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gis, " ");
+  s = s.replace(/<[^>]+>/g, "\n");
+  s = s.replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+  s = s.replace(/\n{3,}/g, "\n\n").trim();
+  return s;
+}
+
+async function fetchVoteSmartPageAsFallbackText(url: string): Promise<string> {
+  const res = await fetchWithTimeout(url, {
+    method: "GET",
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    redirect: "follow",
+    timeoutMs: EXTRACT_TIMEOUT_MS,
+  });
+  if (!res || !res.ok) throw new Error(`direct fetch HTTP ${res?.status}`);
+  const html = await res.text();
+  const text = roughHtmlToText(html);
+  if (text.trim().length < 400) {
+    throw new Error(`direct fetch body too short (${text.trim().length} chars)`);
+  }
+  return text;
 }
 
 /**
- * Extract voting records from scraped markdown content
- * Pattern: ##### date, ##### legislation name, ##### outcome, table with bill number
+ * Bare Tavily extract on votesmart.org fails/returns empty often enough that
+ * records_open (which scrapes the same domain for individual bill pages)
+ * already had to build this fallback chain — records_update never had it and
+ * would give up entirely the moment Tavily came back empty, even when the
+ * candidate URL itself was correct.
  */
-function extractVotingRecords(content: string): VotingRecord[] {
+async function extractWithFallbacks(url: string): Promise<string> {
+  try {
+    const viaTavily = await tavilyExtract(url);
+    if (viaTavily.trim().length > 0) return viaTavily;
+  } catch { /* fall through */ }
+
+  try {
+    return await fetchViaJinaReader(url);
+  } catch { /* fall through */ }
+
+  return await fetchVoteSmartPageAsFallbackText(url);
+}
+
+/** ========================== MISTRAL ========================== */
+async function mistralJSON(system: string, user: string, max_tokens = 2000): Promise<any> {
+  const r = await fetchWithTimeout("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${MISTRAL_API_KEY}` },
+    body: JSON.stringify({
+      model: "mistral-small-latest",
+      temperature: 0.0,
+      response_format: { type: "json_object" },
+      max_tokens,
+      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+    }),
+    timeoutMs: MISTRAL_TIMEOUT_MS,
+  });
+  if (!r || !r.ok) throw new Error(`Mistral error ${r?.status}`);
+  const j = await r.json();
+  const content = j?.choices?.[0]?.message?.content ?? "{}";
+  try { return JSON.parse(content); } catch { return {}; }
+}
+
+/** ========================== PARSING ========================== */
+interface VotingRecord {
+  date: string; // MM/DD/YYYY, or "" if not present
+  legislationName: string;
+  billNumber: string; // e.g., "HR 4405", "AB 2405", "SB 1102", "S J Res 63"
+  outcome: string; // "signs", "vetoes", "line item vetoes", "votes yes", "votes no"
+  billUrl?: string;
+}
+
+const VALID_OUTCOMES = new Set(["signs", "vetoes", "line item vetoes", "votes yes", "votes no"]);
+
+// VoteSmart key-votes pages list dozens of entries with formatting that varies
+// (governor sign/veto tables vs. legislator yes/no tables, different Tavily
+// markdown conversions) — a hand-rolled regex cascade was too brittle against
+// that variance and would silently return zero records on any format drift.
+// Chunk + overlap so entries spanning a chunk boundary aren't dropped; dedupe
+// afterward on (date, legislation name, bill number).
+const CHUNK_SIZE = 25_000;
+const CHUNK_OVERLAP = 1_000;
+
+function chunkContent(content: string): string[] {
+  if (content.length <= CHUNK_SIZE) return [content];
+  const chunks: string[] = [];
+  for (let i = 0; i < content.length; i += CHUNK_SIZE - CHUNK_OVERLAP) {
+    chunks.push(content.slice(i, i + CHUNK_SIZE));
+  }
+  return chunks;
+}
+
+async function extractVotingRecordsFromChunk(chunk: string): Promise<VotingRecord[]> {
+  const sys = `You extract voting-record entries from VoteSmart candidate key-votes page content (markdown, possibly messy). Return ONLY JSON. Never invent data not present in the text.`;
+  const usr = `
+Extract every distinct voting-record entry visible in this page content. Each entry is either a governor sign/veto action or a legislator yes/no vote on a specific bill.
+
+CONTENT:
+"""${chunk}"""
+
+Return strictly as JSON:
+{
+  "records": [
+    {
+      "date": "<MM/DD/YYYY, or null if not shown>",
+      "legislation_name": "<short legislation name/title, no markdown link syntax>",
+      "bill_number": "<bill number as shown, e.g. 'HR 1234', 'SB 567', 'S J Res 63', or null>",
+      "outcome": "<one of exactly: signs | vetoes | line item vetoes | votes yes | votes no>"
+    }
+  ]
+}
+
+Rules:
+- Only include entries that have BOTH a bill_number and a valid outcome — skip anything incomplete or ambiguous.
+- Do not invent dates, bill numbers, or outcomes not present in the content.
+- Ignore navigation, footer, login, and image/link boilerplate.
+- If nothing qualifies, return {"records": []}.
+`.trim();
+
+  try {
+    const j = await mistralJSON(sys, usr, 2000);
+    const raw = Array.isArray(j?.records) ? j.records : [];
+    const out: VotingRecord[] = [];
+    for (const r of raw) {
+      const legislationName = String(r?.legislation_name || "").trim();
+      const billNumber = String(r?.bill_number || "").trim();
+      const outcome = String(r?.outcome || "").trim().toLowerCase();
+      if (!legislationName || !billNumber || !VALID_OUTCOMES.has(outcome)) continue;
+      out.push({
+        date: String(r?.date || "").trim(),
+        legislationName,
+        billNumber,
+        outcome,
+      });
+    }
+    return out;
+  } catch (e) {
+    console.error("[RECORDS_UPDATE] Mistral extraction failed for chunk:", e);
+    return [];
+  }
+}
+
+/** Extract voting records from scraped markdown content via Mistral (chunked, deduped) */
+async function extractVotingRecords(content: string): Promise<VotingRecord[]> {
+  const chunks = chunkContent(content);
+  console.log(`[RECORDS_UPDATE] Extracting from ${chunks.length} chunk(s) via Mistral`);
+
+  const chunkResults = await Promise.all(chunks.map((c) => extractVotingRecordsFromChunk(c)));
+
+  const seen = new Set<string>();
   const records: VotingRecord[] = [];
-  
-  // Filter out common junk patterns (navigation, images, etc.)
-  const junkPatterns = [
-    /!\[.*?\]\(.*?\)/g, // Markdown images
-    /## Navigation.*?## /s, // Navigation sections
-    /All content Ac \d{4}.*$/s, // Footer text
-    /Log in.*$/s, // Login sections
-    /Responsive image.*$/s, // Image references
-    /Legislative demographic data.*$/s, // Footer text
-    /Mobile Messaging Terms.*$/s, // Footer text
-    /Our Mission.*?## /s, // Mission sections
-  ];
-  
-  let cleanedContent = content;
-  for (const pattern of junkPatterns) {
-    cleanedContent = cleanedContent.replace(pattern, "");
-  }
-  
-  // Log a sample of cleaned content for debugging
-  const cleanedSample = cleanedContent.substring(0, 3000);
-  console.log(`[RECORDS_UPDATE] Cleaned content sample (first 3000 chars):\n${cleanedSample}`);
-  
-  // Try multiple patterns to handle different markdown formats from Tavily
-  
-  // Pattern 1: Strict format with ##### headings (original pattern)
-  // ##### MM/DD/YYYY \n\n ##### Legislation Name \n\n ##### Sign/Veto \n\n ... table with Bill No. [AB 1234]
-  const pattern1 = /#####\s*(\d{2}\/\d{2}\/\d{4})\s*\n\n#####\s*([^\n]+)\s*\n\n#####\s*(Sign|Veto|Line Item Veto)\s*\n\n(?:.*?\n)*?\|[^\|]*Bill No\.\s*\|[^\|]*\[([A-Z]+(?:\s+[A-Z]+)?\s*\d+)\]/gis;
-  
-  // Pattern 2: More flexible - allows single newline or double newline between headings
-  const pattern2 = /#####\s*(\d{2}\/\d{2}\/\d{4})\s*\n+#####\s*([^\n]+?)\s*\n+#####\s*(Sign|Veto|Line Item Veto)\s*\n+.*?(?:Bill No\.|Bill)\s*\|[^\|]*\[([A-Z]+(?:\s+[A-Z]+)?\s*\d+)\]/gis;
-  
-  // Pattern 3: Even more flexible - allows different heading levels (###, ####, #####)
-  const pattern3 = /#{3,5}\s*(\d{2}\/\d{2}\/\d{4})\s*\n+#{3,5}\s*([^\n]+?)\s*\n+#{3,5}\s*(Sign|Veto|Line Item Veto)\s*\n+.*?(?:Bill No\.|Bill)\s*\|[^\|]*\[([A-Z]+(?:\s+[A-Z]+)?\s*\d+)\]/gis;
-  
-  // Pattern 4: Very flexible - looks for date, legislation name, outcome, and bill number anywhere in proximity
-  const pattern4 = /(\d{2}\/\d{2}\/\d{4})\s*\n+.*?#{3,5}\s*([^\n]+?)\s*\n+.*?#{3,5}\s*(Sign|Veto|Line Item Veto)\s*\n+.*?(?:Bill No\.|Bill)\s*\|[^\|]*\[([A-Z]+(?:\s+[A-Z]+)?\s*\d+)\]/gis;
-  
-  const patterns = [pattern1, pattern2, pattern3, pattern4];
-  
-  for (let i = 0; i < patterns.length; i++) {
-    const pattern = patterns[i];
-    let match;
-    // Reset regex lastIndex for global patterns
-    pattern.lastIndex = 0;
-    
-    console.log(`[RECORDS_UPDATE] Trying pattern ${i + 1}`);
-    
-    while ((match = pattern.exec(cleanedContent)) !== null) {
-      const date = match[1]?.trim();
-      const legislationName = match[2]?.trim();
-      const outcomeRaw = match[3]?.trim().toLowerCase();
-      const billNumber = match[4]?.trim();
-      
-      if (!date || !legislationName || !outcomeRaw || !billNumber) {
-        continue;
-      }
-      
-      // Normalize outcome to "signs", "vetoes", or "line item vetoes"
-      let outcome: string;
-      if (outcomeRaw.includes("sign")) {
-        outcome = "signs";
-      } else if (outcomeRaw.includes("line item")) {
-        outcome = "line item vetoes";
-      } else {
-        outcome = "vetoes";
-      }
-      
-      // Check if this record already exists in our results
-      const exists = records.some(r => 
-        r.date === date && 
-        r.legislationName === legislationName && 
-        r.billNumber === billNumber
-      );
-      
-      if (!exists && legislationName && billNumber) {
-        records.push({
-          date,
-          legislationName,
-          billNumber,
-          outcome,
-        });
-      }
-    }
-    
-    // If we found records with this pattern, don't try the rest
-    if (records.length > 0) {
-      console.log(`[RECORDS_UPDATE] Pattern ${i + 1} succeeded with ${records.length} records`);
-      break;
+  for (const chunkRecords of chunkResults) {
+    for (const r of chunkRecords) {
+      const key = `${r.date}|${r.legislationName}|${r.billNumber}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      records.push(r);
     }
   }
-  
-  // If still no records, try Senator/Representative voting patterns (Yes/No votes)
-  if (records.length === 0) {
-    console.log(`[RECORDS_UPDATE] Trying Senator/Representative voting patterns`);
-    
-    // Pattern for Senator format: ##### Date \n\n ##### Legislation Name \n\n ##### Yes/No \n\n ... table with Bill No.
-    // Bill number pattern: matches "H.R. 1234", "S 567", "S J Res 63", "H.Con.Res. 45", etc.
-    const billNumberPattern = /\[([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)\]/;
-    
-    const senatorPattern1 = /#####\s*(\d{2}\/\d{2}\/\d{4})\s*\n+#####\s*([^\n]+?)\s*\n+#####\s*(Yes|No)\s*\n+.*?(?:Bill No\.|Bill)\s*\|[^\|]*\[([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)\]/gis;
-    
-    // More flexible senator pattern
-    const senatorPattern2 = /#{3,5}\s*(\d{2}\/\d{2}\/\d{4})\s*\n+#{3,5}\s*([^\n]+?)\s*\n+#{3,5}\s*(Yes|No)\s*\n+.*?(?:Bill No\.|Bill)\s*\|[^\|]*\[([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)\]/gis;
-    
-    // Pattern that looks for date, legislation name, vote, and bill number in table
-    const senatorPattern3 = /(\d{2}\/\d{2}\/\d{4})\s*\n+.*?#{3,5}\s*([^\n]+?)\s*\n+.*?#{3,5}\s*(Yes|No)\s*\n+.*?Bill No\.\s*\|[^\|]*\[([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)\]/gis;
-    
-    // Even more flexible: find bill number anywhere near date and vote
-    const senatorPattern4 = /(\d{2}\/\d{2}\/\d{4})\s*\n+.*?#{3,5}\s*([^\n]+?)\s*\n+.*?#{3,5}\s*(Yes|No)\s*[\s\S]{0,500}?Bill No\.\s*\|[^\|]*\[([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)\]/gis;
-    
-    // Pattern for list format (no #### headings): Date \n Name \n Yes/No \n Table with Bill No.
-    const senatorPattern5 = /(\d{2}\/\d{2}\/\d{4})\s*\n+([^\n]+(?:[^\n]+\n[^\n]+)?)\s*\n+(Yes|No)\s*\n+.*?Bill No\.\s*\|[^\|]*\s*([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)/gis;
-    
-    // Even more flexible list format: looks for date, name, vote, then bill number in nearby table
-    const senatorPattern6 = /(\d{2}\/\d{2}\/\d{4})\s*\n+([A-Z][^\n]{10,200}?)\s*\n+(Yes|No)\s*[\s\S]{0,800}?Bill No\.\s*\|[^\|]*\s*([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)/gis;
-    
-    // Table-based pattern: Date on line, then name, then Yes/No, then table row with Bill No.
-    // This handles the format where each vote is a list item with embedded table
-    // Bill number can be in brackets [HR 6938] or plain text HR 6938
-    const senatorPattern7 = /(\d{2}\/\d{2}\/\d{4})\s*\n([^\n]{15,300}?)\s*\n\s*(Yes|No)\s*\n.*?Bill No\.\s*\|[^\|]*\[?([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)\]?/gis;
-    
-    // Most flexible: find date, then find closest Yes/No after legislation name, then find bill in nearby table
-    // Handles both bracketed and non-bracketed bill numbers
-    const senatorPattern8 = /(\d{2}\/\d{2}\/\d{4})\s*\n([^\n\d]{15,300}?)\n\s*\b(Yes|No)\b\s*\n[\s\S]{0,1000}?Bill No\.\s*\|[^\|]*\[?([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)\]?/gis;
-    
-    // Most flexible list/table pattern: date, legislation name (can span lines), vote, then bill number
-    // This handles the format where date/name/vote/bill are in proximity but not necessarily in headings
-    const senatorPattern9 = /(\d{2}\/\d{2}\/\d{4})\s*\n+([A-Z][\s\S]{20,400}?)\n+\s*(Yes|No)\s+[\s\S]{0,500}?Bill No\.\s*\|[^\|]*\[?([A-Z]+(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?(?:\s+[A-Z]+)?\s*\d+)\]?/gis;
-    
-    const senatorPatterns = [senatorPattern1, senatorPattern2, senatorPattern3, senatorPattern4, senatorPattern5, senatorPattern6, senatorPattern7, senatorPattern8, senatorPattern9];
-    
-    for (let i = 0; i < senatorPatterns.length; i++) {
-      const pattern = senatorPatterns[i];
-      pattern.lastIndex = 0;
-      console.log(`[RECORDS_UPDATE] Trying senator pattern ${i + 1}`);
-      
-      let match;
-      while ((match = pattern.exec(cleanedContent)) !== null) {
-        const date = match[1]?.trim();
-        const legislationName = match[2]?.trim();
-        const vote = match[3]?.trim().toLowerCase();
-        const billNumber = match[4]?.trim();
-        
-        console.log(`[RECORDS_UPDATE] Senator pattern match: date=${date}, name=${legislationName?.substring(0, 50)}, vote=${vote}, bill=${billNumber}`);
-        
-        if (!date || !legislationName || !vote || !billNumber) {
-          console.log(`[RECORDS_UPDATE] Skipping incomplete match: date=${!!date}, name=${!!legislationName}, vote=${!!vote}, bill=${!!billNumber}`);
-          continue;
-        }
-        
-        // Normalize outcome to "votes yes" or "votes no"
-        const outcome = vote === "yes" ? "votes yes" : "votes no";
-        
-        // Check if this record already exists
-        const exists = records.some(r => 
-          r.date === date && 
-          r.legislationName === legislationName && 
-          r.billNumber === billNumber
-        );
-        
-        if (!exists && legislationName && billNumber) {
-          records.push({
-            date,
-            legislationName,
-            billNumber,
-            outcome,
-          });
-          console.log(`[RECORDS_UPDATE] Added senator record: ${date} - ${billNumber} - ${outcome}`);
-        }
-      }
-      
-      if (records.length > 0) {
-        console.log(`[RECORDS_UPDATE] Senator pattern ${i + 1} succeeded with ${records.length} records`);
-        break;
-      }
-    }
-  }
-  
-  // If still no records, try a last-resort pattern that looks for bill numbers and dates more flexibly
-  if (records.length === 0) {
-    console.log(`[RECORDS_UPDATE] Trying last-resort pattern`);
-    // Look for patterns like: date + legislation name + outcome keywords + bill number
-    const lastResortPattern = /(\d{2}\/\d{2}\/\d{4}).*?(?:Vetoed|Signed|Line Item Vetoed).*?by.*?\n+.*?#{3,5}\s*([^\n]+?)\s*\n+.*?(?:Bill No\.|Bill)\s*[:\|]\s*\[?([A-Z]+(?:\s+[A-Z]+)?\s*\d+)\]?/gis;
-    
-    let match;
-    lastResortPattern.lastIndex = 0;
-    
-    while ((match = lastResortPattern.exec(cleanedContent)) !== null) {
-      const date = match[1]?.trim();
-      const legislationName = match[2]?.trim();
-      const billNumber = match[3]?.trim().replace(/[\[\]]/g, "");
-      const context = match[0]?.toLowerCase() || "";
-      
-      if (!date || !legislationName || !billNumber) {
-        continue;
-      }
-      
-      // Determine outcome from context
-      let outcome: string;
-      if (context.includes("sign")) {
-        outcome = "signs";
-      } else if (context.includes("line item")) {
-        outcome = "line item vetoes";
-      } else {
-        outcome = "vetoes";
-      }
-      
-      // Check if this record already exists
-      const exists = records.some(r => 
-        r.date === date && 
-        r.legislationName === legislationName && 
-        r.billNumber === billNumber
-      );
-      
-      if (!exists && legislationName && billNumber) {
-        records.push({
-          date,
-          legislationName,
-          billNumber,
-          outcome,
-        });
-      }
-    }
-  }
-  
+
+  console.log(`[RECORDS_UPDATE] Extracted ${records.length} unique voting records via Mistral`);
   return records;
 }
 
@@ -412,7 +442,6 @@ Deno.serve(async (req) => {
         const urls = await tavilySearch(searchQuery);
         searchUrls.push(...urls);
         console.log(`[RECORDS_UPDATE] Query "${searchQuery}" returned ${urls.length} URLs`);
-        if (urls.length > 0) break; // Stop if we got results
       } catch (searchErr) {
         console.warn(`[RECORDS_UPDATE] Search error for "${searchQuery}":`, searchErr);
         continue;
@@ -434,91 +463,35 @@ Deno.serve(async (req) => {
       return json(200, { inserted: 0, message: "No search results found", success: false });
     }
 
-    // Filter URLs to find one that matches Vote Smart key-votes format
-    // More flexible: handles /candidate/key-votes/{id}/{name} or variations
-    const validUrls = searchUrls.filter(url => {
-      try {
-        const urlLower = url.toLowerCase();
-        
-        // Must contain "key-votes" and be from votesmart.org domain
-        if (!urlLower.includes("key-votes") || !urlLower.includes("votesmart.org")) {
-          return false;
-        }
-        
-        // Parse URL to check path structure (strip query params and fragments)
-        const urlObj = new URL(url);
-        const pathname = urlObj.pathname.toLowerCase();
-        
-        // Split path into segments (filter out empty strings)
-        const segments = pathname.split("/").filter(Boolean);
-        
-        // Find the index of "key-votes" segment
-        const keyVotesIndex = segments.findIndex(s => s.includes("key-votes"));
-        if (keyVotesIndex === -1) {
-          return false;
-        }
-        
-        // Need at least: key-votes, id, and name segments
-        if (segments.length < keyVotesIndex + 3) {
-          return false;
-        }
-        
-        // Get the name segment (should be after key-votes and ID)
-        const nameSegment = segments[keyVotesIndex + 2];
-        if (!nameSegment) {
-          return false;
-        }
-        
-        // Check that the name segment contains the last name (more flexible matching)
-        const segmentParts = nameSegment.split("-");
-        const segmentLower = nameSegment.toLowerCase();
-        
-        // Check if last name appears in the name segment (could be at end or anywhere)
-        const lastNameInSegment = segmentParts.some(part => part === lastName) || 
-                                  segmentLower.includes(lastName);
-        
-        if (!lastNameInSegment) {
-          console.log(`[RECORDS_UPDATE] Name segment '${nameSegment}' doesn't contain last name '${lastName}'`);
-          return false;
-        }
-        
-        // Verify ID segment is numeric (helps validate structure)
-        const idSegment = segments[keyVotesIndex + 1];
-        if (!idSegment || !/^\d+$/.test(idSegment)) {
-          console.log(`[RECORDS_UPDATE] ID segment '${idSegment}' is not numeric`);
-          return false;
-        }
-        
-        console.log(`[RECORDS_UPDATE] Valid URL found: ${url} (name segment: ${nameSegment}, last name: ${lastName})`);
-        return true;
-      } catch (e) {
-        console.warn(`[RECORDS_UPDATE] Error parsing URL ${url}:`, e);
-        return false;
-      }
-    });
-    
-    // If strict filtering found nothing, try more lenient matching
+    // De-duplicate while preserving order
+    searchUrls = [...new Set(searchUrls)];
+
+    let validUrls = searchUrls.filter((url) => isKeyVotesCandidateUrl(url, politicianName));
+
+    // If strict filtering found nothing, try lenient matching on key-votes pages in votesmart domains —
+    // still require at least one name-token match so this doesn't attach a
+    // completely unrelated politician's voting record (previously had no name
+    // check at all here).
     if (validUrls.length === 0) {
       console.log(`[RECORDS_UPDATE] Strict filtering found no URLs, trying lenient matching...`);
-      const lenientUrls = searchUrls.filter(url => {
+      const lenientUrls = searchUrls.filter((url) => {
         try {
-          const urlLower = url.toLowerCase();
-          // Just check: votesmart domain + key-votes + last name somewhere
-          return urlLower.includes("votesmart.org") && 
-                 urlLower.includes("key-votes") && 
-                 urlLower.includes(lastName);
+          const u = new URL(url);
+          if (!isVoteSmartDomain(u.hostname) || !u.pathname.toLowerCase().includes("/key-votes/")) return false;
+          const segments = u.pathname.toLowerCase().split("/").filter(Boolean);
+          const nameSlug = segments[segments.length - 1] || "";
+          return nameTokenMatchCount(nameSlug, politicianName) >= 1;
         } catch {
           return false;
         }
       });
-      
+
       if (lenientUrls.length > 0) {
         console.log(`[RECORDS_UPDATE] Lenient matching found ${lenientUrls.length} URLs:`, lenientUrls);
-        validUrls.push(...lenientUrls);
+        validUrls = [...new Set(lenientUrls)];
       } else {
-        console.log(`[RECORDS_UPDATE] No valid URLs found (must contain 'key-votes' and last name '${lastName}')`);
+        console.log(`[RECORDS_UPDATE] No valid URLs found (must contain '/candidate/key-votes/')`);
         console.log(`[RECORDS_UPDATE] Searched URLs were:`, searchUrls);
-        // Update records column to "fail"
         await supabase
           .from("ppl_index")
           .update({ records: "fail" })
@@ -561,37 +534,88 @@ Deno.serve(async (req) => {
       }
     }
     
-    console.log(`[RECORDS_UPDATE] Selected valid URL: ${targetUrl}`);
-    console.log(`[RECORDS_UPDATE] Extracting from: ${targetUrl}`);
+    // Build ordered extraction candidates (most likely to succeed first).
+    const sortedValidUrls = [...validUrls].sort((a, b) => {
+      const as = a.toLowerCase().includes("justfacts.votesmart.org") ? 1 : 0;
+      const bs = b.toLowerCase().includes("justfacts.votesmart.org") ? 1 : 0;
+      return bs - as;
+    });
 
-    // Extract content from the first URL
-    let scrapedContent: string = "";
+    // Synthesize the canonical root key-votes URL from the resolved candidate
+    // ID + slug and always try it first. Search results often surface only a
+    // category-specific sub-page (e.g. ".../117248/greg-steube/2/abortion"),
+    // which covers far fewer votes than the root page and can fail to extract
+    // on its own even when the candidate itself was correctly identified.
+    let constructedRootCandidates: string[] = [];
     try {
-      scrapedContent = await tavilyExtract(targetUrl);
-      if (!scrapedContent || scrapedContent.trim().length === 0) {
-        console.log(`[RECORDS_UPDATE] No content extracted`);
-        // Update records column to "fail"
-        await supabase
-          .from("ppl_index")
-          .update({ records: "fail" })
-          .eq("id", politicianId);
-        return json(200, { inserted: 0, message: "No content extracted", success: false });
+      const segs = new URL(validUrls[0]).pathname.split("/").filter(Boolean);
+      const candidateId = segs[2];
+      const candidateSlug = segs[3];
+      if (candidateId && candidateSlug) {
+        constructedRootCandidates = [
+          `https://votesmart.org/candidate/key-votes/${candidateId}/${candidateSlug}`,
+          `https://justfacts.votesmart.org/candidate/key-votes/${candidateId}/${candidateSlug}`,
+        ];
       }
-    } catch (extractErr) {
-      console.error(`[RECORDS_UPDATE] Extract error:`, extractErr);
-      // Update records column to "fail"
+    } catch {}
+
+    const extractionCandidates = [...new Set([
+      ...constructedRootCandidates,
+      targetUrl,
+      ...sortedValidUrls.filter((u) => u !== targetUrl),
+    ])];
+
+    console.log(`[RECORDS_UPDATE] Extraction candidates:`, extractionCandidates);
+
+    // Extract content from candidate URLs until one succeeds.
+    let scrapedContent: string = "";
+    let lastExtractErr: unknown = null;
+    for (const candidateUrl of extractionCandidates) {
+      try {
+        console.log(`[RECORDS_UPDATE] Extracting from: ${candidateUrl}`);
+        const candidateContent = await extractWithFallbacks(candidateUrl);
+        if (!candidateContent || candidateContent.trim().length === 0) {
+          console.log(`[RECORDS_UPDATE] Empty content from: ${candidateUrl}`);
+          continue;
+        }
+        scrapedContent = candidateContent;
+        targetUrl = candidateUrl;
+        break;
+      } catch (extractErr) {
+        lastExtractErr = extractErr;
+        console.error(`[RECORDS_UPDATE] Extract error for ${candidateUrl}:`, extractErr);
+      }
+    }
+
+    if (!scrapedContent || scrapedContent.trim().length === 0) {
+      if (lastExtractErr) {
+        console.error(`[RECORDS_UPDATE] All extraction attempts failed. Last error:`, lastExtractErr);
+      } else {
+        console.log(`[RECORDS_UPDATE] No content extracted from any candidate URL`);
+      }
       await supabase
         .from("ppl_index")
         .update({ records: "fail" })
         .eq("id", politicianId);
-      return json(200, { inserted: 0, message: "Extract failed", success: false });
+      return json(200, {
+        inserted: 0,
+        message: "Extract failed for all candidate URLs",
+        success: false,
+        debug_extraction_candidates: extractionCandidates,
+        debug_last_error: lastExtractErr ? String(lastExtractErr) : null,
+      });
     }
 
     // Parse voting records from scraped content
     // Log a sample of the content for debugging (first 2000 chars)
     const contentSample = scrapedContent.substring(0, 2000);
     console.log(`[RECORDS_UPDATE] Content sample (first 2000 chars):\n${contentSample}`);
-    const votingRecords = extractVotingRecords(scrapedContent);
+    const votingRecords = await extractVotingRecords(scrapedContent);
+    const billUrlByNumber = extractBillUrls(scrapedContent);
+    for (const record of votingRecords) {
+      const normalizedBill = normalizeBillNumber(record.billNumber);
+      record.billUrl = billUrlByNumber.get(normalizedBill);
+    }
     console.log(`[RECORDS_UPDATE] Extracted ${votingRecords.length} voting records`);
 
     if (votingRecords.length === 0) {
@@ -653,7 +677,7 @@ Deno.serve(async (req) => {
         category: null,
         score: null,
         is_media: false,
-        link: null,
+        link: record.billUrl ?? null,
         web: null,
         web_id: null,
         is_active: true,
