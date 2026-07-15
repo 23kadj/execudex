@@ -781,16 +781,26 @@ Deno.serve(async (req) => {
         const webId = ins.id as number;
         createdWebIds.push(webId);
 
-        for (let i = 0; i < parts.length; i++) {
-          if (!budgetOk()) break;
-          const partSuffix = parts.length > 1 ? `.${i + 1}` : "";
-          const key = `${prefix}round1.${webId}.${label}${partSuffix}.txt`;
-          await putToStorage(key, parts[i]);
-          if (i === 0) {
-            const { error: updErr } = await supabase.from("web_content").update({ path: key }).eq("id", webId);
-            if (updErr) console.warn("web_content path update failed:", updErr);
+        const partKeys = parts.map((_, i) => `${prefix}round1.${webId}.${label}${parts.length > 1 ? `.${i + 1}` : ""}.txt`);
+
+        if (parts.length > 0 && budgetOk()) {
+          // First part uploads synchronously so the row's `path` can be set to a
+          // valid key right away. Remaining parts have no ordering dependency on
+          // each other (or on the path update) so they upload concurrently instead
+          // of one-at-a-time.
+          await putToStorage(partKeys[0], parts[0]);
+          const { error: updErr } = await supabase.from("web_content").update({ path: partKeys[0] }).eq("id", webId);
+          if (updErr) console.warn("web_content path update failed:", updErr);
+          stored.push({ domain, url, storageKey: partKeys[0], length: parts[0].length, web_content_id: webId });
+
+          if (parts.length > 1) {
+            await Promise.all(parts.slice(1).map(async (part, idx) => {
+              if (!budgetOk()) return;
+              const key = partKeys[idx + 1];
+              await putToStorage(key, part);
+              stored.push({ domain, url, storageKey: key, length: part.length, web_content_id: webId });
+            }));
           }
-          stored.push({ domain, url, storageKey: key, length: parts[i].length, web_content_id: webId });
         }
 
         return true as any;

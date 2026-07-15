@@ -449,34 +449,27 @@ Deno.serve(async (req) => {
       return out;
     }
 
-    // Parallel file reads for small files
-    const fileTexts = new Map<number, string>();
-    await runLimited(targets, CONCURRENCY, async (row: any) => {
-      const webKey = row.path as string;
-      const webId = row.id as number;
-      try {
-        const text = await readFileText(webKey);
-        if (text.length > 300_000) { // soft cap
-          fileTexts.set(webId, text.slice(0, 300_000));
-        } else {
-          fileTexts.set(webId, text);
-        }
-      } catch (e) {
-        console.warn("read file failed:", webKey, e);
-        fileTexts.set(webId, "");
-      }
-    });
-
     const claimedSlugs = new Set<string>();
 
     type WorkerResult = { acceptedRows: any[]; summary: any };
 
+    // Each worker reads its own file then immediately processes it, so a fast
+    // file's Mistral call isn't gated behind the slowest file in the batch
+    // (previously all reads had to finish before any Mistral call could start).
     const worker = async (row: any): Promise<WorkerResult> => {
       const webId  = row.id as number;
       const webKey = row.path as string;
       const link   = String(row.link || "");
       const isMetrics = isMetricsPath(webKey);
-      const text = fileTexts.get(webId) || "";
+
+      let text = "";
+      try {
+        const raw = await readFileText(webKey);
+        text = raw.length > 300_000 ? raw.slice(0, 300_000) : raw; // soft cap, same as before
+      } catch (e) {
+        console.warn("read file failed:", webKey, e);
+        text = "";
+      }
 
       const len = text.length;
       if (len <= 0 || !text.trim()) {

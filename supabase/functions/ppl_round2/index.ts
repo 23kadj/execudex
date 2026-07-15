@@ -16,7 +16,6 @@ const RUN_BUDGET_MS      = Number(Deno.env.get("RUN_BUDGET_MS") ?? 25_000);
 const SEARCH_TIMEOUT_MS  = 8_000;
 const EXTRACT_TIMEOUT_MS = 8_000;  // Reduced for parallel extraction
 const PER_TERM_TARGET    = 8;      // cap stored sources per term
-const POOL_LIMIT         = 6;      // max concurrent extracts/stores
 const EXTRACT_POOL_LIMIT = 10;     // Extraction can handle more concurrency
 const LLM_POOL_LIMIT     = 3;      // LLM calls should be rate-limited
 const STORAGE_POOL_LIMIT = 8;      // Storage can be parallel
@@ -769,9 +768,14 @@ Deno.serve(async (req) => {
     const createdWebIds: number[] = [];
     const llmVerdicts: any[] = [];
 
-    // For each term
-    for (const rawTerm of terms) {
-      if (!budgetOk()) break;
+    // Each term's search+extract+store pipeline is independent of every other term's
+    // (different Tavily query, own set of URLs), so terms run concurrently instead of
+    // one-at-a-time. They share the same RUN_BUDGET_MS clock: previously earlier terms
+    // got first claim on the budget and later ones were cut short first; now all terms
+    // draw from the budget at once, so a tight budget spreads thinner across more terms
+    // rather than fully finishing some and skipping others.
+    const processTerm = async (rawTerm: string): Promise<void> => {
+      if (!budgetOk()) return;
       const slug = slugifyTerm(rawTerm);
 
       // Search (agenda categories use simple "policy" suffix, others use policy-biased variants)
@@ -784,11 +788,11 @@ Deno.serve(async (req) => {
         }
       } catch (e) {
         skipped.push({ term: slug, reason: `search failed: ${String(e)}` });
-        continue;
+        return;
       }
       if (!urls.length) {
         skipped.push({ term: slug, reason: "no eligible results for allowed domains" });
-        continue;
+        return;
       }
 
       // Dedupe + rank
@@ -844,96 +848,123 @@ Deno.serve(async (req) => {
       
       if (!selected.length) {
         skipped.push({ term: slug, reason: "no post-filtered results" });
-        continue;
+        return;
       }
 
-      // Build limited concurrency tasks for extraction + storage
+      // Staged pools: extract (wide) -> LLM judge for unknown domains only (narrow,
+      // rate-limit-sensitive) -> insert+store (wide). Same checks/criteria as before,
+      // just paced separately instead of one monolithic per-URL pipeline sharing a
+      // single concurrency budget across Tavily extract, Mistral judge, and DB/storage writes.
       const nowIsoStr = new Date().toISOString();
-      const tasks = selected.map(({ domain, url, category }) => async () => {
+
+      type SelItem = { domain: string; url: string; category: "allowed" | "unknown" };
+      type ExtractedItem = SelItem & { text: string };
+
+      // Stage 1: extract
+      const extractTasks = selected.map((item: SelItem) => async (): Promise<ExtractedItem | null> => {
+        if (!budgetOk()) return null;
+        try {
+          const text = await tavilyExtractSafe(item.url);
+          if (!text) {
+            skipped.push({ term: slug, domain: item.domain, reason: "extract empty" });
+            return null;
+          }
+          return { ...item, text };
+        } catch (e) {
+          console.warn("extract skipped:", slug, item.domain, item.url, e);
+          skipped.push({ term: slug, domain: item.domain, reason: "extract/store failed" });
+          return null;
+        }
+      });
+      const extractedRaw = await runPool(EXTRACT_POOL_LIMIT, extractTasks);
+      const extracted = extractedRaw.filter((x): x is ExtractedItem => !!x);
+
+      // Stage 2: LLM judge (only for "unknown" domains; "allowed" pass straight through)
+      const judgeTasks = extracted.map((item: ExtractedItem) => async (): Promise<ExtractedItem | null> => {
+        if (item.category !== "unknown") return item;
+        if (!budgetOk()) return null;
+
+        const snippet = item.text.slice(0, 4000);
+        const host = (() => { try { return new URL(item.url).hostname.replace(/^www\./, ""); } catch { return item.domain; } })();
+        const verdict = await _mistralJudgeSmall({
+          meta: { url: item.url, host, title: undefined, detected_date: null, lang: null },
+          snippet,
+          person: fullName,
+          topic: rawTerm,
+          nowIso: nowIsoStr
+        });
+
+        if (!verdict) {
+          llmVerdicts.push({ url: item.url, host, status: "llm_error" });
+          skipped.push({ term: slug, domain: item.domain, reason: "llm_error" });
+          return null;
+        }
+
+        const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
+        const excluded = verdict.content_flags.press_release ||
+                        verdict.content_flags.news_clip_or_blog_rollup ||
+                        verdict.content_flags.opinion_or_editorial;
+
+        let rejectReason = "";
+
+        // Policy checks (unchanged)
+        if (!verdict.recency_ok) {
+          rejectReason = "stale (>12 months)";
+        } else if (excluded) {
+          const flags = [];
+          if (verdict.content_flags.press_release) flags.push("press_release");
+          if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
+          if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
+          rejectReason = `excluded_content: ${flags.join(", ")}`;
+        } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
+          rejectReason = "affiliation_fail";
+        } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
+          rejectReason = `partisan (${verdict.institution})`;
+        } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
+          rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
+        }
+
+        if (rejectReason) {
+          llmVerdicts.push({
+            url: item.url,
+            host,
+            status: "rejected",
+            reason: rejectReason,
+            verdict: verdict.verdict,
+            score: verdict.score,
+            institution: verdict.institution,
+            partisanship: verdict.partisanship,
+            recency_ok: verdict.recency_ok,
+            content_flags: verdict.content_flags,
+            llm_reasons: verdict.reasons
+          });
+          skipped.push({ term: slug, domain: item.domain, reason: `llm_rejected: ${rejectReason}` });
+          return null;
+        }
+
+        llmVerdicts.push({
+          url: item.url,
+          host,
+          status: "accepted",
+          score: verdict.score,
+          institution: verdict.institution
+        });
+        return item;
+      });
+      const acceptedRaw = await runPool(LLM_POOL_LIMIT, judgeTasks);
+      const accepted = acceptedRaw.filter((x): x is ExtractedItem => !!x);
+
+      // Stage 3: insert + store
+      const storeTasks = accepted.map((item: ExtractedItem) => async () => {
         if (!budgetOk()) return null as any;
         try {
-          const text = await tavilyExtractSafe(url);
-          if (!text) {
-            skipped.push({ term: slug, domain, reason: "extract empty" });
-            return null as any;
-          }
-
-          // If allowed, pass through. If unknown, run LLM judge
-          if (category === "unknown") {
-            const snippet = text.slice(0, 4000);
-            const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return domain; } })();
-            const verdict = await _mistralJudgeSmall({
-              meta: { url, host, title: undefined, detected_date: null, lang: null },
-              snippet,
-              person: fullName,
-              topic: rawTerm,
-              nowIso: nowIsoStr
-            });
-            
-            if (!verdict) {
-              llmVerdicts.push({ url, host, status: "llm_error" });
-              skipped.push({ term: slug, domain, reason: "llm_error" });
-              return null as any;
-            }
-            
-            const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
-            const excluded = verdict.content_flags.press_release || 
-                            verdict.content_flags.news_clip_or_blog_rollup || 
-                            verdict.content_flags.opinion_or_editorial;
-            
-            let rejectReason = "";
-            
-            // Policy checks
-            if (!verdict.recency_ok) {
-              rejectReason = "stale (>12 months)";
-            } else if (excluded) {
-              const flags = [];
-              if (verdict.content_flags.press_release) flags.push("press_release");
-              if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
-              if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
-              rejectReason = `excluded_content: ${flags.join(", ")}`;
-            } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
-              rejectReason = "affiliation_fail";
-            } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
-              rejectReason = `partisan (${verdict.institution})`;
-            } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
-              rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
-            }
-            
-            if (rejectReason) {
-              llmVerdicts.push({
-                url,
-                host,
-                status: "rejected",
-                reason: rejectReason,
-                verdict: verdict.verdict,
-                score: verdict.score,
-                institution: verdict.institution,
-                partisanship: verdict.partisanship,
-                recency_ok: verdict.recency_ok,
-                content_flags: verdict.content_flags,
-                llm_reasons: verdict.reasons
-              });
-              skipped.push({ term: slug, domain, reason: `llm_rejected: ${rejectReason}` });
-              return null as any;
-            }
-            
-            llmVerdicts.push({
-              url,
-              host,
-              status: "accepted",
-              score: verdict.score,
-              institution: verdict.institution
-            });
-          }
-
-          const label = bareDomainLabelFromUrl(url);
-          const parts = text.length > PART_LEN ? splitIntoParts(text, PART_LEN) : [text];
+          const label = bareDomainLabelFromUrl(item.url);
+          const parts = item.text.length > PART_LEN ? splitIntoParts(item.text, PART_LEN) : [item.text];
 
           // insert web_content (unused/false so later steps can mark used)
           const { data: ins, error: insErr } = await supabase
             .from("web_content")
-            .insert({ path: "", owner_id: pplId, is_ppl: true, link: url, used: false })
+            .insert({ path: "", owner_id: pplId, is_ppl: true, link: item.url, used: false })
             .select("id")
             .single();
           if (insErr || !ins) throw insErr || new Error("web_content insert failed");
@@ -953,19 +984,20 @@ Deno.serve(async (req) => {
               if (updErr) console.warn("web_content path update failed:", wcId, updErr);
             }
 
-            stored.push({ term: slug, domain, url, storageKey: key, length: parts[i].length });
+            stored.push({ term: slug, domain: item.domain, url: item.url, storageKey: key, length: parts[i].length });
           }
 
           return true as any;
         } catch (e) {
-          console.warn("extract/store skipped:", slug, domain, url, e);
-          skipped.push({ term: slug, domain, reason: "extract/store failed" });
+          console.warn("store skipped:", slug, item.domain, item.url, e);
+          skipped.push({ term: slug, domain: item.domain, reason: "extract/store failed" });
           return null as any;
         }
       });
+      await runPool(STORAGE_POOL_LIMIT, storeTasks);
+    };
 
-      await runPool(POOL_LIMIT, tasks);
-    }
+    await Promise.all(terms.map(processTerm));
 
     // Soft-fail: return 200 even if nothing stored (with stop_reason)
     if (stored.length === 0) {
