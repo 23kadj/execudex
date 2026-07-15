@@ -240,6 +240,10 @@ function isSuspiciousBillTitle(title: string | null | undefined): boolean {
   if (/^please wait/i.test(lower)) return true;
   if (/^access denied/i.test(lower)) return true;
   if (/^attention required/i.test(lower)) return true;
+  // A bare bill code (e.g. "H.R.5") is never a real word title — pages commonly
+  // surface one in a "trending/related bills" widget ahead of the actual title,
+  // which was getting picked up as the display name for unrelated bills.
+  if (/^(H\.R\.|S\.|H\.J\.Res\.|S\.J\.Res\.|H\.Con\.Res\.|S\.Con\.Res\.|H\.Res\.|S\.Res\.)\s*\.?\s*\d+\s*$/i.test(t)) return true;
   return false;
 }
 

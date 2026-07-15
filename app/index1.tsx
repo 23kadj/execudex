@@ -405,6 +405,17 @@ export default function Index1({ navigation }: { navigation?: any }) {
   // Fetch data from Supabase if index is provided and not already prefetched
   // Note: Access check now happens in NavigationService BEFORE navigation
   useEffect(() => {
+    let cancelled = false;
+    let pollAttempt = 0;
+    // On a first-time profile open, NavigationService now navigates here before
+    // profile_index/ppl_synopsis finish in the background (see navigationService.ts) —
+    // so this may run before ppl_profiles has a row at all. Poll a few times with
+    // backoff instead of a single fetch, so the screen fills in on its own once
+    // indexing completes rather than staying on "No Data Available" until the
+    // user leaves and re-opens the profile.
+    const MAX_POLL_ATTEMPTS = 6;
+    const POLL_INTERVAL_MS = 4000;
+
     const fetchProfileData = async () => {
       const index = params.index;
       if (index && typeof index === 'string') {
@@ -413,11 +424,11 @@ export default function Index1({ navigation }: { navigation?: any }) {
           console.log('Using prefetched profile data, skipping fetch');
           return;
         }
-        
+
         try {
           console.log('Fetching data for index:', index);
           const politicianId = parseInt(index);
-          
+
           // Fetch basic info from ppl_index
           const supabase = getSupabaseClient();
           const { data: indexData, error: indexError } = await supabase
@@ -425,18 +436,18 @@ export default function Index1({ navigation }: { navigation?: any }) {
             .select('name, sub_name')
             .eq('id', politicianId)
             .maybeSingle();
-          
+
           if (indexError) {
             console.error('Error fetching politician data for index', politicianId, ':', indexError);
             return;
           }
-          
+
           if (indexData) {
             console.log('Successfully fetched index data:', indexData);
             // NOTE: crash-isolation test: do not update name/position state here.
             // We still fetch indexData (same as before) but keep UI driven by params.
           }
-          
+
           // Fetch profile data from ppl_profiles
           // Use maybeSingle() to handle cases where profile doesn't exist yet
           const { data: fetchedProfileData, error: profileError } = await supabase
@@ -444,20 +455,33 @@ export default function Index1({ navigation }: { navigation?: any }) {
             .select('index_id, approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, score')
             .eq('index_id', politicianId)
             .maybeSingle();
-          
+
           if (profileError) {
             console.error('Error fetching profile data for index', politicianId, ':', profileError);
-          } else if (fetchedProfileData) {
+            return;
+          }
+
+          if (cancelled) return;
+
+          const hasSynopsis = !!(fetchedProfileData?.synopsis && String(fetchedProfileData.synopsis).trim());
+          if (!hasSynopsis && pollAttempt < MAX_POLL_ATTEMPTS) {
+            // Background indexing likely still running — try again shortly.
+            pollAttempt++;
+            setTimeout(() => { if (!cancelled) fetchProfileData(); }, POLL_INTERVAL_MS);
+            return;
+          }
+
+          if (fetchedProfileData) {
             console.log('Successfully fetched profile data:', fetchedProfileData);
             const profile = fetchedProfileData as { approval?: number | null; disapproval?: number | null; score?: number | null; [key: string]: any };
             console.log('Score from database:', profile.score);
-            
+
             // Update approval/disapproval percentages
             if (profile.approval !== null && profile.approval !== undefined && profile.disapproval !== null && profile.disapproval !== undefined) {
               approvalPercentage = Number(profile.approval);
               disapprovalPercentage = Number(profile.disapproval);
             }
-            
+
             // Store profile data for use in child components
             setProfileData(fetchedProfileData);
           }
@@ -466,8 +490,9 @@ export default function Index1({ navigation }: { navigation?: any }) {
         }
       }
     };
-    
+
     fetchProfileData();
+    return () => { cancelled = true; };
   }, [params.index]);
   
   // Check bookmark status when component mounts or user changes
