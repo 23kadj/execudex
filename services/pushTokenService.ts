@@ -46,14 +46,22 @@ export async function registerPushToken(userId: string): Promise<string | null> 
       });
 
     if (error) {
-      // Log plain fields explicitly — PostgrestError extends Error, whose
-      // `message` is non-enumerable, so logging the object directly prints
-      // "{}" in Metro/Sentry's console formatting instead of the real reason.
+      // Neither the raw object nor its message/code/details/hint fields have
+      // surfaced anything useful so far — dump everything we can about its
+      // actual shape so the next occurrence is diagnosable instead of another
+      // guess.
+      let safeStringified = '(stringify failed)';
+      try { safeStringified = JSON.stringify(error); } catch {}
       console.error('[PushTokenService] Error storing push token:', {
         message: error.message,
         code: (error as any).code,
         details: (error as any).details,
         hint: (error as any).hint,
+        name: (error as any).name,
+        typeofError: typeof error,
+        keys: Object.keys(error),
+        stringified: safeStringified,
+        toStringResult: String(error),
       });
       return null;
     }
