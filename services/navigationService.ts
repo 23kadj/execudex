@@ -224,7 +224,7 @@ export class NavigationService {
           const supabase = getSupabaseClient();
           const { data: profileData } = await supabase
             .from('ppl_profiles')
-            .select('approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, score')
+            .select('approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, ballotpedia_link, score')
             .eq('index_id', politicianId)
             .maybeSingle();
 

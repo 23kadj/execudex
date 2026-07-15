@@ -460,6 +460,22 @@ function buildBallotpediaFallbackQuery(fullName: string) {
   return { mode: "votes" as const, queries: [`${fullName} ballotpedia`] };
 }
 
+/**
+ * Resolve a politician's Ballotpedia page URL — just a search, no extract/LLM,
+ * so it's cheap enough to run concurrently alongside the main metrics search
+ * without meaningfully adding to total latency. Used to always have a
+ * Ballotpedia link on file as a secondary reference, independent of whether
+ * this run's metrics actually came from Ballotpedia.
+ */
+async function findBallotpediaLink(fullName: string): Promise<string | null> {
+  try {
+    const urls = await tavilySearch(`${fullName} ballotpedia`, MAX_RESULTS_PER_SEARCH);
+    return urls.find((u) => hostOf(u) === "ballotpedia.org") || null;
+  } catch {
+    return null;
+  }
+}
+
 /** ========================== PROBING HELPERS ========================== */
 type ProbeResult = {
   url: string;
@@ -576,45 +592,45 @@ async function findMetricsForPerson(
   }
 
   // PRIMARY: polling for ALL tiers (runs if not yet picked)
-  // OPTIMIZATION: Try multiple queries in parallel, stop as soon as one succeeds
-  if (!picked) {
+  // Bounded to a single batch (a handful of polling sources), not the full query
+  // list — soft/hard tier politicians with thin national polling coverage would
+  // otherwise burn the entire search before ever reaching the vote-count fallback
+  // below. All batchQueries run in parallel, so this stays fast regardless.
+  if (!picked && !expired()) {
     const primary = buildPrimaryPollingQuerySet(fullName);
-    
-    // Process queries in batches of 3 for balanced speed/resource usage
     const QUERY_BATCH_SIZE = 3;
-    for (let i = 0; i < primary.queries.length && !picked && !expired(); i += QUERY_BATCH_SIZE) {
-      const batchQueries = primary.queries.slice(i, i + QUERY_BATCH_SIZE);
-      
-      // Launch all searches in parallel
-      const searchPromises = batchQueries.map(async (q) => {
-        try {
-          const urls = await tavilySearch(q, MAX_RESULTS_PER_SEARCH);
-          if (!urls.length) return null;
-          return await tryCandidatesConcurrent(fullName, urls, primary.mode, bigBias);
-        } catch {
-          return null;
-        }
-      });
-      
-      // Use Promise.race equivalent that returns first non-null result
-      const results = await Promise.all(searchPromises);
-      for (const result of results) {
-        if (result) {
-          picked = result;
-          selectedMode = primary.mode;
-          break;
-        }
+    const batchQueries = primary.queries.slice(0, QUERY_BATCH_SIZE);
+
+    const searchPromises = batchQueries.map(async (q) => {
+      try {
+        const urls = await tavilySearch(q, MAX_RESULTS_PER_SEARCH);
+        if (!urls.length) return null;
+        return await tryCandidatesConcurrent(fullName, urls, primary.mode, bigBias);
+      } catch {
+        return null;
+      }
+    });
+
+    const results = await Promise.all(searchPromises);
+    for (const result of results) {
+      if (result) {
+        picked = result;
+        selectedMode = primary.mode;
+        break;
       }
     }
   }
 
   // FALLBACK: Ballotpedia/vote-count after polling fails.
-  // Votes exist as a data source for politicians who don't have much polling
-  // presence — restrict this fallback to base tier only. Hard/soft ("known")
-  // politicians should never be reduced to a bare vote count just because our
-  // polling search came up empty on this run; if no current approval/disapproval
-  // was found for them, report "no data" and preserve whatever was there before.
-  if (!picked && !expired() && (tier || "").toLowerCase() === "base") {
+  // Applies to every tier. The primary search above is intentionally bounded
+  // (a handful of sources, not exhaustive), so landing here means "didn't turn
+  // up in a quick check" rather than "no polling data exists at all" — known
+  // (hard/soft) politicians still get a real polling attempt first via the
+  // PRIMARY block above; this only kicks in once that quick attempt comes up
+  // empty, so it doesn't reintroduce the original "votes over available polling
+  // data" problem while still giving every tier a usable number instead of
+  // burning the full search budget and coming back with nothing.
+  if (!picked && !expired()) {
     const fallback = buildBallotpediaFallbackQuery(fullName);
     let urls: string[] = [];
     try { urls = await tavilySearch(fallback.queries[0], MAX_RESULTS_PER_SEARCH); } catch {}
@@ -693,16 +709,38 @@ Deno.serve(async (req) => {
     // previous profile row (for reference)
     const { data: prev, error: prevErr } = await supabase
       .from("ppl_profiles")
-      .select("index_id")
+      .select("index_id, ballotpedia_link")
       .eq("index_id", pplId)
       .maybeSingle();
     if (prevErr) throw prevErr;
 
-    // Search for new metrics first (before wiping old data)
-    const met = await findMetricsForPerson(pplId, fullName, tier, prev, deadline);
+    // Ballotpedia link: always keep one on file as a secondary reference,
+    // independent of poll vs vote outcome. Only searched if missing, and run
+    // concurrently with the main metrics search (single Tavily search, no
+    // extract/LLM) so it adds ~no latency to the normal path.
+    const needsBallotpediaLookup = !prev?.ballotpedia_link;
+    const [met, foundBallotpediaLink] = await Promise.all([
+      findMetricsForPerson(pplId, fullName, tier, prev, deadline),
+      needsBallotpediaLookup ? findBallotpediaLink(fullName) : Promise.resolve<string | null>(null),
+    ]);
+
+    // Prefer whatever's already on file, else what we just found, else reuse
+    // the vote-fallback link when it happens to already be ballotpedia.org
+    // (avoids a redundant lookup we already effectively did).
+    let ballotpediaLink: string | null = prev?.ballotpedia_link || foundBallotpediaLink || null;
+    if (!ballotpediaLink && (met as any).mode === "votes" && met.poll_link && hostOf(met.poll_link) === "ballotpedia.org") {
+      ballotpediaLink = met.poll_link;
+    }
 
     // Only proceed if we found new metrics - otherwise preserve old data
     if (!met.found_any) {
+      // Still persist a newly-resolved Ballotpedia link even when this run found no fresh poll/vote data.
+      if (ballotpediaLink && ballotpediaLink !== prev?.ballotpedia_link) {
+        await supabase.from("ppl_profiles").upsert(
+          { index_id: pplId, ballotpedia_link: ballotpediaLink },
+          { onConflict: "index_id", ignoreDuplicates: false, defaultToNull: false }
+        );
+      }
       return json(200, {
         id: pplId,
         name: fullName,
@@ -735,6 +773,7 @@ Deno.serve(async (req) => {
       disapproval: met.disapproval,
       votes: includeVotes ? met.votes : null,
       poll_summary: met.poll_summary || "",
+      ballotpedia_link: ballotpediaLink,
       updated_at: nowIso(),
     };
 

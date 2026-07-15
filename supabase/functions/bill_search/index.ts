@@ -240,10 +240,13 @@ function isSuspiciousBillTitle(title: string | null | undefined): boolean {
   if (/^please wait/i.test(lower)) return true;
   if (/^access denied/i.test(lower)) return true;
   if (/^attention required/i.test(lower)) return true;
-  // A bare bill code (e.g. "H.R.5") is never a real word title — pages commonly
-  // surface one in a "trending/related bills" widget ahead of the actual title,
-  // which was getting picked up as the display name for unrelated bills.
-  if (/^(H\.R\.|S\.|H\.J\.Res\.|S\.J\.Res\.|H\.Con\.Res\.|S\.Con\.Res\.|H\.Res\.|S\.Res\.)\s*\.?\s*\d+\s*$/i.test(t)) return true;
+  // A real title has multiple real words. Reject fragments that are mostly
+  // digits/punctuation with at most one incidental run of letters — this catches
+  // bare bill codes ("H.R.5") and Statutes at Large citations ("21, 86Stat1329"),
+  // both page furniture that was getting picked up as the display title for
+  // unrelated bills.
+  const wordTokens = t.match(/[a-zA-Z]{3,}/g) || [];
+  if (wordTokens.length < 2) return true;
   return false;
 }
 

@@ -452,7 +452,7 @@ export default function Index1({ navigation }: { navigation?: any }) {
           // Use maybeSingle() to handle cases where profile doesn't exist yet
           const { data: fetchedProfileData, error: profileError } = await supabase
             .from('ppl_profiles')
-            .select('index_id, approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, score')
+            .select('index_id, approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, ballotpedia_link, score')
             .eq('index_id', politicianId)
             .maybeSingle();
 

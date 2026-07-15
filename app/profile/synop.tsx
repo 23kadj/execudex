@@ -115,6 +115,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
   // State for poll summary and link (for see-more page)
   const [pollSummary, setPollSummary] = useState<string>('');
   const [pollLink, setPollLink] = useState<string>('');
+  const [ballotpediaLink, setBallotpediaLink] = useState<string>('');
 
   // State for Generate New Cards button
   const [isGeneratingCards, setIsGeneratingCards] = useState(false);
@@ -159,6 +160,9 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
       if (profileData.poll_link) {
         setPollLink(profileData.poll_link);
       }
+      if (profileData.ballotpedia_link) {
+        setBallotpediaLink(profileData.ballotpedia_link);
+      }
     }
   }, [profileData]);
 
@@ -184,7 +188,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
           
           const { data: profileRow, error } = (await supabase
             .from('ppl_profiles')
-            .select('approval, disapproval, votes, poll_summary, poll_link, score')
+            .select('approval, disapproval, votes, poll_summary, poll_link, ballotpedia_link, score')
             .eq('index_id', parseInt(index))
             .maybeSingle()) as any;
           
@@ -214,6 +218,9 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
             }
             if (profileRow.poll_link) {
               setPollLink(profileRow.poll_link);
+            }
+            if (profileRow.ballotpedia_link) {
+              setBallotpediaLink(profileRow.ballotpedia_link);
             }
 
             // Set average score from ppl_profiles.score (kept in sync by DB trigger)
@@ -389,7 +396,8 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         disapproval: Number(localDisapproval ?? 0).toString(),
         votes: Number(votes ?? 0).toString(),
         pollSummary: pollSummary || '',
-        pollLink: pollLink || ''
+        pollLink: pollLink || '',
+        ballotpediaLink: ballotpediaLink || ''
       }
     });
   };
@@ -670,7 +678,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         const supabase = getSupabaseClient();
         const { data: profileRow, error } = (await supabase
           .from('ppl_profiles')
-          .select('approval, disapproval, votes, poll_summary, poll_link')
+          .select('approval, disapproval, votes, poll_summary, poll_link, ballotpedia_link')
           .eq('index_id', parseInt(index))
           .maybeSingle()) as any;
 
@@ -687,7 +695,10 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
           if (profileRow.poll_link) {
             setPollLink(profileRow.poll_link);
           }
-          
+          if (profileRow.ballotpedia_link) {
+            setBallotpediaLink(profileRow.ballotpedia_link);
+          }
+
           console.log('Metrics updated successfully:', {
             approval: profileRow.approval,
             disapproval: profileRow.disapproval,

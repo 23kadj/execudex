@@ -18,6 +18,7 @@ interface SeeMoreProps {
   disapprovalPercentage?: number;
   pollSummary?: string;
   pollLink?: string;
+  ballotpediaLink?: string;
 }
 
 function getDisplayText(url: string) {
@@ -57,6 +58,7 @@ export default function SeeMore({
   const disapproval = params.disapproval ? Number(params.disapproval) : (disapprovalPercentage || 50);
   const pollSummaryText = (params.pollSummary as string) || pollSummary || '';
   const pollLinkText = (params.pollLink as string) || pollLink || '';
+  const ballotpediaLinkText = (params.ballotpediaLink as string) || '';
   
   const [isLoading] = useState<boolean>(false);
   const [hasError] = useState<boolean>(false);
@@ -412,6 +414,11 @@ export default function SeeMore({
           </View>
         )}
 
+        {/* Access links label - only shown when the metrics source is an approval/disapproval poll */}
+        {hasValidPollData() && (
+          <Text style={styles.accessLinksLabel}>Access polling and voting data with the links below</Text>
+        )}
+
         {/* Links Row */}
         <View style={styles.linksRow}>
           {pollLinkText ? (
@@ -435,6 +442,19 @@ export default function SeeMore({
             ))
           )}
         </View>
+
+        {/* Ballotpedia link, below the source link - only for poll-sourced metrics */}
+        {hasValidPollData() && ballotpediaLinkText ? (
+          <View style={styles.linksRow}>
+            <TouchableOpacity
+              style={styles.linkPill}
+              onPress={() => handleLinkPress(ballotpediaLinkText)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.linkText}>{getDisplayText(ballotpediaLinkText)}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </ScrollView>
       
       <CardLoadingIndicator 
@@ -563,6 +583,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '400',
     textAlign: 'left',
+  },
+  accessLinksLabel: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '400',
+    textAlign: 'center',
+    marginTop: 14,
+    marginBottom: 2,
   },
   // Links Row
   linksRow: {
