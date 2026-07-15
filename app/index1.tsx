@@ -405,17 +405,6 @@ export default function Index1({ navigation }: { navigation?: any }) {
   // Fetch data from Supabase if index is provided and not already prefetched
   // Note: Access check now happens in NavigationService BEFORE navigation
   useEffect(() => {
-    let cancelled = false;
-    let pollAttempt = 0;
-    // On a first-time profile open, NavigationService now navigates here before
-    // profile_index/ppl_synopsis finish in the background (see navigationService.ts) —
-    // so this may run before ppl_profiles has a row at all. Poll a few times with
-    // backoff instead of a single fetch, so the screen fills in on its own once
-    // indexing completes rather than staying on "No Data Available" until the
-    // user leaves and re-opens the profile.
-    const MAX_POLL_ATTEMPTS = 6;
-    const POLL_INTERVAL_MS = 4000;
-
     const fetchProfileData = async () => {
       const index = params.index;
       if (index && typeof index === 'string') {
@@ -458,20 +447,7 @@ export default function Index1({ navigation }: { navigation?: any }) {
 
           if (profileError) {
             console.error('Error fetching profile data for index', politicianId, ':', profileError);
-            return;
-          }
-
-          if (cancelled) return;
-
-          const hasSynopsis = !!(fetchedProfileData?.synopsis && String(fetchedProfileData.synopsis).trim());
-          if (!hasSynopsis && pollAttempt < MAX_POLL_ATTEMPTS) {
-            // Background indexing likely still running — try again shortly.
-            pollAttempt++;
-            setTimeout(() => { if (!cancelled) fetchProfileData(); }, POLL_INTERVAL_MS);
-            return;
-          }
-
-          if (fetchedProfileData) {
+          } else if (fetchedProfileData) {
             console.log('Successfully fetched profile data:', fetchedProfileData);
             const profile = fetchedProfileData as { approval?: number | null; disapproval?: number | null; score?: number | null; [key: string]: any };
             console.log('Score from database:', profile.score);
@@ -492,7 +468,6 @@ export default function Index1({ navigation }: { navigation?: any }) {
     };
 
     fetchProfileData();
-    return () => { cancelled = true; };
   }, [params.index]);
   
   // Check bookmark status when component mounts or user changes

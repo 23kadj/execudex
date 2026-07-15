@@ -188,63 +188,36 @@ export class NavigationService {
       // This ensures users see feedback even when profiles should load instantly
       this.loadingCallback?.(true);
 
-      // Cheap check: is this profile already indexed? If so, handleProfileOpen
-      // short-circuits fast below — safe to await it and keep prefetching (no
-      // flash, current behavior for the common repeat-visit case). If not
-      // indexed, this is a first-time open where profile_index + ppl_synopsis
-      // can take tens of seconds — don't block navigation on that chain; run
-      // it in the background and let index1.tsx's own fetch/poll pick up the
-      // data once it lands (the screen briefly shows its empty state instead).
-      let alreadyIndexed = false;
+      // Execute politician profile checks and scripts BEFORE navigation
+      await PoliticianProfileService.handleProfileOpen(politicianId);
+
+      // Check if cancelled after processing
+      if (this.currentAbortController?.signal.aborted) {
+        throw new Error('CANCELLED');
+      }
+
+      console.log('Profile processing completed, prefetching profile data');
+
+      // ✅ STEP 3: Prefetch profile data to avoid "No Data Available" flash
       try {
         const supabase = getSupabaseClient();
-        const { data: indexRow } = await supabase
-          .from('ppl_index')
-          .select('indexed')
-          .eq('id', politicianId)
+        const { data: profileData } = await supabase
+          .from('ppl_profiles')
+          .select('approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, ballotpedia_link, score')
+          .eq('index_id', politicianId)
           .maybeSingle();
-        alreadyIndexed = indexRow?.indexed === true;
+
+        // Add prefetched data to params if available
+        if (profileData) {
+          console.log('Successfully prefetched profile data');
+          params.params.prefetchedProfileData = JSON.stringify(profileData);
+        }
       } catch (error) {
-        console.warn('[NavigationService] Failed to check indexed status, defaulting to background processing:', error);
+        console.warn('Failed to prefetch profile data, will load on page:', error);
+        // Continue without prefetched data - page will fetch it
       }
 
-      if (alreadyIndexed) {
-        // Execute politician profile checks and scripts BEFORE navigation
-        await PoliticianProfileService.handleProfileOpen(politicianId);
-
-        // Check if cancelled after processing
-        if (this.currentAbortController?.signal.aborted) {
-          throw new Error('CANCELLED');
-        }
-
-        console.log('Profile processing completed, prefetching profile data');
-
-        // Prefetch profile data to avoid "No Data Available" flash
-        try {
-          const supabase = getSupabaseClient();
-          const { data: profileData } = await supabase
-            .from('ppl_profiles')
-            .select('approval, disapproval, synopsis, agenda, identity, affiliates, poll_summary, poll_link, ballotpedia_link, score')
-            .eq('index_id', politicianId)
-            .maybeSingle();
-
-          // Add prefetched data to params if available
-          if (profileData) {
-            console.log('Successfully prefetched profile data');
-            params.params.prefetchedProfileData = JSON.stringify(profileData);
-          }
-        } catch (error) {
-          console.warn('Failed to prefetch profile data, will load on page:', error);
-          // Continue without prefetched data - page will fetch it
-        }
-      } else {
-        console.log('First-time profile open — running indexing in the background, not blocking navigation');
-        PoliticianProfileService.handleProfileOpen(politicianId).catch((error) => {
-          console.error('Background profile processing failed:', error);
-        });
-      }
-
-      // Navigate — either processing already finished above, or it's running in the background
+      // Navigate after processing is complete
       router.push(params);
       
       // Hide loading indicator after navigation (small delay to ensure smooth transition)
