@@ -251,16 +251,29 @@ async function fetchVoteSmartPageAsFallbackText(url: string): Promise<string> {
  * candidate URL itself was correct.
  */
 async function extractWithFallbacks(url: string): Promise<string> {
+  const errors: string[] = [];
+
   try {
     const viaTavily = await tavilyExtract(url);
     if (viaTavily.trim().length > 0) return viaTavily;
-  } catch { /* fall through */ }
+    errors.push("tavily: empty");
+  } catch (e) {
+    errors.push(`tavily: ${e}`);
+  }
 
   try {
     return await fetchViaJinaReader(url);
-  } catch { /* fall through */ }
+  } catch (e) {
+    errors.push(`jina: ${e}`);
+  }
 
-  return await fetchVoteSmartPageAsFallbackText(url);
+  try {
+    return await fetchVoteSmartPageAsFallbackText(url);
+  } catch (e) {
+    errors.push(`direct: ${e}`);
+  }
+
+  throw new Error(errors.join(" | "));
 }
 
 /** ========================== MISTRAL ========================== */
@@ -570,6 +583,7 @@ Deno.serve(async (req) => {
     // Extract content from candidate URLs until one succeeds.
     let scrapedContent: string = "";
     let lastExtractErr: unknown = null;
+    const allExtractErrors: Record<string, string> = {};
     for (const candidateUrl of extractionCandidates) {
       try {
         console.log(`[RECORDS_UPDATE] Extracting from: ${candidateUrl}`);
@@ -583,6 +597,7 @@ Deno.serve(async (req) => {
         break;
       } catch (extractErr) {
         lastExtractErr = extractErr;
+        allExtractErrors[candidateUrl] = String(extractErr);
         console.error(`[RECORDS_UPDATE] Extract error for ${candidateUrl}:`, extractErr);
       }
     }
@@ -603,6 +618,7 @@ Deno.serve(async (req) => {
         success: false,
         debug_extraction_candidates: extractionCandidates,
         debug_last_error: lastExtractErr ? String(lastExtractErr) : null,
+        debug_all_errors: allExtractErrors,
       });
     }
 
