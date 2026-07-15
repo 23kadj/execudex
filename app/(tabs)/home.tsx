@@ -1402,6 +1402,17 @@ function getImgKey(img: any) {
     default:           return 'placeholder';
   }
 }
+
+// Clamp to a valid 0-100 percentage before formatting — guards the display
+// against out-of-range stored values (e.g. a stray "370" instead of "37.0")
+// showing as an extra digit on the home screen instead of silently rendering
+// garbage.
+function formatApprovalPercent(value: unknown): string {
+  const n = parseFloat(String(value));
+  if (!Number.isFinite(n)) return '50.0%';
+  const clamped = Math.min(100, Math.max(0, n));
+  return `${clamped.toFixed(1)}%`;
+}
 // ---- STYLE ARRAYS ----
 
 // Trending: buttons 2 and 4 = right style
@@ -2013,8 +2024,8 @@ export default function Home() {
                 name: politician.name || 'No Data Available',
                 sub_name: politician.sub_name || 'No Data Available',
                 numbers: {
-                  green: profile?.approval ? `${parseFloat(profile.approval.toString()).toFixed(1)}%` : '50.0%',
-                  red: profile?.disapproval ? `${parseFloat(profile.disapproval.toString()).toFixed(1)}%` : '50.0%'
+                  green: profile?.approval ? formatApprovalPercent(profile.approval) : '50.0%',
+                  red: profile?.disapproval ? formatApprovalPercent(profile.disapproval) : '50.0%'
                 }
               };
             }
@@ -2028,8 +2039,8 @@ export default function Home() {
               name: politician150.name || 'No Data Available',
               sub_name: politician150.sub_name || 'No Data Available',
               numbers: {
-                green: profile150?.approval ? `${parseFloat(profile150.approval.toString()).toFixed(1)}%` : '50.0%',
-                red: profile150?.disapproval ? `${parseFloat(profile150.disapproval.toString()).toFixed(1)}%` : '50.0%'
+                green: profile150?.approval ? formatApprovalPercent(profile150.approval) : '50.0%',
+                red: profile150?.disapproval ? formatApprovalPercent(profile150.disapproval) : '50.0%'
               }
             };
           }
@@ -2046,8 +2057,8 @@ export default function Home() {
                 name: politician.name || 'No Data Available',
                 sub_name: politician.sub_name || 'No Data Available',
                 numbers: {
-                  green: profile?.approval ? `${parseFloat(profile.approval.toString()).toFixed(1)}%` : '50.0%',
-                  red: profile?.disapproval ? `${parseFloat(profile.disapproval.toString()).toFixed(1)}%` : '50.0%'
+                  green: profile?.approval ? formatApprovalPercent(profile.approval) : '50.0%',
+                  red: profile?.disapproval ? formatApprovalPercent(profile.disapproval) : '50.0%'
                 }
               };
             }
@@ -2061,8 +2072,8 @@ export default function Home() {
               name: politician129.name || 'No Data Available',
               sub_name: politician129.sub_name || 'No Data Available',
               numbers: {
-                green: profile129?.approval ? `${parseFloat(profile129.approval.toString()).toFixed(1)}%` : '50.0%',
-                red: profile129?.disapproval ? `${parseFloat(profile129.disapproval.toString()).toFixed(1)}%` : '50.0%'
+                green: profile129?.approval ? formatApprovalPercent(profile129.approval) : '50.0%',
+                red: profile129?.disapproval ? formatApprovalPercent(profile129.disapproval) : '50.0%'
               }
             };
           }
