@@ -263,6 +263,43 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
     checkGenerateButtonVisibility();
   }, [index]);
 
+  // Weak/locked profiles show their existing cards directly on synopsis (sub1-4 stay
+  // inaccessible until the profile clears the card-count threshold). generatedCards is
+  // otherwise only populated transiently right after a Generate New Cards click, so a
+  // fresh mount (e.g. navigating back into an already-weak profile) needs to reload
+  // whatever cards already exist for it, or the preview list is empty.
+  useEffect(() => {
+    const loadExistingCardsIfWeak = async () => {
+      if (!index) return;
+      try {
+        const supabase = getSupabaseClient();
+        const { data: indexData, error: indexError } = await supabase
+          .from('ppl_index')
+          .select('weak')
+          .eq('id', parseInt(index))
+          .maybeSingle();
+
+        if (indexError || !indexData?.weak) return;
+
+        const { data: cards, error } = await supabase
+          .from('card_index')
+          .select('id, title, subtext, category, screen, opens_7d, score')
+          .eq('owner_id', parseInt(index))
+          .eq('is_ppl', true)
+          .order('created_at', { ascending: false })
+          .limit(8);
+
+        if (!error && cards && cards.length > 0) {
+          setGeneratedCards(cards as CardData[]);
+        }
+      } catch (error) {
+        console.error('Error loading existing cards for weak profile:', error);
+      }
+    };
+
+    loadExistingCardsIfWeak();
+  }, [index]);
+
   // Check if Generate Metrics button should be shown
   useEffect(() => {
     const checkMetricsButtonVisibility = async () => {
