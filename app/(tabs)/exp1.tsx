@@ -635,11 +635,9 @@ const exp1 = React.memo(() => {
       }
 
       if (data?.blocked) {
-        const since = data.daysSinceLastUpdate ?? 0;
-        const wait = data.daysUntilNextAllowed ?? 7;
         Alert.alert(
-          'Legislation Already Updated',
-          `There was a legislation update ${since} day${since === 1 ? '' : 's'} ago. Please wait ${wait} more day${wait === 1 ? '' : 's'} before triggering another update.`,
+          'Update In Progress',
+          'A legislation update is already running. Please wait for it to finish before starting another.',
           [{ text: 'OK' }]
         );
         return;

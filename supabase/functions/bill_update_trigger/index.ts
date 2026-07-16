@@ -5,13 +5,19 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 /**
  * Manual trigger for the legislation update pipeline (Update Legislation button
  * on the Explore page). bill_update_runs is service-role-only (RLS, no policies),
- * so the client can't read the last-run timestamp or register a new run itself --
- * this function mediates both, then calls bill_update and waits for it, so the
- * client gets one round trip: blocked-with-cooldown-info, or the finished result.
+ * so the client can't read run state or register a new run itself -- this function
+ * mediates both, then calls bill_update and waits for it. There's no cooldown: any
+ * number of runs can be triggered back to back, since bill_update/bill_search already
+ * skip bills that already have a profile. The only thing blocked is a second run
+ * starting while one is still actually in flight.
  */
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const COOLDOWN_DAYS = 7;
+// A real run finishes in ~2 minutes (see bill_update's RUN_BUDGET_MS). If this function
+// itself dies mid-request (network drop, etc.) before bill_update reports back, the run
+// row is left "triggered" with no finished_at forever -- treat anything older than this
+// as abandoned rather than let it permanently block future runs.
+const STALE_RUN_MS = 5 * 60 * 1000;
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, { global: { fetch } });
 
@@ -26,27 +32,25 @@ Deno.serve(async (req) => {
   try {
     const { data: lastRun, error: lastRunErr } = await supabase
       .from("bill_update_runs")
-      .select("triggered_at")
+      .select("triggered_at, finished_at")
       .order("triggered_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (lastRunErr) {
-      return new Response(JSON.stringify({ ok: false, error: `Failed to check last update: ${lastRunErr.message}` }), {
+      return new Response(JSON.stringify({ ok: false, error: `Failed to check run status: ${lastRunErr.message}` }), {
         status: 500,
         headers: { "Content-Type": "application/json" }
       });
     }
 
-    if (lastRun?.triggered_at) {
+    if (lastRun?.triggered_at && !lastRun.finished_at) {
       const elapsedMs = Date.now() - new Date(lastRun.triggered_at).getTime();
-      const daysSince = elapsedMs / (24 * 60 * 60 * 1000);
-      if (daysSince < COOLDOWN_DAYS) {
+      if (elapsedMs < STALE_RUN_MS) {
         return new Response(JSON.stringify({
           ok: false,
           blocked: true,
-          daysSinceLastUpdate: Math.max(0, Math.floor(daysSince)),
-          daysUntilNextAllowed: Math.max(1, Math.ceil(COOLDOWN_DAYS - daysSince)),
+          reason: "in_progress",
         }), { headers: { "Content-Type": "application/json" } });
       }
     }
