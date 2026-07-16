@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { CardGenerationService } from '../../services/cardGenerationService';
+import { CardService } from '../../services/cardService';
 import { PoliticianProfileService } from '../../services/politicianProfileService';
 import { CardData } from '../../utils/cardData';
 import { getSupabaseClient } from '../../utils/supabase';
@@ -131,6 +132,8 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
   const votingRecordsButtonScale = useRef(new Animated.Value(1)).current;
   const [recordsStatus, setRecordsStatus] = useState<string | null>(null); // "available", "fail", or null
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
+  const [isCardLoading, setIsCardLoading] = useState(false);
+  const currentLoadingCardId = useRef<number | null>(null);
 
   // State for generated cards display
   const [generatedCards, setGeneratedCards] = useState<CardData[]>([]);
@@ -765,11 +768,39 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
               useNativeDriver: true,
             }).start();
           }}
-          onPress={() => {
+          onPress={async () => {
+            const cardId = String(cardItem.id || '');
+            if (cardId) {
+              const parsedCardId = parseInt(cardId, 10);
+              if (isNaN(parsedCardId) || parsedCardId <= 0) {
+                console.error('Invalid cardId:', cardId);
+                return;
+              }
+
+              currentLoadingCardId.current = parsedCardId;
+
+              let wasCancelled = false;
+              try {
+                await CardService.generateFullCard(parsedCardId, setIsCardLoading);
+              } catch (error: any) {
+                if (error?.message === 'CANCELLED') {
+                  console.log('Card loading was cancelled, not navigating');
+                  wasCancelled = true;
+                } else {
+                  console.error('Error generating full card:', error);
+                }
+              } finally {
+                currentLoadingCardId.current = null;
+              }
+
+              if (wasCancelled) {
+                return;
+              }
+            }
             // Navigate to card detail view
             router.push({
               pathname: '/profile/sub5',
-              params: { 
+              params: {
                 cardTitle: cardItem.title || `Card ${cardNumber}`,
                 profileName: name,
                 sourcePage: 'synop',
@@ -1068,11 +1099,24 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
         </View>
       )}
 
-      <CardLoadingIndicator 
-        visible={isLoadingRecords} 
+      <CardLoadingIndicator
+        visible={isLoadingRecords}
         onCancel={() => setIsLoadingRecords(false)}
         title="Loading Voting Records"
         subtitle="Please keep the app open while we prepare the voting records."
+      />
+
+      <CardLoadingIndicator
+        visible={isCardLoading}
+        onCancel={() => {
+          if (currentLoadingCardId.current !== null) {
+            CardService.cancelCardGeneration(currentLoadingCardId.current);
+            currentLoadingCardId.current = null;
+          }
+          setIsCardLoading(false);
+        }}
+        title="Loading Card"
+        subtitle="Please keep the app open while we prepare your card..."
       />
 
     </Animated.ScrollView>

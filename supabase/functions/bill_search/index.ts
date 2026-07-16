@@ -223,7 +223,7 @@ function parseBillCodeFromText(txt: string): string | null {
   const rx = /\b(H\.R\.|S\.|H\.J\.Res\.|S\.J\.Res\.|H\.Con\.Res\.|S\.Con\.Res\.|H\.Res\.|S\.Res\.)\s*\.?\s*(\d{1,5})\b/gi;
   const m = rx.exec(txt);
   if (!m) return null;
-  const prefix = m[1].replace(/\s+/g, "");
+  const prefix = m[1].toUpperCase().replace(/\s+/g, "");
   const num = m[2];
   return `${prefix} ${num}`.replace(/\s+/g, " ").trim();
 }
@@ -1927,7 +1927,7 @@ Deno.serve(async (req) => {
         const urlCong = congressFromUrl(firstAnyRoot); // e.g., "117th"
         try {
           const ext = await tavilyExtractOneWithRetryOrHtml(firstAnyRoot);
-          const parsedCode = parseBillCodeFromText(ext.parseText) || billCodeFromUrl(firstAnyRoot);
+          const parsedCode = billCodeFromUrl(firstAnyRoot) || parseBillCodeFromText(ext.parseText);
           const wantedPrimary = terms[0] || rawTitle;
           const wantedCore = canonicalNoSpaces(wantedPrimary).toUpperCase().replace(/\./g,"");
           const foundCore = parsedCode ? canonicalNoSpaces(parsedCode).toUpperCase().replace(/\./g,"") : "";
@@ -1957,8 +1957,14 @@ Deno.serve(async (req) => {
     }
 
     // ---------- PARSE BILL CODE ----------
-    let billCode = parseBillCodeFromText(parseText);
-    if (!billCode) billCode = billCodeFromUrl(root);
+    // root was already validated to match the requested congress ordinal, so the URL
+    // is the authoritative source for which bill this page is about. Scanning the full
+    // page text for a bill-code-looking substring is a fallback only -- pages routinely
+    // mention *other* bills (related/companion/similar-bills sections) before their own
+    // code appears, and a page-wide regex scan can latch onto one of those instead,
+    // producing a name that doesn't match bill_id (which is always URL-derived).
+    let billCode = billCodeFromUrl(root);
+    if (!billCode) billCode = parseBillCodeFromText(parseText);
     if (!billCode) {
       return new Response(JSON.stringify({ ok:false, reason:"not_found" }), { headers: { "Content-Type":"application/json" }});
     }
