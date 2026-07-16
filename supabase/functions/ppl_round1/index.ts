@@ -157,9 +157,15 @@ async function _mistralJudgeSmall(input: {
     ]
   };
 
+  // Measured: a real judge call (full system prompt + 4000-char snippet + this
+  // schema's structured JSON output) reliably takes ~1.5s. The old 1000ms/1500ms
+  // timeouts were both tighter than that, so almost every call aborted on attempt
+  // 1 and often on the retry too -- domain_judgments never got populated. Now that
+  // caching means this only runs once per domain ever (not once per page), a
+  // longer timeout here is a one-time cost, not a recurring one.
   const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY")!;
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 1000);
+  const t = setTimeout(() => controller.abort(), 5000);
   try {
     const r = await fetch(Deno.env.get("MISTRAL_API_URL") ?? "https://api.mistral.ai/v1/chat/completions", {
       method: "POST",
@@ -178,7 +184,7 @@ async function _mistralJudgeSmall(input: {
   } catch {
     clearTimeout(t);
     const controller2 = new AbortController();
-    const t2 = setTimeout(() => controller2.abort(), 1500);
+    const t2 = setTimeout(() => controller2.abort(), 6000);
     try {
       const r2 = await fetch(Deno.env.get("MISTRAL_API_URL") ?? "https://api.mistral.ai/v1/chat/completions", {
         method: "POST",
@@ -216,6 +222,49 @@ function _safeParseVerdict(s: string): LlmTypeVerdict | null {
 
 /** ======= supabase client ======= */
 const supabase = createClient(SUPABASE_URL!, SERVICE_ROLE!, { global: { fetch } });
+
+/** ---------- domain judgment cache (shared with ppl_round2) ----------
+ * A domain is judged once, then trusted outright: once cached as "allow" or
+ * "block", every later page on that domain skips the LLM judge entirely (no
+ * repeat recency/content-type re-check either) -- speed over re-verifying a
+ * domain that's already been vetted. */
+async function getCachedDomainVerdict(domain: string): Promise<{ verdict: "allow" | "block" } | null> {
+  try {
+    const { data } = await supabase
+      .from("domain_judgments")
+      .select("verdict")
+      .eq("domain", domain)
+      .maybeSingle();
+    return data ? { verdict: data.verdict as "allow" | "block" } : null;
+  } catch {
+    return null;
+  }
+}
+
+function touchDomainVerdict(domain: string): void {
+  supabase
+    .from("domain_judgments")
+    .update({ last_used_at: new Date().toISOString() })
+    .eq("domain", domain)
+    .then(() => {}, () => {});
+}
+
+async function recordDomainVerdict(domain: string, trustworthy: boolean, verdict: LlmTypeVerdict): Promise<void> {
+  try {
+    await supabase.from("domain_judgments").upsert({
+      domain,
+      verdict: trustworthy ? "allow" : "block",
+      score: verdict.score,
+      institution: verdict.institution,
+      official_affiliation: verdict.official_affiliation,
+      partisanship: verdict.partisanship,
+      reasons: verdict.reasons ?? [],
+      last_used_at: new Date().toISOString(),
+    }, { onConflict: "domain" });
+  } catch (e) {
+    console.warn("recordDomainVerdict failed:", domain, e);
+  }
+}
 
 /** ======= timing/budget helpers ======= */
 const startTime = Date.now();
@@ -698,28 +747,54 @@ Deno.serve(async (req) => {
 
         // If allowed, pass through. If unknown, run LLM judge
         if (category === "unknown") {
-          const snippet = text.slice(0, 4000);
           const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return domain; } })();
+
+          // Fast path: a domain that's already been judged -- allow or block --
+          // skips the LLM call entirely, no live re-check either way.
+          const cachedVerdict = await getCachedDomainVerdict(host);
+          if (cachedVerdict) {
+            touchDomainVerdict(host);
+            if (cachedVerdict.verdict === "block") {
+              llmVerdicts.push({ url, host, status: "rejected", reason: "cached_block" });
+              skipped.push({ domain, reason: "llm_rejected: cached_block", url });
+              return null as any;
+            }
+            llmVerdicts.push({ url, host, status: "accepted", reason: "cached_allow" });
+            // Falls through to storage below, same as a fresh "accepted" verdict.
+          } else {
+
+          const snippet = text.slice(0, 4000);
           const verdict = await _mistralJudgeSmall({
             meta: { url, host, title: undefined, detected_date: null, lang: null },
             snippet,
             person: fullName,
             nowIso: nowIsoStr
           });
-          
+
           if (!verdict) {
             llmVerdicts.push({ url, host, status: "llm_error" });
             skipped.push({ domain, reason: "llm_error", url });
             return null as any;
           }
-          
+
           const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
-          const excluded = verdict.content_flags.press_release || 
-                          verdict.content_flags.news_clip_or_blog_rollup || 
+          const excluded = verdict.content_flags.press_release ||
+                          verdict.content_flags.news_clip_or_blog_rollup ||
                           verdict.content_flags.opinion_or_editorial;
-          
+
+          // The model doesn't reliably stick to the enum values (e.g. institution:
+          // "Center for American Progress" instead of "think_tank"), so back the
+          // exact-match check with a keyword scan over the free-text fields too --
+          // this verdict gets cached and trusted with no further per-page checks.
+          const freeTextSignal = [verdict.institution, verdict.partisanship, ...(verdict.reasons || [])].join(" ").toLowerCase();
+          const partisanKeywordHit = /\bpartisan\b|think.?tank|advocacy group|left-leaning|right-leaning|campaign-aligned|party-aligned/.test(freeTextSignal);
+          const isPartisanInstitution = ["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan" || partisanKeywordHit;
+          const affiliationOk = !isOfficial || (verdict.official_affiliation && verdict.subdomain_affiliation_ok);
+          const domainTrustworthy = !isPartisanInstitution && affiliationOk && verdict.verdict === "allow";
+          recordDomainVerdict(host, domainTrustworthy, verdict);
+
           let rejectReason = "";
-          
+
           // Policy checks
           if (!verdict.recency_ok) {
             rejectReason = "stale (>12 months)";
@@ -729,11 +804,13 @@ Deno.serve(async (req) => {
             if (verdict.content_flags.news_clip_or_blog_rollup) flags.push("news_clip");
             if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
             rejectReason = `excluded_content: ${flags.join(", ")}`;
-          } else if (isOfficial && (!verdict.official_affiliation || !verdict.subdomain_affiliation_ok)) {
-            rejectReason = "affiliation_fail";
-          } else if (["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan") {
-            rejectReason = `partisan (${verdict.institution})`;
-          } else if (verdict.verdict !== "allow" || verdict.score < 7.0) {
+          } else if (!domainTrustworthy) {
+            rejectReason = isPartisanInstitution
+              ? `partisan (${verdict.institution})`
+              : !affiliationOk
+                ? "affiliation_fail"
+                : `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
+          } else if (verdict.score < 7.0) {
             rejectReason = `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
           }
           
@@ -762,6 +839,7 @@ Deno.serve(async (req) => {
             score: verdict.score,
             institution: verdict.institution
           });
+          }
         }
 
         const label = bareDomainLabelFromUrl(url);

@@ -23,16 +23,27 @@ const REQUIRE_EVIDENCE_DEFAULT = true;
 const REQUIRE_EVIDENCE_METRICS = false; // metrics pages often paraphrase/short
 
 /** ======= CATEGORY / SCREEN POLICY =======
- * Soft & Base tiers share the same allowed categories.
- * Only HARD tier may use "more", and it must align with the inferred screen.
+ * One category set per screen, shared by every tier -- the client shows the same
+ * 6-category + "More Selections" grid regardless of hard/soft/base, so a card can
+ * never be generated with a category the profile's own pages have no button for.
  */
-const HARD_AGENDA       = new Set(["economy","immigration","healthcare","environment","defense","education","more"]);
-const HARD_IDENTITY     = new Set(["background","career","public image","accomplishments","statements","awards","more"]);
-const HARD_AFFILIATES   = new Set(["party","organizations","businesses","politicians","medias","donors","more"]);
+const AGENDA_CATS     = new Set(["economy","immigration","healthcare","environment","defense","education","more"]);
+const IDENTITY_CATS   = new Set(["background","career","public image","accomplishments","statements","awards","more"]);
+const AFFILIATES_CATS = new Set(["party","organizations","businesses","politicians","medias","donors","more"]);
 
-const SOFTBASE_AGENDA     = new Set(["economy","social programs","immigration","national security"]);
-const SOFTBASE_IDENTITY   = new Set(["background","career","public image","beliefs"]);
-const SOFTBASE_AFFILIATES = new Set(["party","politicians","enterprises","donors"]);
+/** Retired/legacy category values (either from the old reduced soft/base set, or
+ * search-sourcing topics upstream in ppl_round2 that were never standalone
+ * categories) -- fold them into their nearest real category before any set
+ * membership check runs, so old data and any stray LLM output both still land. */
+const CATEGORY_ALIASES: Record<string, string> = {
+  "social programs": "economy",
+  "national security": "defense",
+  "beliefs": "public image",
+  "enterprises": "businesses",
+};
+function resolveCategoryAlias(c: string): string {
+  return CATEGORY_ALIASES[c] || c;
+}
 
 /** For is_media tagging (unchanged) */
 const IS_MEDIA_DOMAINS = new Set<string>([
@@ -106,66 +117,75 @@ function normalizeLengths(titleIn: string, subIn: string) {
 /** --- Screen/category mapping & enforcement ---
  * Returns a pair { screen, category } with:
  *  - screen: agenda | identity | affiliates
- *  - category: coerced into allowed sets per tier & screen
- * Soft/Base: never "more"
- * Hard: "more" allowed, must align with inferred screen
+ *  - category: coerced into the (tier-independent) allowed set for that screen
  */
-function classifyScreenByTier(rawCategory: string, tierIn: string) {
-  const tier = String(tierIn || "").toLowerCase(); // "hard" | "soft" | "base"
-  const c = String(rawCategory || "").toLowerCase().trim();
-
-  // helper: infer screen by keyword if category is unknown
-  const inferScreen = (): "agenda" | "identity" | "affiliates" => {
-    if (/econom|social program|immigration|national security|healthcare|environment|defense|education/.test(c)) return "agenda";
-    if (/background|career|public image|belief|accomplishment|statement|award/.test(c)) return "identity";
-    if (/party|politician|enterprise|organization|business|media|donor/.test(c)) return "affiliates";
-    // default identity if unclear
-    return "identity";
-  };
-
-  if (tier === "hard") {
-    if (HARD_AGENDA.has(c))     return { screen: "agenda",     category: c };
-    if (HARD_IDENTITY.has(c))   return { screen: "identity",   category: c };
-    if (HARD_AFFILIATES.has(c)) return { screen: "affiliates", category: c };
-    // Not matched: assign to inferred screen with category "more"
-    const s = inferScreen();
-    return { screen: s, category: "more" };
-  } else {
-    // soft/base: strict allowed sets, no "more"
-    if (SOFTBASE_AGENDA.has(c))     return { screen: "agenda",     category: c };
-    if (SOFTBASE_IDENTITY.has(c))   return { screen: "identity",   category: c };
-    if (SOFTBASE_AFFILIATES.has(c)) return { screen: "affiliates", category: c };
-
-    // Not matched: coerce into an allowed default for the inferred screen
-    const s = inferScreen();
-    if (s === "agenda")     return { screen: "agenda",     category: "economy" };
-    if (s === "affiliates") return { screen: "affiliates", category: "party" };
-    return { screen: "identity", category: "background" };
-  }
+/** Legacy keyword guess, used only when neither the LLM's own "screen" field nor a
+ * caller-supplied screen hint is usable (e.g. old callers that never pass screen). */
+function inferScreenByKeyword(c: string): "agenda" | "identity" | "affiliates" {
+  if (/econom|social program|immigration|national security|healthcare|environment|defense|education/.test(c)) return "agenda";
+  if (/background|career|public image|belief|accomplishment|statement|award/.test(c)) return "identity";
+  if (/party|politician|enterprise|organization|business|media|donor/.test(c)) return "affiliates";
+  return "agenda";
 }
 
-/** Build the "allowed categories" object for prompt display (LLM guidance) */
-function allowedCatsForTier(tierIn: string) {
-  const tier = String(tierIn || "").toLowerCase();
-  if (tier === "hard") {
-    return {
-      agenda:     Array.from(HARD_AGENDA),
-      identity:   Array.from(HARD_IDENTITY),
-      affiliates: Array.from(HARD_AFFILIATES),
-    };
+const SCREEN_SETS = { agenda: AGENDA_CATS, identity: IDENTITY_CATS, affiliates: AFFILIATES_CATS };
+
+/**
+ * rawScreen/rawCategory come straight from the LLM (two separate fields now,
+ * see extractCardsFromPage). knownScreen is the screen the client actually
+ * triggered generation for (agenda/identity/affiliates), when available.
+ * tierIn is unused for category policy now (every tier shares one category set,
+ * matching the client's unified grid) but is kept as a param for call-site stability.
+ */
+function classifyScreenByTier(
+  rawCategory: string,
+  _tierIn: string,
+  rawScreen?: string,
+  knownScreen?: "agenda" | "identity" | "affiliates"
+) {
+  const c = resolveCategoryAlias(String(rawCategory || "").toLowerCase().trim());
+
+  // Step 1: trust the LLM's own screen+category pair if it's internally consistent.
+  const s0 = String(rawScreen || "").toLowerCase().trim() as "agenda" | "identity" | "affiliates";
+  if ((s0 === "agenda" || s0 === "identity" || s0 === "affiliates") && SCREEN_SETS[s0].has(c)) {
+    return { screen: s0, category: c };
   }
+
+  // Step 2: the category alone might still be a valid, unambiguous leaf value even if
+  // the screen field was garbled -- each leaf category belongs to exactly one screen.
+  for (const s of ["agenda", "identity", "affiliates"] as const) {
+    if (SCREEN_SETS[s].has(c)) return { screen: s, category: c };
+  }
+
+  // Step 3: neither field matched anything real -- fall back to the screen the client
+  // actually asked for, or a keyword guess, with "more" (every tier's grid has a
+  // More Selections button now, so this is always a valid landing spot).
+  const s = knownScreen || inferScreenByKeyword(c);
+  return { screen: s, category: "more" };
+}
+
+/** Build the "allowed categories" object for prompt display (LLM guidance) --
+ * same set for every tier now, matching the client's unified category grid. */
+function allowedCatsForTier(_tierIn: string) {
   return {
-    agenda:     Array.from(SOFTBASE_AGENDA),
-    identity:   Array.from(SOFTBASE_IDENTITY),
-    affiliates: Array.from(SOFTBASE_AFFILIATES),
+    agenda:     Array.from(AGENDA_CATS),
+    identity:   Array.from(IDENTITY_CATS),
+    affiliates: Array.from(AFFILIATES_CATS),
   };
 }
 
-/** Read inputs: id (required) + optional web_ids (JSON array or CSV query) */
-async function readInput(req: Request): Promise<{ id: number; web_ids: number[] | null; }> {
+type KnownScreen = "agenda" | "identity" | "affiliates";
+function normalizeScreenHint(v: unknown): KnownScreen | undefined {
+  const s = String(v || "").toLowerCase().trim();
+  return s === "agenda" || s === "identity" || s === "affiliates" ? s : undefined;
+}
+
+/** Read inputs: id (required) + optional web_ids (JSON array or CSV query) + optional screen hint */
+async function readInput(req: Request): Promise<{ id: number; web_ids: number[] | null; screen: KnownScreen | undefined; }> {
   const url = new URL(req.url);
   let id: number | null = null;
   let webIds: number[] | null = null;
+  let screen: KnownScreen | undefined = normalizeScreenHint(url.searchParams.get("screen"));
 
   const qId = url.searchParams.get("id");
   if (qId && /^\d+$/.test(qId)) id = Number(qId);
@@ -187,6 +207,7 @@ async function readInput(req: Request): Promise<{ id: number; web_ids: number[] 
       const arr = j.web_ids.map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n));
       if (arr.length) webIds = arr;
     }
+    if (!screen) screen = normalizeScreenHint(j.screen);
   } else if (!id) {
     const raw = await req.text().catch(() => "");
     if (raw && /^\d+$/.test(raw.trim())) id = Number(raw.trim());
@@ -195,7 +216,7 @@ async function readInput(req: Request): Promise<{ id: number; web_ids: number[] 
   if (!id || !Number.isFinite(id)) {
     throw new Error("Missing or invalid id. Provide as JSON { id }, query ?id=, or raw numeric body.");
   }
-  return { id, web_ids: webIds };
+  return { id, web_ids: webIds, screen };
 }
 
 /** Storage helpers */
@@ -208,7 +229,11 @@ async function readFileText(key: string): Promise<string> {
   return await r.text();
 }
 
-/** Very loose evidence support checker */
+/** Evidence support checker: does this card's evidence_snippets actually appear
+ * (verbatim, or with substantial token overlap) in the source page? Previously
+ * also passed anything where the snippet and the page both merely contained a
+ * digit somewhere -- true for almost any real page -- which let titles built on
+ * snippets that were never actually in the source slip through. */
 function evidenceSupported(page: string, snippets: string[]): boolean {
   if (!Array.isArray(snippets) || !snippets.length) return false;
   const txt = String(page || "");
@@ -224,8 +249,6 @@ function evidenceSupported(page: string, snippets: string[]): boolean {
     const setB = new Set(b);
     const overlap = a.filter(t => setB.has(t)).length;
     if (overlap / Math.max(1, a.length) >= 0.4) return true;
-
-    if (/\d/.test(s) && /\d/.test(txt)) return true;
   }
   return false;
 }
@@ -245,17 +268,20 @@ Return ONLY JSON: {"cards":[{...}]}
 Each card MUST include:
 - "title": 5–10 words, neutral, specific to the page
 - "subtext": 15–20 words, neutral, clear, upper-high-school reading level
-- "category": one of the allowed sets for the tier & screen (see below)
+- "screen": exactly one of "agenda", "identity", "affiliates" -- which of the three sections below this card belongs to
+- "category": exactly one specific value taken from that screen's array below. NEVER return "agenda", "identity", or "affiliates" itself as the category -- those are screen names, not categories. Always drill into the array and pick one of its entries.
 - "score": integer 0–100 reflecting importance/popularity/relevance based on THIS page
 - "confidence": number 0–1 indicating how confident you are this topic is well-supported by THIS page
 - "evidence_snippets": 1–3 short quotes (max ~140 chars each) copied from the page that support the card
 
 Do NOT invent facts. Base all cards only on the given page.
-Allowed categories (by screen):
+Allowed categories (by screen -- "category" must be one of the array entries, not the screen key):
 ${JSON.stringify(allowedCats, null, 2)}
 
+Example of a correctly-formed card: {"title": "...", "subtext": "...", "screen": "agenda", "category": "${Array.isArray(allowedCats.agenda) ? allowedCats.agenda[0] : "economy"}", "score": 70, "confidence": 0.8, "evidence_snippets": ["..."]}
+
 IMPORTANT RESTRICTIONS:
-- Only HARD tier allows the category "more", and only within the screen it aligns with.
+- "more" is allowed, but only within the screen it aligns with, and only when the card genuinely doesn't fit any of that screen's specific categories -- prefer a specific category whenever reasonably possible.
 - DO NOT create any cards whose primary or main subject is about COVID-19 or is heavily related to the COVID-19 pandemic. These topics are outdated and no longer relevant.
 - For sitting politicians (current government officials), if a card describes a promise, claim, or campaign running point that has NOT yet been met with actual enacted policy or concrete action, you MUST briefly note this in BOTH the title and subtext. Use brief, neutral language like "proposes", "pledges", "promises", or "aims to" rather than stating it as established fact. Keep this framing subtle but present—do not overemphasize it, just ensure the reader understands it's a stated intention rather than accomplished fact.
 `;
@@ -305,7 +331,8 @@ NOTES:
     return cards.map((c: any) => ({
       title: String(c?.title || "").trim(),
       subtext: String(c?.subtext || "").trim(),
-      category: String(c?.category || "").trim(),
+      screen: String(c?.screen || "").trim().toLowerCase(),
+      category: String(c?.category || "").trim().toLowerCase(),
       score: Number.isFinite(c?.score) ? c.score : null,
       confidence: Number.isFinite(c?.confidence) ? c.confidence : null,
       evidence_snippets: Array.isArray(c?.evidence_snippets) ? c.evidence_snippets.slice(0, 3).map((s: any) => String(s || "")) : [],
@@ -372,7 +399,7 @@ Deno.serve(async (req) => {
     }
 
     // NEW: also accept optional web_ids
-    const { id: pplId, web_ids } = await readInput(req);
+    const { id: pplId, web_ids, screen: knownScreen } = await readInput(req);
 
     const { data: person, error: perr } = await supabase
       .from("ppl_index")
@@ -481,7 +508,6 @@ Deno.serve(async (req) => {
 
       // Extract cards
       let rawCards: any[] = [];
-      let usedFallback = false;
       try {
         rawCards = await extractCardsFromPage(
           fullName,
@@ -505,19 +531,11 @@ Deno.serve(async (req) => {
         return { ...c, title, subtext, _okStrict: okStrict, _okRelaxed: okRelaxed, _hasEvidence: hasEvidence };
       }));
 
-      // Evidence gate only
+      // Evidence gate only. No fallback to an unevidenced card when nothing passes --
+      // that was letting titles built on snippets never actually in the source page
+      // through, which surfaces later as card body text that contradicts its own title.
       const requireEvidence = isMetrics ? REQUIRE_EVIDENCE_METRICS : REQUIRE_EVIDENCE_DEFAULT;
       let filtered = processedCards.filter(c => (requireEvidence ? c._hasEvidence : true));
-
-      // Fallback to one if none pass evidence
-      if (!filtered.length) {
-        const lenient = processedCards
-          .sort((a,b) => (b.confidence ?? 0) - (a.confidence ?? 0) || (b.score ?? 0) - (a.score ?? 0));
-        if (lenient.length) {
-          filtered = [lenient[0]];
-          usedFallback = true;
-        }
-      }
 
       // Rank only (no cap)
       filtered.sort((a,b) => (b.confidence ?? 0) - (a.confidence ?? 0) || (b.score ?? 0) - (a.score ?? 0));
@@ -536,7 +554,7 @@ Deno.serve(async (req) => {
 
       for (const c of filtered) {
         // Enforce tier-specific category policy; also map agenda -> agenda_ppl for enum
-        const mapped   = classifyScreenByTier(c.category, tier);
+        const mapped   = classifyScreenByTier(c.category, tier, c.screen, knownScreen);
         const screenRaw = mapped.screen;
         const screen    = screenRaw === "agenda" ? "agenda_ppl" : screenRaw;
 
@@ -581,7 +599,6 @@ Deno.serve(async (req) => {
         scanned: true,
         generated,
       };
-      if (usedFallback) summary.used_fallback = true;
       if (isMetrics) summary.metrics_page = true;
 
       return { acceptedRows, summary };

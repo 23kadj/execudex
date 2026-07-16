@@ -341,23 +341,25 @@ export default function Sub3({ scrollY, name, position, goToTab, index, scrollRe
 
   // Determine layout based on tier and office_type
   const getLayoutConfig = () => {
-    // Tier-based rules (highest priority)
+    // Tier-based rules (highest priority). Every tier shares the same 6-category +
+    // More Selections grid so a card can never be generated under a category the
+    // profile's own pages have no button for -- only the preview card count differs.
     if (tier === 'base') {
       return {
         cardCount: 4,
-        gridType: 'soft', // 2x2 grid like soft tier
-        showMoreSelections: false
+        gridType: 'hard',
+        showMoreSelections: true
       };
     }
-    
+
     if (tier === 'soft') {
       return {
         cardCount: 4,
-        gridType: 'soft', // 4 preview cards + 2x2 grid like legi1
-        showMoreSelections: false
+        gridType: 'hard',
+        showMoreSelections: true
       };
     }
-    
+
     if (tier === 'hard') {
       return {
         cardCount: 3,

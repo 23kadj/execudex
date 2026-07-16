@@ -112,7 +112,7 @@ export class CardGenerationService {
   static async executePplRound2(politicianId: number, categories: string[]): Promise<CardGenerationResult> {
     try {
       console.log(`Executing ppl_round2 for politician ${politicianId} with categories:`, categories);
-      
+
       const { data, error } = await getSupabaseClient().functions.invoke('ppl_round2', {
         body: {
           id: politicianId,
@@ -134,15 +134,25 @@ export class CardGenerationService {
   }
 
   /**
-   * Execute ppl_card_gen script
+   * Execute ppl_card_gen script.
+   * `screen` (agenda/identity/affiliates), when known, tells ppl_card_gen which
+   * page triggered generation so it can fall back to the right screen instead of
+   * guessing from category text when the LLM's own category doesn't match cleanly.
    */
-  static async executePplCardGen(politicianId: number, webIds?: number[]): Promise<CardGenerationResult & { data?: any }> {
+  static async executePplCardGen(
+    politicianId: number,
+    webIds?: number[],
+    screen?: 'agenda' | 'identity' | 'affiliates'
+  ): Promise<CardGenerationResult & { data?: any }> {
     try {
-      console.log(`Executing ppl_card_gen for politician ${politicianId}`, webIds ? `with web_ids: ${webIds.join(',')}` : '');
-      
+      console.log(`Executing ppl_card_gen for politician ${politicianId}`, webIds ? `with web_ids: ${webIds.join(',')}` : '', screen ? `screen: ${screen}` : '');
+
       const requestBody: any = { id: politicianId };
       if (webIds && webIds.length > 0) {
         requestBody.web_ids = webIds;
+      }
+      if (screen) {
+        requestBody.screen = screen;
       }
 
       const { data, error } = await getSupabaseClient().functions.invoke('ppl_card_gen', {
@@ -284,13 +294,29 @@ export class CardGenerationService {
   }
 
   /**
+   * Which of the three politician screens a given leaf category belongs to.
+   * Used to give ppl_card_gen a screen hint on sub4 (category) generation,
+   * same as sub1/sub2/sub3 already know their own screen directly.
+   */
+  static screenForCategory(category: string): 'agenda' | 'identity' | 'affiliates' | undefined {
+    const c = category.toLowerCase();
+    const agendaCats = new Set(['economy', 'immigration', 'healthcare', 'environment', 'defense', 'education', 'social programs', 'national security']);
+    const identityCats = new Set(['background', 'career', 'public image', 'accomplishments', 'statements', 'awards', 'beliefs']);
+    const affiliatesCats = new Set(['party', 'organizations', 'businesses', 'politicians', 'medias', 'donors', 'enterprises']);
+    if (agendaCats.has(c)) return 'agenda';
+    if (identityCats.has(c)) return 'identity';
+    if (affiliatesCats.has(c)) return 'affiliates';
+    return undefined;
+  }
+
+  /**
    * Main function to handle card generation for politician pages
    * Prioritizes existing web content, then searches for new content if needed.
    * No card count limits - users can generate as many cards as they want.
    */
   static async generatePoliticianCards(
-    politicianId: number, 
-    screen: string, 
+    politicianId: number,
+    screen: string,
     category?: string
   ): Promise<CardGenerationResult> {
     try {
@@ -299,13 +325,14 @@ export class CardGenerationService {
       if (screen === 'sub4' && category) {
         // Category page (sub4)
         keyword = this.mapCategoryToEnum(category);
+        const screenHint = this.screenForCategory(keyword);
 
         // STEP 1: Check for existing web content first (priority)
         const existingWebIds = await this.checkExistingWebContentForCategory(politicianId, keyword);
-        
+
         if (existingWebIds.length > 0) {
           console.log(`Found ${existingWebIds.length} existing web content items for category ${keyword}`);
-          return await this.executePplCardGen(politicianId, existingWebIds);
+          return await this.executePplCardGen(politicianId, existingWebIds, screenHint);
         }
 
         // STEP 2: No existing content - search for new content
@@ -314,18 +341,25 @@ export class CardGenerationService {
         if (!round2Result.success) {
           return round2Result;
         }
-        return await this.executePplCardGen(politicianId);
+        return await this.executePplCardGen(politicianId, undefined, screenHint);
       } else {
         // Main screen pages (sub1, sub2, sub3)
+        let screenHint: 'agenda' | 'identity' | 'affiliates';
         switch (screen) {
           case 'sub1':
-            keyword = 'agenda';
+            // "policy" is a sentinel ppl_round2 understands as a broad, allowlist-first
+            // agenda search -- pages get sorted into a specific agenda category (or
+            // "more") afterward in ppl_card_gen, now that it knows this batch is agenda.
+            keyword = 'policy';
+            screenHint = 'agenda';
             break;
           case 'sub2':
             keyword = 'identity';
+            screenHint = 'identity';
             break;
           case 'sub3':
             keyword = 'affiliates';
+            screenHint = 'affiliates';
             break;
           default:
             return { success: false, message: 'Invalid screen type' };
@@ -333,7 +367,7 @@ export class CardGenerationService {
 
         // STEP 1: Check for existing web content first (priority)
         let existingWebIds = await this.checkExistingWebContentForPage(politicianId, screen);
-        
+
         if (existingWebIds.length === 0) {
           // Fallback: check for any unused web content
           existingWebIds = await this.checkAnyExistingWebContent(politicianId);
@@ -341,7 +375,7 @@ export class CardGenerationService {
 
         if (existingWebIds.length > 0) {
           console.log(`Found ${existingWebIds.length} existing web content items for page ${screen}`);
-          return await this.executePplCardGen(politicianId, existingWebIds);
+          return await this.executePplCardGen(politicianId, existingWebIds, screenHint);
         }
 
         // STEP 2: No existing content - search for new content
@@ -350,7 +384,7 @@ export class CardGenerationService {
         if (!round2Result.success) {
           return round2Result;
         }
-        return await this.executePplCardGen(politicianId);
+        return await this.executePplCardGen(politicianId, undefined, screenHint);
       }
     } catch (error) {
       console.error('Error in generatePoliticianCards:', error);
@@ -831,6 +865,38 @@ export class CardGenerationService {
     } catch (error) {
       console.error('Error in shouldShowGenerateButtonForOverview:', error);
       return false;
+    }
+  }
+
+  /**
+   * Get card IDs of newly generated cards after a timestamp
+   * Returns array of card IDs (number[])
+   */
+  static async getGeneratedCardIds(
+    ownerId: number,
+    isPpl: boolean,
+    afterTimestamp: string
+  ): Promise<number[]> {
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('card_index')
+        .select('id')
+        .eq('owner_id', ownerId)
+        .eq('is_ppl', isPpl)
+        .eq('is_active', true)
+        .gte('created_at', afterTimestamp)
+        .order('id', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching generated card IDs:', error);
+        return [];
+      }
+
+      return (data || []).map((row: { id: number }) => row.id);
+    } catch (error) {
+      console.error('Error in getGeneratedCardIds:', error);
+      return [];
     }
   }
 
