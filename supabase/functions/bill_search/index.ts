@@ -1882,24 +1882,24 @@ Deno.serve(async (req) => {
     const ordinal = toOrdinal(sessionNum); // e.g., "110th"
     const terms = expandBillQueryTerms(rawTitle);
     const orTerms = terms.map(t => `"${t}"`).join(" OR ");
+    // expandBillQueryTerms returns a single-element array (the raw input, unchanged)
+    // when rawTitle doesn't look like a bill code -- i.e. a free-text title search
+    // (the app's search-by-name flow). Only enforce a strict bill-number match below
+    // when we actually have a bill code to check against; free-text search has no
+    // bill code to compare, so it keeps the looser congress-only matching.
+    const expectedCanon = terms.length > 1 ? canonicalBillId(rawTitle) : null;
 
-    // ---------- SEARCH congress.gov (pass A: with ordinal) ----------
-    let urlsA: string[] = [];
-    try {
-      urlsA = await tavilySearch(`${orTerms} ${ordinal} site:congress.gov`, ["congress.gov"]);
-    } catch {
-      await sleep(300);
-      try { urlsA = await tavilySearch(`${orTerms} ${ordinal} site:congress.gov`, ["congress.gov"]); } catch { urlsA = []; }
-    }
+    const searchOnce = (query: string) =>
+      tavilySearch(query, ["congress.gov"]).catch(async () => {
+        await sleep(300);
+        try { return await tavilySearch(query, ["congress.gov"]); } catch { return []; }
+      });
 
-    // ---------- SEARCH congress.gov (pass B: without ordinal) ----------
-    let urlsB: string[] = [];
-    try {
-      urlsB = await tavilySearch(`${orTerms} site:congress.gov`, ["congress.gov"]);
-    } catch {
-      await sleep(300);
-      try { urlsB = await tavilySearch(`${orTerms} site:congress.gov`, ["congress.gov"]); } catch { urlsB = []; }
-    }
+    // ---------- SEARCH congress.gov (pass A: with ordinal, pass B: without) ----------
+    const [urlsA, urlsB] = await Promise.all([
+      searchOnce(`${orTerms} ${ordinal} site:congress.gov`),
+      searchOnce(`${orTerms} site:congress.gov`),
+    ]);
 
     const allUrls = [...urlsA, ...urlsB];
 
@@ -1907,14 +1907,18 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok:false, reason:"not_found" }), { headers: { "Content-Type":"application/json" }});
     }
 
-    // ---------- ONE-BY-ONE: pick first candidate whose URL congress matches ----------
+    // ---------- ONE-BY-ONE: pick first candidate whose URL congress (and, when we have
+    // a real bill code, bill number) matches ----------
     let root: string | null = null;
     for (const candidate of iterRootsByOrder(allUrls)) {
       const urlCong = congressFromUrl(candidate);
-      if (urlCong && urlCong.toLowerCase() === ordinal.toLowerCase()) {
-        root = candidate;
-        break; // stop at the first matching root
+      if (!urlCong || urlCong.toLowerCase() !== ordinal.toLowerCase()) continue;
+      if (expectedCanon) {
+        const cCanon = canonicalBillId(billIdFromCongressUrl(candidate));
+        if (cCanon !== expectedCanon) continue;
       }
+      root = candidate;
+      break; // stop at the first matching root
     }
 
     // ---------- SESSION MISMATCH (informative error) ----------

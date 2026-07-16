@@ -507,30 +507,41 @@ Deno.serve(async (req) => {
     const results: Array<{ bill_id: string; congress: string; success: boolean; error?: string; response?: any }> = [];
     let successCount = 0;
     let attempted = 0;
+    let nextIdx = 0;
 
-    for (const entry of newEntries) {
-      if (attempted >= MAX_ATTEMPTS) break;
-      if (successCount >= TARGET_NEW) break;
-      if (Date.now() - startedAt > RUN_BUDGET_MS) break;
+    // Each candidate is dominated by network I/O (Tavily search/extract + Mistral),
+    // so processing them one at a time serially (with an extra artificial delay between
+    // each) was the main reason a run took over a minute. Run a small bounded-concurrency
+    // worker pool instead -- same stop conditions (target/attempts/budget), just launched
+    // in parallel rather than queued behind each other.
+    const CONCURRENCY = 4;
 
-      attempted++;
-      console.log(`Calling bill_search for ${entry.bill_id} (${entry.congress}, congress_num: ${entry.congress_num})...`);
-      const result = await callBillSearch(entry.bill_id, entry.congress_num);
+    async function worker(): Promise<void> {
+      for (;;) {
+        if (successCount >= TARGET_NEW) return;
+        if (attempted >= MAX_ATTEMPTS) return;
+        if (Date.now() - startedAt > RUN_BUDGET_MS) return;
+        const myIdx = nextIdx++;
+        if (myIdx >= newEntries.length) return;
+        attempted++;
 
-      console.log(`bill_search result for ${entry.bill_id}:`, { ok: result.ok, error: result.error, response: result.response });
+        const entry = newEntries[myIdx];
+        console.log(`Calling bill_search for ${entry.bill_id} (${entry.congress}, congress_num: ${entry.congress_num})...`);
+        const result = await callBillSearch(entry.bill_id, entry.congress_num);
+        console.log(`bill_search result for ${entry.bill_id}:`, { ok: result.ok, error: result.error, response: result.response });
 
-      if (result.ok) successCount++;
-      results.push({
-        bill_id: entry.bill_id,
-        congress: entry.congress,
-        success: result.ok,
-        error: result.error,
-        response: result.response
-      });
-
-      // Small delay to avoid overwhelming the API
-      await new Promise(resolve => setTimeout(resolve, 500));
+        if (result.ok) successCount++;
+        results.push({
+          bill_id: entry.bill_id,
+          congress: entry.congress,
+          success: result.ok,
+          error: result.error,
+          response: result.response
+        });
+      }
     }
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
     const remaining = newEntries.length - attempted;
     if (remaining > 0) {
