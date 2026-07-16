@@ -2,8 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Image, Keyboard, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from 'react-native';
+import { Alert, Animated, Image, Keyboard, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from 'react-native';
 import { useAuth } from '../../components/AuthProvider';
+import { CardLoadingIndicator } from '../../components/CardLoadingIndicator';
 import { ProfileLoadingIndicator } from '../../components/ProfileLoadingIndicator';
 import { NavigationService } from '../../services/navigationService';
 import { getConstrainedWidth } from '../../utils/constrainedDimensions';
@@ -32,6 +33,9 @@ const exp1 = React.memo(() => {
   const [isSearchLoading, setIsSearchLoading] = useState(false);
   const [isProcessingProfile, setIsProcessingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
+
+  // State for Update Legislation button
+  const [isUpdatingLegislation, setIsUpdatingLegislation] = useState(false);
 
   // Ref for search input to handle keyboard dismissal
   const searchInputRef = useRef<TextInput>(null);
@@ -614,6 +618,46 @@ const exp1 = React.memo(() => {
     }
   }, [searchQuery, router, category1Label, category2Label, category3Label, category4Label, subjectFilter]);
 
+  // Handle Update Legislation button: manually trigger the Congress.gov legislation
+  // update pipeline, subject to the same 7-day cooldown the weekly cron uses.
+  const handleUpdateLegislation = useCallback(async () => {
+    if (isUpdatingLegislation) return;
+
+    setIsUpdatingLegislation(true);
+    try {
+      const { data, error } = await getSupabaseClient().functions.invoke('bill_update_trigger', {
+        body: {}
+      });
+
+      if (error) {
+        Alert.alert('Error', 'Failed to update legislation. Please try again later.', [{ text: 'OK' }]);
+        return;
+      }
+
+      if (data?.blocked) {
+        const since = data.daysSinceLastUpdate ?? 0;
+        const wait = data.daysUntilNextAllowed ?? 7;
+        Alert.alert(
+          'Legislation Already Updated',
+          `There was a legislation update ${since} day${since === 1 ? '' : 's'} ago. Please wait ${wait} more day${wait === 1 ? '' : 's'} before triggering another update.`,
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      if (data?.ok) {
+        router.push('/most-recent');
+      } else {
+        Alert.alert('Error', data?.error || 'Failed to update legislation. Please try again later.', [{ text: 'OK' }]);
+      }
+    } catch (error) {
+      console.error('Error triggering legislation update:', error);
+      Alert.alert('Error', 'Failed to update legislation. Please try again later.', [{ text: 'OK' }]);
+    } finally {
+      setIsUpdatingLegislation(false);
+    }
+  }, [isUpdatingLegislation, router]);
+
   // Animated scale values for cards
   const card1Scale = useRef(new Animated.Value(1)).current;
   const card2Scale = useRef(new Animated.Value(1)).current;
@@ -666,6 +710,7 @@ const exp1 = React.memo(() => {
   const cardSearchButtonScale = useRef(new Animated.Value(1)).current;
   const recommendedCardsButtonScale = useRef(new Animated.Value(1)).current;
   const recommendedProfilesButtonScale = useRef(new Animated.Value(1)).current;
+  const updateLegislationButtonScale = useRef(new Animated.Value(1)).current;
   // Animated scale values for legislation cards (matching home.tsx format)
   const legislationCard1Scale = useRef(new Animated.Value(1)).current;
   const legislationCard2Scale = useRef(new Animated.Value(1)).current;
@@ -1036,8 +1081,45 @@ const exp1 = React.memo(() => {
                 </View>
               </Pressable>
             </Animated.View>
+
+            {/* Update Legislation Button */}
+            <Animated.View
+              style={{
+                transform: [{ scale: updateLegislationButtonScale }],
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Pressable
+                onPressIn={() => {
+                  Haptics.selectionAsync();
+                  Animated.spring(updateLegislationButtonScale, {
+                    toValue: 0.95,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPressOut={() => {
+                  Animated.spring(updateLegislationButtonScale, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                  }).start();
+                }}
+                onPress={handleUpdateLegislation}
+                disabled={isUpdatingLegislation}
+                style={styles.recommendedButton}
+              >
+                <View style={styles.recommendedButtonContent}>
+                  <View style={styles.legislationTopRow}>
+                    <Text style={styles.legislationTitleNew}>Update Legislation</Text>
+                  </View>
+                  <View style={styles.legislationBottomRow}>
+                    <Text style={styles.legislationSubtitleNew}>Create new legislation profiles for trending bills on Congress.gov</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
           </View>
-          
+
           {/* Trending Politicians Text */}
           <View style={styles.sectionHeader}>
             <Text style={styles.trendingPoliticiansTitle}>Trending Politicians</Text>
@@ -1666,10 +1748,16 @@ const exp1 = React.memo(() => {
         subtitle="Please keep the app open while we prepare your profile..."
       />
 
-      <ProfileLoadingIndicator 
+      <ProfileLoadingIndicator
         visible={isSearchLoading && !isProcessingProfile}
         title="Searching"
         subtitle="Please keep the app open while we prepare your results..."
+      />
+
+      <CardLoadingIndicator
+        visible={isUpdatingLegislation}
+        title="Updating Legislation"
+        subtitle="Please keep the app open while we check Congress.gov for new legislation..."
       />
     </SafeAreaView>
   );
