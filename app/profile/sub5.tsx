@@ -105,7 +105,7 @@ function InfoSection({
           {cardIndexData?.subtext || 'No data'}
         </Text>
         <Text style={gridInfoStyle.text}>
-          {cardContent?.body_text || '730 - 740 characters'}
+          {cardContent?.body_text || 'No Data Available'}
         </Text>
       </View>
       {/* Second Grid Card */}
@@ -113,7 +113,7 @@ function InfoSection({
         <Text style={tldrStyle.text}>TLDR</Text>
         <View style={styles.listContainer}>
           <Text style={listStyle.text}>
-            {cardContent?.tldr || '130 - 140 characters'}
+            {cardContent?.tldr || 'No Data Available'}
           </Text>
         </View>
       </View>
@@ -701,6 +701,7 @@ export default function Sub5() {
       case 'sub2': return 'Identity';
       case 'sub3': return 'Affiliates';
       case 'sub4': return 'Details';
+      case 'records': return 'Voting Record';
       default: return '';
     }
   };
