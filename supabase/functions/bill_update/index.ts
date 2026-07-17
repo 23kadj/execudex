@@ -738,20 +738,54 @@ Deno.serve(async (req) => {
     // each) was the main reason a run took over a minute. Run a small bounded-concurrency
     // worker pool instead -- same stop conditions (target/attempts/budget), just launched
     // in parallel rather than queued behind each other.
-    const CONCURRENCY = 4;
+    //
+    // A larger candidate pool (recency + popularity merged) means more of these can land
+    // inside the same short window, which can trip a rate limit somewhere downstream --
+    // observed live as bill_search calls failing with "RateLimitError: ... Retry after
+    // Nms". CONCURRENCY is kept modest and rate-limited attempts get one retry after
+    // honoring that cooldown, with all workers pausing new work meanwhile so they don't
+    // keep hammering a limit that's still in its window.
+    const CONCURRENCY = 3;
+    let rateLimitedUntil = 0;
+
+    function parseRetryAfterMs(errMsg: string | undefined): number | null {
+      const m = errMsg?.match(/retry after (\d+)\s*ms/i);
+      return m ? parseInt(m[1], 10) : null;
+    }
+    const isRateLimitError = (errMsg: string | undefined) => !!errMsg && /rate.?limit/i.test(errMsg);
 
     async function worker(): Promise<void> {
       for (;;) {
         if (successCount >= TARGET_NEW) return;
         if (attempted >= MAX_ATTEMPTS) return;
-        if (Date.now() - startedAt > RUN_BUDGET_MS) return;
+        const elapsed = Date.now() - startedAt;
+        if (elapsed > RUN_BUDGET_MS) return;
+
+        const waitMs = rateLimitedUntil - Date.now();
+        if (waitMs > 0) {
+          if (waitMs >= RUN_BUDGET_MS - elapsed) return; // not worth waiting past the run's own budget
+          await new Promise((r) => setTimeout(r, waitMs));
+        }
+
         const myIdx = nextIdx++;
         if (myIdx >= newEntries.length) return;
         attempted++;
 
         const entry = newEntries[myIdx];
         console.log(`Calling bill_search for ${entry.bill_id} (${entry.congress}, congress_num: ${entry.congress_num})...`);
-        const result = await callBillSearch(entry.bill_id, entry.congress_num);
+        let result = await callBillSearch(entry.bill_id, entry.congress_num);
+
+        if (!result.ok && isRateLimitError(result.error)) {
+          const cooldown = Math.min(parseRetryAfterMs(result.error) ?? 5000, 25000);
+          rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + cooldown);
+          console.warn(`Rate limited on ${entry.bill_id}, backing off ${cooldown}ms before one retry`);
+
+          if (cooldown < RUN_BUDGET_MS - (Date.now() - startedAt)) {
+            await new Promise((r) => setTimeout(r, cooldown));
+            result = await callBillSearch(entry.bill_id, entry.congress_num);
+          }
+        }
+
         console.log(`bill_search result for ${entry.bill_id}:`, { ok: result.ok, error: result.error, response: result.response });
 
         if (result.ok) successCount++;
