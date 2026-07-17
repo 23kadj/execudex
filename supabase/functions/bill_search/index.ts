@@ -235,11 +235,15 @@ function isSuspiciousBillTitle(title: string | null | undefined): boolean {
   if (!t) return true;
   const lower = t.toLowerCase();
   if (/^\d{4}\)?$/.test(t)) return true; // "2026" or "2026)"
-  if (/^just a moment\.*/i.test(lower)) return true;
-  if (/^checking your browser/i.test(lower)) return true;
-  if (/^please wait/i.test(lower)) return true;
-  if (/^access denied/i.test(lower)) return true;
-  if (/^attention required/i.test(lower)) return true;
+  // Not anchored to the start: Tavily's extraction sometimes synthesizes a "Title: <page
+  // title>" line from a blocked page's <title> tag when there's no real content to
+  // extract (e.g. a Cloudflare challenge page), which would otherwise slip past an
+  // anchored check and land in the DB as a bill's display title verbatim.
+  if (/just a moment\.*/i.test(lower)) return true;
+  if (/checking your browser/i.test(lower)) return true;
+  if (/please wait/i.test(lower)) return true;
+  if (/access denied/i.test(lower)) return true;
+  if (/attention required/i.test(lower)) return true;
   // A real title has multiple real words. Reject fragments that are mostly
   // digits/punctuation with at most one incidental run of letters — this catches
   // bare bill codes ("H.R.5") and Statutes at Large citations ("21, 86Stat1329"),

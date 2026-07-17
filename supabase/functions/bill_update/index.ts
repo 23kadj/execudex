@@ -103,11 +103,76 @@ function congressToNumber(ordinal: string): number | null {
   return isNaN(num) ? null : num;
 }
 
+/** Extract congress ordinal from congress.gov URL (e.g., ".../118th-congress/..." -> "118th") */
+function congressOrdinalFromUrl(u: string): string | null {
+  const m = u.match(/\/(\d+(?:st|nd|rd|th))-congress\//i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * The most-viewed-bills page is a weekly archive: every Monday's top-10 list gets its
+ * own "### [<date>]" section, going back years, all present in the same flattened HTML
+ * (only the first/most recent section is visually expanded in a browser by default --
+ * a raw text extraction sees every week concatenated together). Scope to just the first
+ * section so results match what's actually visible at the top of the real page, and use
+ * each row's own bracketed congress annotation (e.g. "[H.R.4818](.../118th-congress/...)
+ * [118th]") instead of a loose whole-page regex scan, since that's already explicit and
+ * page-authored rather than inferred by proximity.
+ */
+function extractMostRecentWeekBills(text: string): Array<{ bill_id: string; congress: string; congress_num: number; position: number }> {
+  const headerRx = /^### \[/m;
+  const firstHeaderMatch = headerRx.exec(text);
+  if (!firstHeaderMatch) return [];
+
+  const startIdx = firstHeaderMatch.index;
+  const restRx = /^### \[/m;
+  restRx.lastIndex = 0;
+  const afterFirst = text.slice(startIdx + 1);
+  const secondHeaderMatch = restRx.exec(afterFirst);
+  const endIdx = secondHeaderMatch ? startIdx + 1 + secondHeaderMatch.index : text.length;
+
+  const weekBlock = text.slice(startIdx, endIdx);
+
+  // Row shape: "| 1. | [H.R.4818](https://www.congress.gov/bill/118th-congress/house-bill/4818) [118th] | Title |"
+  const rowRx = /\|\s*(\d+)\.\s*\|\s*\[([^\]]+)\]\(([^)]+)\)\s*\[(\d+(?:st|nd|rd|th))\]\s*\|/gi;
+  const results: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
+  const seen = new Set<string>();
+
+  let m;
+  while ((m = rowRx.exec(weekBlock)) !== null) {
+    const rank = parseInt(m[1], 10);
+    const billCode = m[2].trim().toUpperCase().replace(/\s+/g, "");
+    const url = m[3];
+    const ordinalFromBracket = m[4].toLowerCase();
+    const ordinalFromUrl = congressOrdinalFromUrl(url);
+    const congressOrdinal = ordinalFromUrl || ordinalFromBracket; // URL is the more authoritative of the two
+    const congressNum = congressToNumber(congressOrdinal);
+    if (!billCode || congressNum === null) continue;
+
+    const key = `${billCode}|${congressOrdinal}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    results.push({
+      bill_id: billCode,
+      congress: congressOrdinal,
+      congress_num: congressNum,
+      position: Number.isFinite(rank) ? rank : results.length,
+    });
+  }
+
+  results.sort((a, b) => a.position - b.position);
+  return results;
+}
+
 /** Parse legislation entries from text file
  * Looks for patterns like: H.R.4776 119th, S.1071 119th, etc.
  * Also handles cases where bill and congress might be on different lines or separated differently
  * Returns array of { bill_id: string, congress: string, congress_num: number, position: number }
  * Position is used to preserve the order from the page (which should be popularity order)
+ * Fallback only -- used when the structured most-recent-week parse above finds nothing
+ * (e.g. congress.gov changes its markup), since it scans the whole flattened archive and
+ * can't tell which week a match came from.
  */
 function extractLegislation(text: string): Array<{ bill_id: string; congress: string; congress_num: number; position: number }> {
   const results: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
@@ -453,9 +518,17 @@ Deno.serve(async (req) => {
 
     console.log(`Processing content (${fileContent.length} characters total: ${extractedContent.length} from most-viewed-bills${additionalContent.trim() ? `, ${additionalContent.length} additional` : ""})...`);
 
-    // Extract legislation entries from file
-    const extracted = extractLegislation(fileContent);
-    console.log(`Extracted ${extracted.length} unique legislation entries`);
+    // Extract legislation entries from file -- prefer the structured, most-recent-week-only
+    // parse (matches what's actually visible at the top of the real page); fall back to the
+    // whole-archive scan only if that structured parse comes up empty.
+    let extracted = extractMostRecentWeekBills(fileContent);
+    if (extracted.length > 0) {
+      console.log(`Extracted ${extracted.length} unique legislation entries from the most recent week's section`);
+    } else {
+      console.log("Most-recent-week parse found nothing, falling back to whole-page scan");
+      extracted = extractLegislation(fileContent);
+      console.log(`Extracted ${extracted.length} unique legislation entries`);
+    }
     
     // Debug: log first few extracted entries
     if (extracted.length > 0) {
