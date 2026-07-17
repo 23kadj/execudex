@@ -6,7 +6,11 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TAVILY_API_KEY = Deno.env.get("TAVILY_API_KEY")!;
+const CONGRESS_API_KEY = Deno.env.get("CONGRESS_API_KEY")!;
 const FETCH_TIMEOUT_MS = Number(Deno.env.get("WIKI_TIMEOUT_MS") ?? 15000);
+// Update when the 120th Congress convenes (Jan 2027).
+const CURRENT_CONGRESS = 119;
+const RECENT_BILLS_LIMIT = 50;
 
 /** ========================== SUPABASE ========================== */
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, { global: { fetch } });
@@ -143,6 +147,70 @@ function extractMostViewedBillsFromRss(xml: string): Array<{ bill_id: string; co
   }
 
   return results;
+}
+
+function numberToOrdinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+}
+
+/** Fetch bills from the current congress via the official Congress.gov API, sorted by
+ * most recently updated. Unlike most-viewed-bills (a popularity signal that can include
+ * old-congress bills that are still getting clicks), this is a genuine recency signal
+ * scoped to exactly the current congress -- structured JSON from the authoritative
+ * source, no scraping/Cloudflare/markup-change risk at all. */
+async function fetchRecentBillsFromCongressApi(): Promise<Array<{ bill_id: string; congress: string; congress_num: number; position: number }>> {
+  const url = `https://api.congress.gov/v3/bill/${CURRENT_CONGRESS}?api_key=${CONGRESS_API_KEY}&sort=updateDate+desc&limit=${RECENT_BILLS_LIMIT}&format=json`;
+  const r = await fetch(url, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    headers: { Accept: "application/json" },
+  });
+  if (!r.ok) throw new Error(`Congress API fetch failed: ${r.status}`);
+  const data = await r.json();
+  const bills: any[] = Array.isArray(data?.bills) ? data.bills : [];
+
+  const typeMap: Record<string, string> = {
+    HR: "H.R.", S: "S.", HRES: "H.Res.", SRES: "S.Res.",
+    HJRES: "H.J.Res.", SJRES: "S.J.Res.", HCONRES: "H.Con.Res.", SCONRES: "S.Con.Res.",
+  };
+
+  const results: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
+  const seen = new Set<string>();
+
+  for (const b of bills) {
+    const prefix = typeMap[String(b?.type || "").toUpperCase()];
+    const num = String(b?.number || "").trim();
+    const congressNum = Number(b?.congress);
+    if (!prefix || !num || !Number.isFinite(congressNum)) continue;
+
+    const billId = `${prefix}${num}`;
+    const congress = numberToOrdinal(congressNum);
+    const key = `${billId}|${congress}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    results.push({ bill_id: billId, congress, congress_num: congressNum, position: results.length });
+  }
+
+  return results;
+}
+
+/** Merge candidate lists, deduping by bill_id+congress and keeping the earlier list's
+ * ordering priority (its entries come first). Used to combine the recency signal (Congress
+ * API) with the popularity signal (most-viewed-bills) into one candidate list. */
+function mergeCandidateLists(
+  primary: Array<{ bill_id: string; congress: string; congress_num: number; position: number }>,
+  secondary: Array<{ bill_id: string; congress: string; congress_num: number; position: number }>
+): Array<{ bill_id: string; congress: string; congress_num: number; position: number }> {
+  const seen = new Set<string>();
+  const merged: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
+  for (const entry of [...primary, ...secondary]) {
+    const key = `${entry.bill_id}|${entry.congress}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({ ...entry, position: merged.length });
+  }
+  return merged;
 }
 
 /** Extract congress number from ordinal string (e.g., "119th" -> 119) */
@@ -529,20 +597,32 @@ Deno.serve(async (req) => {
       }
     }
 
-    // STEP 1: Extract this week's most-viewed bills. Prefer the RSS feed -- no Cloudflare
-    // risk, and it only ever contains the current week (no archive-scoping needed). Fall
-    // back to the Tavily/HTML scrape only if the feed fails or comes back empty.
-    let extracted: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
-    let extractedContent = "";
+    // STEP 1: Combine two signals -- genuinely recent bills from the official Congress.gov
+    // API (scoped to the current congress, sorted by latest update: the harder-to-satisfy,
+    // more directly requested signal, so it goes first) and this week's most-viewed bills
+    // from the RSS feed (popularity, can include older-congress bills that are still
+    // trending -- that's expected for a popularity metric, not an error). The Tavily/HTML
+    // scrape only runs as a last resort if both of those fail or come back empty.
+    let recentBills: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
+    try {
+      recentBills = await fetchRecentBillsFromCongressApi();
+      console.log(`Fetched ${recentBills.length} recently-updated bills from the Congress.gov API (congress ${CURRENT_CONGRESS})`);
+    } catch (error: any) {
+      console.warn(`Congress API fetch failed (${error?.message || error}), continuing with the popularity signal only`);
+    }
 
+    let popularBills: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
+    let extractedContent = "";
     try {
       const rssXml = await fetchMostViewedBillsRss();
-      extracted = extractMostViewedBillsFromRss(rssXml);
+      popularBills = extractMostViewedBillsFromRss(rssXml);
       extractedContent = rssXml;
-      console.log(`Extracted ${extracted.length} entries from the most-viewed-bills RSS feed`);
+      console.log(`Extracted ${popularBills.length} entries from the most-viewed-bills RSS feed`);
     } catch (error: any) {
-      console.warn(`RSS fetch failed (${error?.message || error}), falling back to HTML scrape`);
+      console.warn(`RSS fetch failed (${error?.message || error})`);
     }
+
+    let extracted = mergeCandidateLists(recentBills, popularBills);
 
     if (extracted.length === 0) {
       try {
@@ -560,7 +640,7 @@ Deno.serve(async (req) => {
     }
 
     // STEP 2: Optionally merge with provided file content (if any) -- only meaningful for
-    // the HTML-scrape fallback path below, since a successful RSS parse already yields
+    // the HTML-scrape fallback path below, since a successful API/RSS fetch already yields
     // structured entries directly.
     const contentType = req.headers.get("content-type") || "";
     let additionalContent: string = "";
