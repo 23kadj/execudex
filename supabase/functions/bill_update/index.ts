@@ -80,11 +80,13 @@ async function tavilyExtractOneWithRetryOrHtml(
   throw new Error("All extraction fallbacks failed");
 }
 
-/** Extract content from congress.gov most-viewed-bills page */
+/** Extract content from congress.gov most-viewed-bills page (HTML scrape fallback --
+ * subject to Cloudflare's bot-challenge and requires archive-scoping since the page is a
+ * flattened weekly archive going back years). Prefer fetchMostViewedBillsRss() below. */
 async function extractMostViewedBills(): Promise<string> {
   const url = "https://www.congress.gov/most-viewed-bills";
   console.log(`Extracting content from ${url}...`);
-  
+
   try {
     const extracted = await tavilyExtractOneWithRetryOrHtml(url);
     console.log(`Successfully extracted ${extracted.parseText.length} characters from ${url} (source: ${extracted.source})`);
@@ -93,6 +95,54 @@ async function extractMostViewedBills(): Promise<string> {
     console.error(`Failed to extract from ${url}:`, error);
     throw new Error(`Failed to extract content from most-viewed-bills page: ${error}`);
   }
+}
+
+const MOST_VIEWED_RSS_URL = "https://www.congress.gov/rss/most-viewed-bills.xml";
+
+/** Fetch the most-viewed-bills RSS feed directly. Unlike the HTML page, this isn't behind
+ * congress.gov's Cloudflare bot-challenge (RSS feeds are served plainly for automated
+ * consumption), and it only ever contains the current week's item -- no archive to scope
+ * out. Preferred source; the Tavily/HTML scrape above is the fallback if this ever fails
+ * (feed discontinued, format change, network issue). */
+async function fetchMostViewedBillsRss(): Promise<string> {
+  const r = await fetch(MOST_VIEWED_RSS_URL, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; ExecudexBot/1.0)" },
+  });
+  if (!r.ok) throw new Error(`RSS fetch failed: ${r.status}`);
+  return await r.text();
+}
+
+/** Parse the RSS feed's single <item>: its CDATA description is an <ol> of
+ * <a href='.../bill/{ordinal}-congress/...'>{code}</a> [{ordinal}] - {title} entries,
+ * in rank order. */
+function extractMostViewedBillsFromRss(xml: string): Array<{ bill_id: string; congress: string; congress_num: number; position: number }> {
+  const descMatch = xml.match(/<description>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/description>/i);
+  if (!descMatch) return [];
+  const html = descMatch[1];
+
+  const rowRx = /<a\s+href=['"]([^'"]+)['"]>([^<]+)<\/a>\s*\[(\d+(?:st|nd|rd|th))\]/gi;
+  const results: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
+  const seen = new Set<string>();
+
+  let m;
+  while ((m = rowRx.exec(html)) !== null) {
+    const url = m[1];
+    const billCode = m[2].trim().toUpperCase().replace(/\s+/g, "");
+    const ordinalFromUrl = congressOrdinalFromUrl(url);
+    const ordinalFromBracket = m[3].toLowerCase();
+    const congressOrdinal = ordinalFromUrl || ordinalFromBracket; // URL is the more authoritative of the two
+    const congressNum = congressToNumber(congressOrdinal);
+    if (!billCode || congressNum === null) continue;
+
+    const key = `${billCode}|${congressOrdinal}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    results.push({ bill_id: billCode, congress: congressOrdinal, congress_num: congressNum, position: results.length });
+  }
+
+  return results;
 }
 
 /** Extract congress number from ordinal string (e.g., "119th" -> 119) */
@@ -479,22 +529,39 @@ Deno.serve(async (req) => {
       }
     }
 
-    // STEP 1: Extract content from congress.gov most-viewed-bills page
-    let extractedContent: string;
+    // STEP 1: Extract this week's most-viewed bills. Prefer the RSS feed -- no Cloudflare
+    // risk, and it only ever contains the current week (no archive-scoping needed). Fall
+    // back to the Tavily/HTML scrape only if the feed fails or comes back empty.
+    let extracted: Array<{ bill_id: string; congress: string; congress_num: number; position: number }> = [];
+    let extractedContent = "";
+
     try {
-      extractedContent = await extractMostViewedBills();
+      const rssXml = await fetchMostViewedBillsRss();
+      extracted = extractMostViewedBillsFromRss(rssXml);
+      extractedContent = rssXml;
+      console.log(`Extracted ${extracted.length} entries from the most-viewed-bills RSS feed`);
     } catch (error: any) {
-      await logRun(runId, { status: "error", finished_at: new Date().toISOString(), error: `extract_failed: ${error?.message || String(error)}` });
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: `Failed to extract from most-viewed-bills page: ${error?.message || String(error)}`
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      console.warn(`RSS fetch failed (${error?.message || error}), falling back to HTML scrape`);
     }
 
-    // STEP 2: Optionally merge with provided file content (if any)
+    if (extracted.length === 0) {
+      try {
+        extractedContent = await extractMostViewedBills();
+      } catch (error: any) {
+        await logRun(runId, { status: "error", finished_at: new Date().toISOString(), error: `extract_failed: ${error?.message || String(error)}` });
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: `Failed to extract from most-viewed-bills page: ${error?.message || String(error)}`
+          }),
+          { status: 500, headers: { "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    // STEP 2: Optionally merge with provided file content (if any) -- only meaningful for
+    // the HTML-scrape fallback path below, since a successful RSS parse already yields
+    // structured entries directly.
     const contentType = req.headers.get("content-type") || "";
     let additionalContent: string = "";
     
@@ -518,18 +585,22 @@ Deno.serve(async (req) => {
 
     console.log(`Processing content (${fileContent.length} characters total: ${extractedContent.length} from most-viewed-bills${additionalContent.trim() ? `, ${additionalContent.length} additional` : ""})...`);
 
-    // Extract legislation entries from file -- prefer the structured, most-recent-week-only
-    // parse (matches what's actually visible at the top of the real page); fall back to the
-    // whole-archive scan only if that structured parse comes up empty.
-    let extracted = extractMostRecentWeekBills(fileContent);
-    if (extracted.length > 0) {
-      console.log(`Extracted ${extracted.length} unique legislation entries from the most recent week's section`);
-    } else {
-      console.log("Most-recent-week parse found nothing, falling back to whole-page scan");
-      extracted = extractLegislation(fileContent);
-      console.log(`Extracted ${extracted.length} unique legislation entries`);
+    // If the RSS feed already yielded structured entries, use them directly. Otherwise
+    // (RSS failed/empty, so extractedContent is the HTML scrape) parse fileContent --
+    // prefer the structured, most-recent-week-only parse (matches what's actually visible
+    // at the top of the real page); fall back to the whole-archive scan only if that
+    // structured parse comes up empty.
+    if (extracted.length === 0) {
+      extracted = extractMostRecentWeekBills(fileContent);
+      if (extracted.length > 0) {
+        console.log(`Extracted ${extracted.length} unique legislation entries from the most recent week's section`);
+      } else {
+        console.log("Most-recent-week parse found nothing, falling back to whole-page scan");
+        extracted = extractLegislation(fileContent);
+        console.log(`Extracted ${extracted.length} unique legislation entries`);
+      }
     }
-    
+
     // Debug: log first few extracted entries
     if (extracted.length > 0) {
       console.log("Sample extracted entries:", extracted.slice(0, 5).map(e => `${e.bill_id} ${e.congress}`));
