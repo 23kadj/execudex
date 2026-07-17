@@ -869,19 +869,24 @@ export class CardGenerationService {
   }
 
   /**
-   * Get card IDs of newly generated cards after a timestamp
-   * Returns array of card IDs (number[])
+   * Get card IDs of newly generated cards after a timestamp, ordered by relevance to
+   * what was actually searched for -- exact category match first, then other categories
+   * on the same page/screen, then everything else (in original creation order within
+   * each group). Pass neither preferredCategory nor preferredScreen to skip ranking and
+   * keep plain creation order (existing callers that don't care about proximity).
    */
   static async getGeneratedCardIds(
     ownerId: number,
     isPpl: boolean,
-    afterTimestamp: string
+    afterTimestamp: string,
+    preferredCategory?: string,
+    preferredScreen?: string
   ): Promise<number[]> {
     try {
       const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from('card_index')
-        .select('id')
+        .select('id, category, screen')
         .eq('owner_id', ownerId)
         .eq('is_ppl', isPpl)
         .eq('is_active', true)
@@ -893,7 +898,21 @@ export class CardGenerationService {
         return [];
       }
 
-      return (data || []).map((row: { id: number }) => row.id);
+      const rows = (data || []) as Array<{ id: number; category: string | null; screen: string | null }>;
+
+      if (!preferredCategory && !preferredScreen) {
+        return rows.map((row) => row.id);
+      }
+
+      const rank = (row: { category: string | null; screen: string | null }): number => {
+        if (preferredCategory && row.category === preferredCategory) return 0;
+        if (preferredScreen && row.screen === preferredScreen) return 1;
+        return 2;
+      };
+
+      return [...rows]
+        .sort((a, b) => rank(a) - rank(b) || a.id - b.id)
+        .map((row) => row.id);
     } catch (error) {
       console.error('Error in getGeneratedCardIds:', error);
       return [];

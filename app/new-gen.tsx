@@ -69,12 +69,11 @@ export default function NewGen() {
       }
 
       const supabase = getSupabaseClient();
-      const { data: cardData, error } = await supabase
+      const { data: rawCardData, error } = await supabase
         .from('card_index')
         .select('id, title, subtext, owner_id, is_ppl, category, screen, created_at')
         .in('id', ids)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false });
+        .eq('is_active', true);
 
       if (error) {
         console.error('Error fetching new-gen cards:', error);
@@ -83,11 +82,19 @@ export default function NewGen() {
         return;
       }
 
-      if (!cardData || cardData.length === 0) {
+      if (!rawCardData || rawCardData.length === 0) {
         setCards([]);
         setLoading(false);
         return;
       }
+
+      // `ids` arrives in relevance order (e.g. exact-category match first, then same-page,
+      // then everything else -- see CardGenerationService.getGeneratedCardIds), but `.in()`
+      // doesn't preserve that order, so restore it here rather than re-sorting by date.
+      const idOrder = new Map(ids.map((id, i) => [id, i]));
+      const cardData = [...rawCardData].sort(
+        (a: any, b: any) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0)
+      );
 
       const pplIds = cardData.filter((c: any) => c.is_ppl).map((c: any) => c.owner_id).filter(Boolean);
       const legiIds = cardData.filter((c: any) => !c.is_ppl).map((c: any) => c.owner_id).filter(Boolean);
@@ -118,7 +125,6 @@ export default function NewGen() {
         }
       }
 
-      // cardData is already sorted by created_at desc (newest first) from the query
       const cardsList: CardData[] = cardData.map((card: any) => ({
         id: card.id,
         name: card.title || 'No Data',

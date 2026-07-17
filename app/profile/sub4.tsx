@@ -517,32 +517,43 @@ export default function Sub4() {
       const beforeGenerationTimestamp = new Date().toISOString();
       
       const result = await CardGenerationService.generatePoliticianCards(
-        ownerId, 
+        ownerId,
         'sub4',
         category
       ) as any;
-      
+
       // Check if operation was aborted
       if (abortControllerRef.current?.signal.aborted) {
         return;
       }
-      
+
       if (result.success) {
         // Get number of cards generated
         const cardsGenerated = result.data?.inserted || 0;
-        
+
         // Get categories of newly generated cards with screen info
         const generatedCategoryScreenPairs = await CardGenerationService.getGeneratedCardCategories(
           ownerId,
           true, // isPpl
           beforeGenerationTimestamp
         );
-        
-        // Get IDs of newly generated cards for new-gen redirect
+
+        // Get IDs of newly generated cards for new-gen redirect, ordered by proximity to
+        // what was actually searched for: exact category match first, then other
+        // categories on the same page, then everything else
+        let originScreen: string;
+        switch (originalPage) {
+          case 'sub1': originScreen = 'agenda_ppl'; break;
+          case 'sub2': originScreen = 'identity'; break;
+          case 'sub3': originScreen = 'affiliates'; break;
+          default: originScreen = 'agenda_ppl';
+        }
         const generatedCardIds = await CardGenerationService.getGeneratedCardIds(
           ownerId,
           true, // isPpl
-          beforeGenerationTimestamp
+          beforeGenerationTimestamp,
+          category,
+          originScreen
         );
         
         // Redirect to new-gen page when we have newly generated cards

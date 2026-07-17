@@ -263,11 +263,14 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
           beforeGenerationTimestamp
         );
         
-        // Get IDs of newly generated cards for new-gen redirect
+        // Get IDs of newly generated cards for new-gen redirect, ordered by proximity
+        // to this page's screen (no specific category was targeted here)
         const generatedCardIds = await CardGenerationService.getGeneratedCardIds(
           ownerId,
           true, // isPpl
-          beforeGenerationTimestamp
+          beforeGenerationTimestamp,
+          undefined,
+          'agenda_ppl'
         );
         
         // Refresh cards after generation
