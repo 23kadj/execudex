@@ -1051,7 +1051,7 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
               recordsStatus === "fail" && styles.generateButtonTextDisabled,
               isLoadingRecords && styles.generateButtonTextDisabled
             ]}>
-              {isLoadingRecords ? 'Loading...' : 'Voting Records'}
+              {isLoadingRecords ? 'Generating...' : 'Voting Records'}
             </Text>
           </Pressable>
         </Animated.View>
@@ -1135,13 +1135,6 @@ export default function Synop({ scrollY, goToTab, name, position, submittedStars
           </Animated.View>
         </View>
       )}
-
-      <CardLoadingIndicator
-        visible={isLoadingRecords}
-        onCancel={() => setIsLoadingRecords(false)}
-        title="Loading Voting Records"
-        subtitle="Please keep the app open while we prepare the voting records."
-      />
 
       <CardLoadingIndicator
         visible={isCardLoading}
