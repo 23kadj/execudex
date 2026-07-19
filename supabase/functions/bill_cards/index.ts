@@ -180,12 +180,16 @@ async function listBillParts(legiId: number): Promise<PartRow[]> {
   if (error) throw error;
 
   const rows: PartRow[] = [];
-  const REG = /\/(billtext|synopsis)\.(\d+)\.congress(?:\.(\d+))?\.txt$/i;
+  // Only "billtext" (full bill text from bill_text) is granular enough for the
+  // per-provision materiality rubric below. A "synopsis" is a short AI summary
+  // paragraph and reliably yields 0 cards under this rubric, which used to get
+  // misreported as the bill itself lacking material.
+  const REG = /\/billtext\.(\d+)\.congress(?:\.(\d+))?\.txt$/i;
   for (const r of (data || [])) {
     const p = String(r?.path || "");
     const m = p.match(REG);
     if (!m) continue;
-    const part = m[3] ? Number(m[3]) : 1;
+    const part = m[2] ? Number(m[2]) : 1;
     if (!Number.isFinite(part)) continue;
     rows.push({
       web_id: Number(r.id),
@@ -196,6 +200,27 @@ async function listBillParts(legiId: number): Promise<PartRow[]> {
   }
   rows.sort((a, b) => a.part - b.part);
   return rows;
+}
+
+/** Invoke bill_text to fetch/split real bill text into billtext.*.congress*.txt parts.
+ *  Idempotent: bill_text itself skips re-fetching if healthy parts already exist. */
+async function ensureBillText(legiId: number): Promise<boolean> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/bill_text`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SERVICE_ROLE}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: legiId }),
+    });
+    if (!r.ok) {
+      console.warn("ensureBillText: bill_text call failed", r.status, await r.text().catch(() => ""));
+      return false;
+    }
+    await r.json().catch(() => ({}));
+    return true;
+  } catch (e) {
+    console.warn("ensureBillText: bill_text call threw", e);
+    return false;
+  }
 }
 
 /** Which bill sections already have at least one card (is_ppl=false) */
@@ -700,8 +725,14 @@ Deno.serve(async (req) => {
     // (1) Bill row
     const bill = await fetchLegiRow(id);
 
-    // (2) Parts
-    const parts = await listBillParts(id);
+    // (2) Parts (fetch real bill text on-demand if it hasn't been pulled yet —
+    // the app-triggered profile flow never calls bill_text itself, so most
+    // legislation rows only ever had a short synopsis, not real bill text)
+    let parts = await listBillParts(id);
+    if (!parts.length) {
+      const fetched = await ensureBillText(id);
+      if (fetched) parts = await listBillParts(id);
+    }
     if (!parts.length) return json(404, { error: "No bill parts found for this id.", id });
 
     // (3) Pick target part: first with no cards; else first > scanned

@@ -406,59 +406,56 @@ export class CardGenerationService {
   }
 
   /**
-   * Check if Agenda button should be visible for legi1
-   * Conditions: is_ppl = false, owner_id matches, used = false/NULL, path contains "billtext"
+   * Shared visibility check for legi1 (Agenda) and legi2 (Impact) — both generate
+   * via bill_cards, which reads 'billtext' web_content rows and now self-fetches
+   * real bill text on demand if none exist yet. So the button should stay visible
+   * either while there's an unused billtext part, or before any fetch has been
+   * attempted at all; it only hides once every part is exhausted or the bill has
+   * been confirmed weak after a real bill-text-based generation attempt.
    */
-  static async checkAgendaButtonVisibility(legislationId: number): Promise<boolean> {
+  static async checkBillCardsButtonVisibility(legislationId: number): Promise<boolean> {
     try {
       const supabase = getSupabaseClient();
-      const { data, error } = await supabase
+
+      const { data: legiRow } = await supabase
+        .from('legi_index')
+        .select('weak')
+        .eq('id', legislationId)
+        .single();
+      if (legiRow?.weak) return false;
+
+      const { data: billtextRows, error } = await supabase
         .from('web_content')
-        .select('id')
+        .select('used')
         .eq('owner_id', legislationId)
         .eq('is_ppl', false)
-        .or('used.is.null,used.eq.false')
-        .ilike('path', '%billtext%')
-        .limit(1);
+        .ilike('path', '%billtext%');
 
       if (error) {
-        console.error('Error checking agenda button visibility:', error);
+        console.error('Error checking bill_cards button visibility:', error);
         return false;
       }
 
-      return data && data.length > 0;
+      if (!billtextRows || billtextRows.length === 0) return true;
+      return billtextRows.some((r: any) => !r.used);
     } catch (error) {
-      console.error('Error in checkAgendaButtonVisibility:', error);
+      console.error('Error in checkBillCardsButtonVisibility:', error);
       return false;
     }
   }
 
   /**
+   * Check if Agenda button should be visible for legi1
+   */
+  static async checkAgendaButtonVisibility(legislationId: number): Promise<boolean> {
+    return this.checkBillCardsButtonVisibility(legislationId);
+  }
+
+  /**
    * Check if Impact button should be visible for legi2
-   * Conditions: is_ppl = false, owner_id matches, used = false/NULL, path contains "coverage"
    */
   static async checkImpactButtonVisibility(legislationId: number): Promise<boolean> {
-    try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('web_content')
-        .select('id')
-        .eq('owner_id', legislationId)
-        .eq('is_ppl', false)
-        .or('used.is.null,used.eq.false')
-        .ilike('path', '%coverage%')
-        .limit(1);
-
-      if (error) {
-        console.error('Error checking impact button visibility:', error);
-        return false;
-      }
-
-      return data && data.length > 0;
-    } catch (error) {
-      console.error('Error in checkImpactButtonVisibility:', error);
-      return false;
-    }
+    return this.checkBillCardsButtonVisibility(legislationId);
   }
 
   /**
