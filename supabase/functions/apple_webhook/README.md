@@ -27,7 +27,21 @@ https://[your-project-id].supabase.co/functions/v1/apple_webhook
 6. Set **Version 2 Sandbox URL** to the same webhook URL (for testing)
 7. Save
 
-### 4. Test the Webhook
+### 4. Set the `APPLE_APP_APPLE_ID` secret
+
+Signature verification for the **Production** environment requires the app's numeric
+App Store Connect Apple ID (App Store Connect > App Information > General Information > Apple ID —
+NOT the bundle identifier). Set it as a secret:
+
+```bash
+supabase secrets set APPLE_APP_APPLE_ID=1234567890 --project-ref <ref>
+```
+
+Sandbox notifications verify without this (Apple's spec omits `appAppleId` in sandbox), so testing
+via a sandbox purchase works before this is configured. Until it's set, Production notifications
+are rejected (401/500) rather than accepted unverified — a fail-closed default.
+
+### 5. Test the Webhook
 
 Apple will send a test notification when you save the URL. Check your Supabase function logs to verify it was received.
 
@@ -48,8 +62,15 @@ All events are logged to the user's `sub_logs` column in the `users` table.
 
 ## Security
 
-- JWT signature verification is implemented (basic version)
-- For production, ensure full JWT verification with Apple's public keys
+- Full JWS verification via Apple's official `@apple/app-store-server-library`: validates the
+  certificate chain up to Apple's Root CA (G3, embedded in `index.ts`), checks revocation (OCSP)
+  and expiry, and confirms `bundleId`/`environment`/`appAppleId` match this app before trusting
+  any notification. Payloads that fail verification are rejected with 401.
+- The top-level request body is Apple's real V2 shape — `{ signedPayload: "<JWS>" }` — which
+  decodes to `{ notificationType, subtype, data: { signedTransactionInfo, signedRenewalInfo } }`.
+  The nested `signedTransactionInfo`/`signedRenewalInfo` JWS are independently re-verified.
+- `verify_jwt` is disabled for this function in `supabase/config.toml` (Apple sends no Supabase
+  auth header) — trust comes entirely from the JWS signature check above.
 - Service role key is used to bypass RLS policies
 
 ## Monitoring

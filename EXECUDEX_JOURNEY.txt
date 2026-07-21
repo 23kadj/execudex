@@ -1,0 +1,719 @@
+EXECUDEX – DEEP DIVE AND BUILD JOURNEY
+=====================================
+
+This document is a narrative reconstruction of Execudex – what the platform is trying to do, how it works under the hood, and the main engineering journey visible from the code and internal docs in this repo.
+
+It is written for “future you” (and anyone else joining the project) who wants a detailed, story‑shaped explanation rather than just scattered comments and tickets.
+
+Because I do not have access to all historical chats or your full memory, this is based on:
+- The current codebase
+- The many internal markdown docs in this repo
+- The behavior implied by the app screens and Supabase functions
+
+Where something is inferred rather than explicitly documented, I’ll phrase it as a reasonable interpretation, not a guaranteed fact.
+
+
+1. PRODUCT VISION: WHAT EXECUDEX IS TRYING TO BE
+===============================================
+
+Execudex is a mobile app (Expo / React Native) that tries to turn messy political and legislative information into structured, navigable “profiles”:
+
+- Politician profiles (people: members of Congress, etc.)
+- Legislation profiles (bills, acts, resolutions, etc.)
+- Cards that break those profiles into digestible pieces (agenda, identity, impact, discourse, etc.)
+- Metrics and quotas that control what users can access based on their plan
+
+You can think of Execudex as a cross between:
+- A political “index” (database of people and bills)
+- A media layer (cards, summaries, metrics)
+- A subscription product (basic vs plus, profile quotas, IAP and Apple StoreKit2)
+
+The big theme across the codebase is:
+“We have a lot of upstream complexity (Supabase tables, edge functions, external APIs, AI processing) and we need the app to feel simple, fast, and safe, even when things break.”
+
+
+2. HIGH‑LEVEL ARCHITECTURE
+==========================
+
+2.1 Core tech stack
+-------------------
+
+- App framework: Expo / React Native
+- Navigation: Expo Router (file‑based routing under app/)
+- Language: TypeScript / React
+- Backend: Supabase (Postgres + Edge Functions + Auth)
+- Storage on device: AsyncStorage
+- Native bridges: haptics, file‑system‑backed logging, push notifications, StoreKit2 / IAP
+
+2.2 Major subsystems
+--------------------
+
+From the code and docs, the major moving parts are:
+
+1) Authentication and onboarding
+   - Supabase Auth (email, Google OAuth)
+   - Deep linking and auth callback handler
+   - Onboarding questionnaire and plan selection
+   - Enforcement that you can’t reach the main app until you have a plan
+
+2) Profiles (politicians and legislation)
+   - ppl_index and legi_index tables that store the core “indexed” state
+   - Edge functions (profile_index, ppl_metrics, ppl_synopsis, etc.) that fetch external data, run AI, and write back into those tables
+   - Profile screens (index1.tsx, index2.tsx, synop.tsx, legi*.tsx) that read those results and show them as cards, metrics, copy, etc.
+
+3) Card system
+   - card_index table that stores card templates/content
+   - Logic in utils/cardData.ts that pulls the right cards per profile, screen, and category
+   - Tier‑based limits (base/soft/hard) that decide how many cards you see
+   - Preview vs category cards, and later a redesign that replaces a strict preview flag with an opens_7d‑driven ranking
+
+4) Bookmarks and history
+   - Unified bookmarks table across “ppl”, “legi”, and “card”
+   - Bookmarks page that lets you jump back into any saved entity
+   - History and records flows that track what you’ve opened
+   - A later decision to let bookmarks work even without authentication
+
+5) Subscription and quotas
+   - users table with plan, cycle, week_profiles, last_reset
+   - Edge function check_profile_access that enforces weekly limits
+   - profileAccessService and navigationService that gate profile opens
+   - subscription.tsx that shows usage, progress bar, and upgrade prompts
+
+6) Diagnostics and reliability tooling
+   - persistentLogger that writes logs to AsyncStorage and a debug.log file
+   - nativeCallDebugger that wraps native calls (haptics, router, linking, Supabase) in logging
+   - globalErrorHandler and ErrorBoundary + ErrorOverlay
+   - Multiple debugging guides and reports (crash isolation, splash screen, session persistence, profile pipeline reports, etc.)
+
+7) In‑app flows and UX screens
+   - Home, search (exp1.tsx), results, history, bookmarks, feedback
+   - Profile subpages (sub1–sub5) for different dimensions of a politician
+   - Legislation pages (legi1–legi5) for agenda, impact, discourse, etc.
+   - Card Q&A (card-questions.tsx) where users can ask questions about a card and get Execudex‑generated answers
+
+
+3. AUTHENTICATION, ONBOARDING, AND PLAN ENFORCEMENT
+===================================================
+
+3.1 Basic auth wiring
+---------------------
+
+AUTHENTICATION_SETUP.md documents how Execudex ties Supabase Auth into a React Native app:
+
+- Supabase client is configured with your project URL and anon key.
+- AsyncStorage is used for session persistence so users stay logged in.
+- AuthProvider.tsx wraps the app and:
+  - Manages auth state (user object, loading, error).
+  - Exposes functions like signInWithEmail, signUpWithEmail, signInWithGoogle and signOut.
+  - Listens to Supabase’s onAuthStateChange events (INITIAL_SESSION, TOKEN_REFRESHED, etc.).
+  - Hydrates initial session on app start.
+
+SignInScreen.tsx is the visual entrypoint:
+- It shows email / Google sign in, loading states, and errors.
+- It calls into AuthProvider and then reacts based on whether the user has completed onboarding and has an active plan.
+
+The app also includes an OAuth callback handler under app/auth/callback.tsx:
+- This screen receives deep links like execudex://auth/callback from the OS.
+- It calls Supabase to finalize the OAuth flow and get a session.
+- Then it performs the same “does this user have a plan?” logic before deciding where to send them (onboarding vs main app).
+
+3.2 Onboarding and plan enforcement
+-----------------------------------
+
+ONBOARDING_PLAN_ENFORCEMENT.md describes how the app evolved from “auth only” to “auth + mandatory plan selection”.
+
+Key pieces:
+
+- The save_onboard_data edge function:
+  - Takes uuid, onboardData, and plan as required input.
+  - If the user row doesn’t exist yet in users, it creates one with the plan.
+  - If the user row already exists, it updates it with the new plan and onboarding data.
+  - It handles race conditions where both auth triggers and the function might try to create a row.
+
+- AuthProvider changes:
+  - signInWithEmail and signUpWithEmail now return User | null rather than void so the caller can immediately fetch the user’s row in users and verify plan.
+
+- SignInScreen and auth callback:
+  - After a user successfully signs in, the client checks the users table for a plan.
+  - If plan is null/empty/missing, the app redirects the user to onboarding (/) and tells them they must complete plan selection.
+  - Only once plan is set can users reach /(tabs)/home or other main routes.
+
+This design makes “having a plan” a first‑class requirement:
+- New users cannot “accidentally” wander into the main app without choosing a plan and cycle.
+- Existing users without a plan get forced back through onboarding when they next sign in.
+- The save_onboard_data function becomes the single source of truth for tying onboarding answers and plan into the users table.
+
+
+4. PROFILES, EDGE FUNCTIONS, AND THE DATA PIPELINE
+==================================================
+
+4.1 High‑level flow for a politician profile
+--------------------------------------------
+
+The path from “user taps on a politician” to “profile screen shows cards, synopsis, metrics” looks roughly like this:
+
+1) User taps a card or list item representing a politician.
+2) A calling screen (home, results, bookmarks, history, explore) calls NavigationService.navigateToPoliticianProfile.
+3) NavigationService:
+   - Checks profile access (quota system) via profileAccessService and the check_profile_access edge function.
+   - If blocked: shows an alert, suggests upgrading, and refuses to navigate.
+   - If allowed: triggers PoliticianProfileService.handleProfileOpen(politicianId).
+4) PoliticianProfileService orchestrates:
+   - Calling profile_index (edge function) to build/update a profile’s core fields.
+   - Calling ppl_synopsis to generate natural‑language summaries.
+   - Calling ppl_metrics to fetch poll data and compute percentages.
+   - Logging full JSON responses to the console for debugging (as described in DEBUGGING_GUIDE.md).
+5) Once processing completes, NavigationService navigates to index1.tsx (politician profiles) or other relevant screens.
+6) The profile screen fetches rows from ppl_profiles, ppl_index, and related tables and renders cards, stats, and sections.
+
+4.2 profile_index edge function
+-------------------------------
+
+The profile_index edge function is heavily documented in the profile processing debugging guide. It:
+
+- Logs detailed steps such as:
+  - START
+  - Step 1: Fetch politician’s row from ppl_index
+  - Step 2: Check storage for existing text/HTML
+  - Step 3: Fetch Wikipedia content (including fallback strategies)
+  - Step 4: Run AI extraction (Mistral) to pull structured fields
+  - Step 5: Compute limit_score and tier
+  - Step 6: Update ppl_index
+  - COMPLETE
+
+- Handles large pages by:
+  - Timeboxing Wikipedia fetches.
+  - Chunking large content before writing to storage.
+  - Applying extraction only to a manageable text window.
+
+If the edge function times out or is killed (the “EarlyDrop” scenario in the docs), it may not fully write back the expected fields, which can leave profiles partially indexed. The front‑end now uses maybeSingle instead of single on certain queries to avoid crashing when rows are missing.
+
+4.3 ppl_synopsis and ppl_metrics
+--------------------------------
+
+These two edge functions process:
+
+- ppl_synopsis:
+  - Takes structured data from profile_index and generates concise narrative summaries.
+  - Writes results to ppl_profiles or related tables.
+
+- ppl_metrics:
+  - Queries external polling data and other metrics.
+  - Computes approval/disapproval percentages and other stats.
+  - Writes them to a metrics table for the app to read.
+
+The debugging guide shows how full JSON responses for these functions are logged in PoliticianProfileService at specific line ranges, helping you see exactly what the functions are returning for a given politician ID.
+
+4.4 Legislation profiles
+------------------------
+
+Legislation flows mirror the politician flows:
+
+- legi_index stores data about each bill/legislation item.
+- Edge functions like bill_cards, bill_update, impact_gen, and others fetch or generate the relevant details.
+- app/legislation/legi*.tsx screens display:
+  - Agenda (what the bill does)
+  - Impact (on demographics, economy, etc.)
+  - Discourse (who supports/opposes, media coverage)
+  - Cards that break out specific angles.
+
+The docs show that, over time, these screens were updated to:
+- Use card_index for dynamic card content.
+- Respect the same tier and card limits as politician profiles.
+- Integrate bookmarks and metrics where relevant.
+
+
+5. CARD SYSTEM: FROM HARD‑CODED TEXT TO DATA‑DRIVEN CARDS
+=========================================================
+
+5.1 card_index table and early design
+-------------------------------------
+
+Initially, cards on profile and legislation pages were likely hard‑coded in components (sub1, sub2, sub3, legi1, legi2, legi3, etc.). Over time, Execudex evolved to centralize this into a card_index table in Supabase.
+
+CARD_INDEX_INTEGRATION.md describes the first major pass:
+
+- card_index fields:
+  - owner_id (profile or bill ID)
+  - is_ppl (true for politician, false for legislation)
+  - screen (which subpage this card belongs to: agenda, identity, affiliates, etc.)
+  - is_preview (whether the card should appear as a preview on main subpages)
+  - title, subtext, opens_7d (traffic metric)
+- A separation between:
+  - Preview cards (is_preview = true) used on core subpages (sub1, sub2, sub3 for ppl; legi1, legi2, legi3 for legislation).
+  - Category cards (is_preview = false) used on more detailed category screens like sub4 or legi4.
+
+utils/cardData.ts introduced helper functions:
+- fetchCardData: for preview cards.
+- fetchCategoryCardData: for non‑preview cards on category pages.
+- getScreenForPage and getScreenMapping: to translate route/screen names into card_index screen identifiers.
+
+5.2 Tier‑based limits
+---------------------
+
+To avoid overwhelming users and to reflect profile “strength”, the app uses tier‑based card limits:
+
+- base tier: up to 10 cards
+- soft tier: up to 4 cards
+- hard tier: up to 3 cards
+
+Tier for a politician comes from ppl_index; tier for a bill comes from legi_index. The card system:
+- Filters cards for the given owner_id, is_ppl, and screen.
+- Sorts by opens_7d to prioritize the most‑popular cards.
+- Truncates to tier‑appropriate limits.
+- Feeds those into the UI as dynamic titles and subtitles.
+
+When no card data exists:
+- The screens fall back to generic placeholder titles/subtitles, so layout remains stable even when the database is empty.
+
+5.3 Removing is_preview and switching to traffic‑based previews
+---------------------------------------------------------------
+
+CARD_DISPLAY_UPDATE_SUMMARY.md shows a later redesign:
+
+- is_preview is no longer required to decide which cards are “preview”.
+- Instead, pages simply:
+  - Retrieve all cards for a screen via fetchCardData.
+  - Sort them by opens_7d descending.
+  - Treat the highest traffic cards as previews, subject to tier limits.
+
+For category pages:
+- fetchCategoryCardData still filters by category, but also sorts by opens_7d.
+- Category is derived from the page’s button text / title via getCategoryFromTitle (e.g., “Economy”, “Environment”, “Social Programs”, etc.).
+
+This shift reflects a product insight: what matters is not just that a card is flagged preview, but whether users are actually engaging with it. opens_7d becomes a simple operational metric to surface the most useful content without manually curating preview flags.
+
+
+6. BOOKMARKS: FROM FRAGMENTED TO UNIFIED, THEN AUTH‑OPTIONAL
+============================================================
+
+6.1 Unified bookmark system
+---------------------------
+
+UNIFIED_BOOKMARK_SYSTEM_IMPLEMENTATION.md explains how the app moved from separate bookmark hacks to a single bookmarks table:
+
+- bookmarks schema:
+  - id (serial)
+  - user_id (auth.users.id)
+  - owner_id (ID of the target in ppl_index, legi_index, or card_index)
+  - bookmark_type (enum: "ppl", "legi", "card")
+  - created_at
+
+React components updated:
+
+- app/bookmarks.tsx
+  - Fetches bookmark rows for the current user.
+  - Joins against the appropriate index table depending on bookmark_type.
+  - Displays a unified list with type badges.
+  - Navigates back into the correct profile or card on tap.
+
+- app/index1.tsx (politicians), index2.tsx (legislation), sub5.tsx (cards), legi5.tsx (legislation cards):
+  - Each screen has a bookmark button in the header or content area.
+  - Button shows an outline or filled icon based on bookmark existence.
+  - Pressing the button toggles bookmark status via utilities in utils/bookmarkUtils.ts.
+
+utils/bookmarkUtils.ts centralizes logic:
+- checkBookmarkStatus
+- addBookmark
+- removeBookmark
+- toggleBookmark
+- getUserBookmarks
+
+Initially, this was tightly coupled to authentication: bookmarks were per‑user; you had to be signed in to use them.
+
+6.2 Reverting auth requirement for bookmarks
+--------------------------------------------
+
+Later, BOOKMARK_AUTHENTICATION_REVERT.md describes a deliberate product change:
+
+- Bookmark buttons always show, regardless of whether the user is signed in.
+- No sign‑in prompts are shown for bookmarking.
+- Anonymous usage is supported by:
+  - Using a synthetic user_id like "anonymous" when there is no authenticated user.
+  - Allowing getUserBookmarks to work without a user filter, or optionally filter when one is provided.
+
+This was likely driven by UX and growth considerations:
+- Bookmarks are a powerful engagement mechanic; forcing sign‑in first might have been too much friction.
+- The unified table structure was kept, so it will be possible in the future to migrate anonymous bookmarks into per‑user records if you choose.
+
+
+7. PROFILE QUOTAS AND ACCESS CONTROL
+====================================
+
+7.1 Quota goals
+---------------
+
+PROFILE_QUOTA_IMPLEMENTATION.md lays out the goal:
+
+- Basic plan users can open up to 20 unique profiles per week.
+- Plus plan users have effectively unlimited access.
+- The system should:
+  - Track which profiles a user has opened this week.
+  - Reset counts weekly (Sunday midnight EST).
+  - Allow revisiting profiles already opened without using additional quota.
+  - Warn users when they are close to their limit.
+  - Block further opens at the hard limit, with a friendly upgrade path.
+
+7.2 Data model and edge function
+--------------------------------
+
+Database changes:
+- users table gains:
+  - week_profiles: text[] of IDs like "123ppl" or "456legi".
+  - last_reset: timestamptz of the last quota reset.
+  - plan: the user’s plan string ("basic", "plus", etc.).
+
+check_profile_access edge function:
+
+- Input: user_uuid, profile_id, date.
+- Behavior:
+  - Checks the user’s plan; if not "basic", automatically allows.
+  - Checks whether a weekly reset is due based on last_reset and current date in EST.
+  - If reset is due, it clears week_profiles and updates last_reset.
+  - If profile_id is already in week_profiles, allows without consuming extra quota.
+  - If profile_id is new and there are fewer than 20 unique profiles this week:
+    - Appends profile_id, returns allowed: true, profilesUsed count, and optionally showWarning when thresholds like 15 are hit.
+  - If adding a new profile would exceed 20, returns allowed: false with an explanation and resetDate.
+
+7.3 Front‑end integration and eventual refactor
+-----------------------------------------------
+
+Originally, the access check lived directly inside profile screens (index1.tsx, index2.tsx):
+
+- On mount, a useEffect checked profile access.
+- If denied, screens would show an alert and immediately navigate back.
+- This had a critical flaw documented in PROFILE_PROCESSING_FIX_SUMMARY.md:
+  - Expensive profile processing edge functions were being called before the access check, wasting resources and violating limits.
+
+The fix:
+
+- Move access checks into NavigationService.navigateToPoliticianProfile / navigateToLegislationProfile.
+- New flow:
+  1) User taps a profile.
+  2) NavigationService calls checkProfileAccess first.
+  3) If denied, shows alert and returns early – no edge functions and no navigation.
+  4) If allowed, optionally shows warning when close to limit.
+  5) Only then calls PoliticianProfileService.handleProfileOpen (which triggers the edge functions).
+  6) Finally navigates to the profile screen, which now assumes access has already been validated.
+
+Benefits:
+- Subscription constraints enforced before any heavy work.
+- No wasted AI or external API calls for blocked users.
+- Cleaner architecture: access logic centralized in the navigation layer, not duplicated in multiple screens.
+
+subscription.tsx complements this:
+- Shows "X / 20 profiles accessed" for basic plan users.
+- Uses a progress bar colored green under a threshold and red near the limit.
+- Explains when the weekly reset occurs and why the limit exists.
+
+
+8. PAYMENTS, IAP, AND SUBSCRIPTION LIFECYCLE
+============================================
+
+Although this journey doc is focused mainly on the app and data flows, there is clear evidence of serious work on in‑app purchases and subscription status:
+
+- IAP_IMPLEMENTATION_COMPLETE.md and IAP_CONDITIONAL_LOADING_IMPLEMENTED.md describe:
+  - Wiring StoreKit2 (and the Expo IAP module) into the app.
+  - Deferring loading of heavy IAP modules until needed to avoid startup crashes.
+  - Handling purchase flows, receipt validation, and entitlement checks.
+
+- STOREKIT2_MIGRATION_COMPLETE.md indicates:
+  - A completed migration away from older StoreKit / purchase APIs.
+  - Emphasis on reliability and alignment with Apple’s current best practices.
+
+- supabase/functions/apple_webhook/index.ts and verify_receipt functions:
+  - Handle server‑side validation of Apple receipts.
+  - Synchronize subscription status between Apple and the users table.
+
+- subscription.tsx and subs.tsx screens:
+  - Show available plans, current plan, and possibly plan upgrade/downgrade flows.
+  - Integrate with profile quotas and overall app gating.
+
+Putting it together:
+- Execudex is not just a “toy” app reading from Supabase; it’s wired into real payment and subscription infrastructure.
+- There has been explicit effort to avoid IAP‑related crashes by controlling when native modules are loaded and isolating failure modes.
+
+
+9. PUSH NOTIFICATIONS AND ENGAGEMENT
+====================================
+
+Several docs and migrations show the evolution of push notifications:
+
+- PUSH_NOTIFICATIONS_SETUP.md and PUSH_NOTIFICATIONS_USER_STEPS.md:
+  - Detail how Expo push tokens are requested, stored, and maintained.
+  - Explain what users must do (system prompts, settings) to enable notifications.
+
+- supabase/migrations/20250117_create_user_push_tokens.sql and 20250116_create_notifications_table.sql:
+  - Introduce user_push_tokens and notifications tables.
+  - Likely store mappings from user UUIDs to device tokens and records of sent notifications.
+
+- notificationService.ts, pushTokenService.ts:
+  - Encapsulate logic for registering, updating, and invalidating tokens.
+  - Provide a high‑level API for triggering or scheduling notifications.
+
+The design intent:
+- Keep notification plumbing in a service layer, not spread across screens.
+- Make it easy to:
+  - Notify users about new cards or profile updates.
+  - Alert them about weekly quota resets or nearing limits.
+  - Re‑engage lapsed users or highlight new features.
+
+
+10. RELIABILITY, CRASHES, AND DIAGNOSTICS
+=========================================
+
+This is one of the most detailed and hard‑won parts of the Execudex journey. The repo is full of documents describing debugging sessions and crash investigations, especially around:
+
+- Native crashes in Preview/Release builds (SIGSEGV).
+- Splash screen hangs caused by early native module imports.
+- Session persistence bugs.
+- Profile pipeline failures causing “No Data Available” states.
+
+10.1 Splash screen and AsyncStorage
+-----------------------------------
+
+SPLASH_SCREEN_ISOLATION_REPORT.md and related docs show an early class of problems:
+
+- Importing AsyncStorage at module scope caused certain builds to hang indefinitely on the splash screen.
+- The fix was to:
+  - Move AsyncStorage usage into a lazy‑loading pattern, especially inside utils/supabase.ts.
+  - Require AsyncStorage only when getSupabaseClient is first called, not at app startup.
+  - Strip _layout.tsx down to the minimal necessary imports while iterating.
+
+This work led to:
+- A more cautious approach to top‑level imports and initialization.
+- A pattern where “heavy” modules are loaded only when needed, not on every app start.
+
+10.2 Native crashes on “See More” metrics screen
+------------------------------------------------
+
+EXECUDEX_CODEBASE_SYNOPSIS.md documents a major, still‑tricky issue:
+
+- When users tap “See Metrics” on a politician profile (synop.tsx), the app:
+  - Calls Haptics.selectionAsync.
+  - Immediately calls router.push to /profile/see-more with params like name, position, approval, disapproval, votes, pollSummary, pollLink.
+- In Preview/Release builds, tapping this button sometimes causes an instant native crash (SIGSEGV) before any transition animation appears.
+
+The see-more.tsx screen:
+- Imports useRouter and useLocalSearchParams from expo-router.
+- Performs a persistentLogger.log("see-more:module_loaded") at module scope.
+- Immediately calls those hooks at the top of the component and logs again.
+
+Hypotheses explored in the synopsis:
+- Native hook failure in useRouter / useLocalSearchParams.
+- Module evaluation failure due to file‑system logging or AsyncStorage access at module scope.
+- Route params serialization issues on the native side, especially when passing long strings.
+- Race conditions between haptics and router push.
+
+Tools added to investigate:
+- persistentLogger:
+  - Writes JSON log entries into AsyncStorage and a debug.log file via expo-file-system.
+  - Provides checkpoint logging around native calls and route transitions.
+- nativeCallDebugger:
+  - Wraps native calls in a safeNativeCall function that logs before and after states and can be controlled by debug flags.
+- debugFlags:
+  - Lets you toggle off certain classes of native calls (haptics, router, linking, Supabase) to isolate crash causes in builds.
+- debug screens:
+  - debug-logs to view persisted logs.
+  - debug-flags to control behavior at runtime.
+  - debug-supabase-health to confirm backend connectivity.
+
+Even with these tools, some crashes are so early and so native that no logs make it to disk. The docs explicitly acknowledge that some issues may require deeper native debugging tools (Xcode / Android Studio) that aren’t always convenient.
+
+10.3 Session persistence and access flows
+----------------------------------------
+
+SESSION_PERSISTENCE_FIX.md and related docs describe:
+
+- Issues where users would get kicked out or stuck in inconsistent auth states because the app:
+  - Did not correctly handle INITIAL_SESSION events.
+  - Confused transient network problems with permanent auth failures.
+- Fixes included:
+  - Distinguishing between “no session yet” and “session expired/broken”.
+  - Improving error handling in AuthProvider.
+  - Ensuring that onboarding and plan checks are robust even when Supabase is temporarily unreachable.
+
+10.4 Debugging profile pipelines
+--------------------------------
+
+The profile processing debugging guide walks through:
+
+- How to interpret logs in both the app and Supabase Edge Function logs.
+- Common failure patterns:
+  - Wikipedia fetch timeouts or missing pages.
+  - Large content causing slow storage writes or extraction runs.
+  - Concurrency settings leading to high memory usage.
+- Fixes made:
+  - More granular logging in profile_index.
+  - Changing front‑end queries to maybeSingle to avoid PGRST116 errors when rows are missing.
+  - Adding manual “Generate Metrics” buttons so users (or you) can retry processing for problematic profiles on demand.
+
+
+11. SEARCH, RESULTS, AND CARD Q&A
+=================================
+
+11.1 Search (exp1.tsx) and results
+----------------------------------
+
+Search flows:
+- exp1.tsx has a handleSearch function that:
+  - Calls getSupabaseClient to get the Supabase client.
+  - Queries ppl_index and legi_index tables using a combination of ilike and or filters.
+  - Combines results into a unified list.
+  - Navigates to results.tsx with these results as params.
+
+There is a known bug path where:
+- The Supabase or query syntax can fail, leading to “failed to load results” messages.
+- EXECUDEX_CODEBASE_SYNOPSIS.md notes that the .or syntax may not exactly match Supabase’s expectations, and that better error handling and query design are still open tasks.
+
+11.2 Card Q&A (card-questions.tsx)
+----------------------------------
+
+The card-questions.tsx screen shows another layer of Execudex’s ambition:
+
+- When a user taps “Ask a question” on a card, they land on a Q&A screen tied to a specific card_id.
+- The screen:
+  - Reads cardId from route params (robustly handling string/array variations).
+  - On mount, fetches existing questions from the questions table where card_id matches (with both numeric and string fallbacks).
+  - Displays a vertically stacked list of “question / answer / Answered by Execudex” cards, with dynamically computed border radius based on measured height for better aesthetics.
+  - Lets users type a question up to 200 characters.
+  - On submit:
+    - Invokes the Supabase edge function card-questions with question and card_id.
+    - If successful, immediately prepends the new Q&A pair to the local list.
+    - Uses CardLoadingIndicator to show an overlay while waiting for an answer.
+
+This is where Execudex stops being just a static “index” and starts to feel like an interactive assistant:
+- Each card becomes a living entry point for questions and answers.
+- Answers can be precomputed, reviewed, or filtered server‑side, while the app stays responsive.
+
+
+12. JOURNEY THEMES AND LESSONS
+==============================
+
+Looking across all of these features and docs, a few themes stand out in the Execudex journey.
+
+12.1 Layering complexity without losing control
+-----------------------------------------------
+
+Execudex started as a more straightforward “show profiles from Supabase” app, and gradually acquired:
+
+- AI‑driven indexing (profile_index, ppl_synopsis, ppl_metrics).
+- Traffic‑aware card presentation (opens_7d).
+- Subscription and quotas (plans, weekly limits).
+- In‑app purchases and Apple receipts.
+- Push notifications and engagement flows.
+
+Throughout, the code shows repeated attempts to:
+- Keep business logic in services (navigationService, profileAccessService, cardGenerationService, etc.).
+- Keep screens as “thin” as possible, triggering high‑level actions rather than directly performing complex flows.
+- Separate server‑side responsibilities (edge functions) from client‑side rendering.
+
+12.2 Debug first, then optimize
+-------------------------------
+
+Many docs are essentially post‑mortems:
+
+- SIGN_OUT_ISSUE_ANALYSIS, SIGN_OUT_AND_ACCOUNT_DELETION_COMPREHENSIVE_ANALYSIS.
+- CRASH_DEBUGGING_GUIDE, DEBUG_CRASH_ISOLATION, PERSISTENT_DEBUGGING.
+- PYTHON_SCRIPT_README, ENRICH_ALL_BILLS instructions, and others focused on data pipelines.
+
+The pattern:
+- Hit a bug (crash, hang, wrong data).
+- Instrument heavily (logs, flags, guards).
+- Isolate the minimal reproduction.
+- Refactor to a more robust architecture once you understand what’s really going on.
+
+12.3 Respecting constraints but not blocking users
+--------------------------------------------------
+
+Examples:
+
+- Profile quotas:
+  - Implemented to protect resource usage and enforce subscription value.
+  - But backed by logic that “fails open” in many edge cases (on certain errors, default to allowing access rather than blocking users with a mysterious failure).
+
+- Profile access and expensive edge functions:
+  - At first, access checks happened after processing, which wasted work.
+  - The fix did not just make it stricter; it also improved the UX: users get clear alerts and stay on their current screen instead of getting bounced around.
+
+- Bookmarks:
+  - At one point, bookmarks required authentication and were per‑user.
+  - Later, based on product needs, this requirement was loosened, while preserving a design that can be tightened again in the future.
+
+12.4 Native boundaries are where things get weird
+-------------------------------------------------
+
+The hardest bugs live at the JS/native boundary:
+
+- AsyncStorage and app startup.
+- Haptics and router calls in tight sequences.
+- File system logging in Preview builds.
+- Expo Router hooks invoked at just the wrong time.
+
+The repo shows that dealing with these has required:
+- Careful import discipline.
+- Debug toggles that can disable classes of native calls.
+- Persistent logs written to disk rather than relying on ephemeral console output.
+- Willingness to restructure flows (e.g., move access checks out of the screen) if that gives a clearer picture of where the crash actually happens.
+
+
+13. HOW TO THINK ABOUT EXECUDEX GOING FORWARD
+============================================
+
+Given the current code and docs, here is a mental model that future you can use.
+
+13.1 Treat it as a “data product”, not just an app
+--------------------------------------------------
+
+Execudex is fundamentally about:
+- Ingesting and structuring political and legislative data.
+- Transforming it via AI and custom logic into human‑friendly cards and metrics.
+- Surfacing that content through a subscription app with strong UX and guardrails.
+
+Any big new feature should be thought of in terms of:
+- Which tables and edge functions support it?
+- How will we debug failures in that pipeline?
+- How does it intersect with subscription, quotas, IAP, and notifications?
+
+13.2 Keep business logic out of components
+-----------------------------------------
+
+The best pieces of the current architecture:
+- NavigationService controlling complex flows and gating logic.
+- Profile services orchestrating edge function pipelines.
+- Utils like cardData, bookmarkUtils, debugFlags centralizing concerns.
+
+Future work should keep reinforcing that pattern:
+- Components should declare intent (“open profile X”, “toggle bookmark Y”, “ask question Z”), not know the entire how.
+
+13.3 Maintain and evolve the diagnostics layer
+----------------------------------------------
+
+The persistentLogger, nativeCallDebugger, and various debug screens are not just band‑aids; they are foundational to operating a complex app with:
+- External APIs.
+- AI.
+- Native modules.
+
+Investing a bit more in:
+- Centralized log viewing.
+- Lightweight remote log export.
+- Consistent naming and categorization of events.
+
+Will continue to pay off whenever a new class of crash or data glitch appears.
+
+
+14. CLOSING
+===========
+
+This document cannot perfectly capture every decision or late‑night debugging session that went into Execudex, but it reflects what the current code and docs reveal:
+
+- A serious attempt to build a production‑grade political intelligence app.
+- A willingness to refactor and change course in response to real‑world behavior.
+- A strong instinct to instrument, measure, and understand problems before trying to “optimize” them away.
+
+As you continue building Execudex, you can treat this file as:
+- A snapshot of where the architecture and product thinking stand today.
+- A baseline you can update whenever you make a major architectural or product shift.
+
+The journey so far is already non‑trivial. The fact that you’ve invested in this level of logging, quotas, indexing, and UX flow control means you’re building on real product pain and experience – which is exactly the right raw material for something enduring.
+

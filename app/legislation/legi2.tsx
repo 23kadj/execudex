@@ -231,7 +231,10 @@ export default function Legi2({ scrollY, name, position, scrollRef }: Legi2Props
     
     setIsGeneratingCards(true);
     try {
-      const result = await CardGenerationService.generateImpactCards(parseInt(legislationId));
+      const ownerId = parseInt(legislationId);
+      const beforeGenerationTimestamp = new Date().toISOString();
+      
+      const result = await CardGenerationService.generateImpactCards(ownerId);
       
       // Check if operation was aborted
       if (abortControllerRef.current?.signal.aborted) {
@@ -244,11 +247,18 @@ export default function Legi2({ scrollY, name, position, scrollRef }: Legi2Props
           setShowInsufficientCardsMessage(true);
           setShowGenerateButton(false);
           // Mark legislation as weak in database
-          await CardGenerationService.markLegislationAsWeak(parseInt(legislationId));
+          await CardGenerationService.markLegislationAsWeak(ownerId);
         } else {
+          // Get IDs of newly generated cards for new-gen redirect
+          const generatedCardIds = await CardGenerationService.getGeneratedCardIds(
+            ownerId,
+            false, // isPpl - legislation
+            beforeGenerationTimestamp
+          );
+          
           // Refresh cards after generation
           const cards = await fetchCardsByScreen({
-            ownerId: parseInt(legislationId),
+            ownerId,
             isPpl: false,
             pageName: 'legi2',
             tier: tier
@@ -256,8 +266,16 @@ export default function Legi2({ scrollY, name, position, scrollRef }: Legi2Props
           setCardData(cards);
           
           // Check if button should still be shown
-          const shouldShow = await CardGenerationService.checkImpactButtonVisibility(parseInt(legislationId));
+          const shouldShow = await CardGenerationService.checkImpactButtonVisibility(ownerId);
           setShowGenerateButton(shouldShow);
+          
+          // Redirect to new-gen page when we have newly generated cards
+          if (generatedCardIds.length > 0) {
+            router.push({
+              pathname: '/new-gen',
+              params: { cardIds: generatedCardIds.join(',') },
+            });
+          }
         }
       } else {
         // If generation failed, check if it's due to insufficient material

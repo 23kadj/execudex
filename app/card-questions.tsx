@@ -134,8 +134,8 @@ export default function CardQuestions() {
   }, [dismissKeyboard]);
 
   const characterCount = questionText.length;
-  const isAtLimit = characterCount === 100;
-  const isNearLimit = characterCount >= 75;
+  const isAtLimit = characterCount === 200;
+  const isNearLimit = characterCount >= 150;
 
   let counterColor = '#fff';
   if (isAtLimit) counterColor = '#ff0000';
@@ -178,7 +178,7 @@ export default function CardQuestions() {
                 value={String(questionText ?? '')}
                 onChangeText={(text) => setQuestionText(String(text ?? ''))}
                 multiline
-                maxLength={100}
+                maxLength={200}
                 editable={!isSubmitting}
                 textAlignVertical="top"
                 keyboardAppearance={Platform.OS === 'ios' ? 'dark' : 'default'}
@@ -203,7 +203,7 @@ export default function CardQuestions() {
                 </Text>
               </TouchableOpacity>
               <Text style={[styles.characterCounter, { color: counterColor }]}>
-                {characterCount}/100
+                {characterCount}/200
               </Text>
             </View>
           </View>
@@ -275,7 +275,7 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
   },
   textBoxContainer: {
-    height: 150,
+    height: 200,
     marginBottom: 20,
   },
   textInput: {

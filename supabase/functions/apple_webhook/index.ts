@@ -1,53 +1,83 @@
-// Apple App Store Server Notifications Webhook
+// Apple App Store Server Notifications Webhook (Version 2)
 // Handles subscription lifecycle events from Apple
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3'
+import { Buffer } from 'node:buffer'
+import { SignedDataVerifier, Environment } from 'npm:@apple/app-store-server-library@3.1.0'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-interface AppleNotification {
-  notificationType: string
-  subtype?: string
-  data: {
-    signedTransactionInfo?: string
-    signedRenewalInfo?: string
-  }
+const BUNDLE_ID = 'com.execudex.app'
+
+// Apple Root CA - G3 (https://www.apple.com/certificateauthority/AppleRootCA-G3.cer)
+// This is the root of trust for App Store Server Notification / transaction JWS chains.
+// Embedded directly so verification has no runtime dependency on fetching it.
+const APPLE_ROOT_CA_G3_BASE64 =
+  'MIICQzCCAcmgAwIBAgIILcX8iNLFS5UwCgYIKoZIzj0EAwMwZzEbMBkGA1UEAwwSQXBwbGUgUm9vdCBDQSAtIEczMSYwJAYDVQQLDB1BcHBsZSBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTETMBEGA1UECgwKQXBwbGUgSW5jLjELMAkGA1UEBhMCVVMwHhcNMTQwNDMwMTgxOTA2WhcNMzkwNDMwMTgxOTA2WjBnMRswGQYDVQQDDBJBcHBsZSBSb290IENBIC0gRzMxJjAkBgNVBAsMHUFwcGxlIENlcnRpZmljYXRpb24gQXV0aG9yaXR5MRMwEQYDVQQKDApBcHBsZSBJbmMuMQswCQYDVQQGEwJVUzB2MBAGByqGSM49AgEGBSuBBAAiA2IABJjpLz1AcqTtkyJygRMc3RCV8cWjTnHcFBbZDuWmBSp3ZHtfTjjTuxxEtX/1H7YyYl3J6YRbTzBPEVoA/VhYDKX1DyxNB0cTddqXl5dvMVztK517IDvYuVTZXpmkOlEKMaNCMEAwHQYDVR0OBBYEFLuw3qFYM4iapIqZ3r6966/ayySrMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMDA2gAMGUCMQCD6cHEFl4aXTQY2e3v9GwOAEZLuN+yRhHFD/3meoyhpmvOwgPUnPWTxnS4at+qIxUCMG1mihDK1A3UT82NQz60imOlM27jbdoXt2QfyFMm+YhidDkLF1vLUagM6BgD56KyKA=='
+
+const appleRootCertificates = [Buffer.from(APPLE_ROOT_CA_G3_BASE64, 'base64')]
+
+// enableOnlineChecks=true: also checks cert revocation (OCSP) and current-time expiry against Apple.
+const sandboxVerifier = new SignedDataVerifier(appleRootCertificates, true, Environment.SANDBOX, BUNDLE_ID)
+
+// Production verification requires the app's numeric App Store Connect Apple ID
+// (App Store Connect > App Information > General Information > Apple ID) — set as
+// the APPLE_APP_APPLE_ID secret. Until it's configured, Production notifications are
+// safely rejected rather than accepted unverified.
+const appAppleIdRaw = Deno.env.get('APPLE_APP_APPLE_ID')
+const appAppleId = appAppleIdRaw ? Number(appAppleIdRaw) : undefined
+let productionVerifier: SignedDataVerifier | null = null
+if (appAppleId !== undefined && Number.isFinite(appAppleId)) {
+  productionVerifier = new SignedDataVerifier(appleRootCertificates, true, Environment.PRODUCTION, BUNDLE_ID, appAppleId)
+} else {
+  console.warn('⚠️ APPLE_APP_APPLE_ID secret not set — Production App Store notifications will be rejected until it is configured.')
 }
 
-// Decode JWT payload without verification (verification happens separately)
-function decodeJWT(token: string): any {
-  const parts = token.split('.')
-  if (parts.length !== 3) {
-    throw new Error('Invalid JWT format')
-  }
-  
-  const payload = parts[1]
-  const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
-  return JSON.parse(decoded)
+function base64UrlDecode(input: string): string {
+  const padded = input.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = (4 - (padded.length % 4)) % 4
+  return atob(padded + '='.repeat(pad))
 }
 
-// Verify Apple's JWT signature using Apple's public keys
-async function verifyAppleJWT(token: string): Promise<boolean> {
+// Best-effort peek at the (still unverified) environment field so we try the right
+// verifier first. Not a security boundary — verifyAndDecodeNotification() below is
+// what actually checks the signature, and we fall back to the other verifier if this
+// guess was wrong.
+function peekEnvironment(signedPayload: string): string | undefined {
   try {
-    // In production, you should:
-    // 1. Fetch Apple's public keys from https://appleid.apple.com/auth/keys
-    // 2. Verify the JWT signature using the appropriate key
-    // 3. Verify the token hasn't expired
-    // 4. Verify the token issuer is Apple
-    
-    // For now, we'll decode and log but skip verification
-    // TODO: Implement full JWT verification for production
-    const decoded = decodeJWT(token)
-    console.log('🔐 JWT decoded (verification skipped for now):', decoded)
-    return true
-  } catch (error) {
-    console.error('❌ JWT verification failed:', error)
-    return false
+    const parts = signedPayload.split('.')
+    if (parts.length !== 3) return undefined
+    const payload = JSON.parse(base64UrlDecode(parts[1]))
+    return payload?.data?.environment || payload?.summary?.environment
+  } catch {
+    return undefined
   }
+}
+
+async function verifyNotification(signedPayload: string) {
+  const guessedEnv = peekEnvironment(signedPayload)
+  const primary = guessedEnv === Environment.PRODUCTION ? productionVerifier : sandboxVerifier
+  const fallback = primary === productionVerifier ? sandboxVerifier : productionVerifier
+  const candidates = [primary, fallback].filter((v): v is SignedDataVerifier => v !== null)
+
+  if (candidates.length === 0) {
+    throw new Error('No verifier available for this environment (APPLE_APP_APPLE_ID not configured)')
+  }
+
+  let lastError: unknown
+  for (const verifier of candidates) {
+    try {
+      const decoded = await verifier.verifyAndDecodeNotification(signedPayload)
+      return { decoded, verifier }
+    } catch (e) {
+      lastError = e
+    }
+  }
+  throw lastError
 }
 
 // Log event to user's sub_logs
@@ -113,35 +143,56 @@ serve(async (req) => {
   try {
     console.log('📩 Received Apple webhook notification')
 
-    // Parse the notification
-    const notification: AppleNotification = await req.json()
-    console.log('📦 Notification type:', notification.notificationType)
-    console.log('📦 Subtype:', notification.subtype)
+    // Apple's actual wire format is a single signed JWS: { signedPayload: "ey..." }
+    // which decodes to { notificationType, subtype, data: { signedTransactionInfo, signedRenewalInfo } }.
+    const body = await req.json()
+    const signedPayload: string | undefined = body?.signedPayload
 
-    // Verify JWT signature (if present)
-    if (notification.data?.signedTransactionInfo) {
-      const isValid = await verifyAppleJWT(notification.data.signedTransactionInfo)
-      if (!isValid) {
-        console.error('❌ Invalid JWT signature')
-        return new Response(
-          JSON.stringify({ error: 'Invalid signature' }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        )
+    if (!signedPayload || typeof signedPayload !== 'string') {
+      console.error('❌ Missing signedPayload in webhook body')
+      return new Response(
+        JSON.stringify({ error: 'Missing signedPayload' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    let decoded: any
+    let verifier: SignedDataVerifier
+    try {
+      const result = await verifyNotification(signedPayload)
+      decoded = result.decoded
+      verifier = result.verifier
+    } catch (verifyError) {
+      console.error('❌ Notification signature verification failed:', verifyError)
+      return new Response(
+        JSON.stringify({ error: 'Invalid signature' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const notificationType: string | undefined = decoded.notificationType
+    const subtype: string | undefined = decoded.subtype
+    console.log('📦 Notification type:', notificationType, '| Subtype:', subtype)
+
+    // Each nested JWS is independently signed and must be independently verified.
+    let transactionInfo: any = {}
+    if (decoded.data?.signedTransactionInfo) {
+      try {
+        transactionInfo = await verifier.verifyAndDecodeTransaction(decoded.data.signedTransactionInfo)
+        console.log('💳 Transaction info verified:', transactionInfo)
+      } catch (e) {
+        console.error('❌ Transaction info verification failed:', e)
       }
     }
 
-    // Decode transaction info
-    let transactionInfo: any = {}
-    if (notification.data?.signedTransactionInfo) {
-      transactionInfo = decodeJWT(notification.data.signedTransactionInfo)
-      console.log('💳 Transaction info:', transactionInfo)
-    }
-
-    // Decode renewal info
     let renewalInfo: any = {}
-    if (notification.data?.signedRenewalInfo) {
-      renewalInfo = decodeJWT(notification.data.signedRenewalInfo)
-      console.log('🔄 Renewal info:', renewalInfo)
+    if (decoded.data?.signedRenewalInfo) {
+      try {
+        renewalInfo = await verifier.verifyAndDecodeRenewalInfo(decoded.data.signedRenewalInfo)
+        console.log('🔄 Renewal info verified:', renewalInfo)
+      } catch (e) {
+        console.error('❌ Renewal info verification failed:', e)
+      }
     }
 
     // Initialize Supabase client
@@ -171,16 +222,14 @@ serve(async (req) => {
 
     console.log('👤 Found user:', userId)
 
-    // Handle different notification types
-    const notificationType = notification.notificationType
-    const expiresDate = transactionInfo.expiresDate ? new Date(parseInt(transactionInfo.expiresDate)) : null
+    const expiresDate = transactionInfo.expiresDate ? new Date(transactionInfo.expiresDate) : null
 
     switch (notificationType) {
-      case 'INITIAL_BUY':
-        // Initial subscription purchase - promote pending transaction ID
-        console.log('✅ Initial subscription purchase')
+      case 'SUBSCRIBED': {
+        // subtype INITIAL_BUY: first purchase. RESUBSCRIBE: reactivated after lapsing.
+        console.log(`✅ Subscribed (${subtype})`)
 
-        const initialBuyResult = await supabase
+        const subscribedResult = await supabase
           .from('users')
           .update({
             last_transaction_id: originalTransactionId, // Promote from pending to permanent
@@ -191,17 +240,25 @@ serve(async (req) => {
           .eq('pending_transaction_id', originalTransactionId)
           .select();
 
-        if (initialBuyResult.data && initialBuyResult.data.length === 0) {
-          console.warn('⚠️ No pending transaction found for INITIAL_BUY, this may indicate a processing issue');
+        if (subscribedResult.data && subscribedResult.data.length === 0) {
+          // No pending transaction matched (e.g. resubscribe on an already-linked account) - update directly.
+          await supabase
+            .from('users')
+            .update({
+              plan: 'plus',
+              plus_til: expiresDate?.toISOString() || null
+            })
+            .eq('id', userId);
         }
 
         await logToSubLogs(
           supabase,
           userId,
-          'INITIAL_BUY',
-          `Subscription activated until ${expiresDate?.toISOString() || 'unknown'}`
+          'SUBSCRIBED',
+          `${subtype || ''} subscription activated until ${expiresDate?.toISOString() || 'unknown'}`
         )
         break;
+      }
 
       case 'DID_RENEW':
         // Subscription renewed successfully
@@ -229,7 +286,7 @@ serve(async (req) => {
             })
             .eq('id', userId);
         }
-        
+
         await logToSubLogs(
           supabase,
           userId,
@@ -249,7 +306,7 @@ serve(async (req) => {
             plus_til: null
           })
           .eq('id', userId)
-        
+
         await logToSubLogs(
           supabase,
           userId,
@@ -262,7 +319,7 @@ serve(async (req) => {
         // User turned auto-renew on or off
         const autoRenewStatus = renewalInfo.autoRenewStatus
         console.log('🔄 Auto-renew status changed:', autoRenewStatus)
-        
+
         if (autoRenewStatus === 0) {
           // Auto-renew turned OFF - schedule downgrade
           if (expiresDate) {
@@ -272,7 +329,7 @@ serve(async (req) => {
                 plus_til: expiresDate.toISOString()
               })
               .eq('id', userId)
-            
+
             await logToSubLogs(
               supabase,
               userId,
@@ -288,7 +345,7 @@ serve(async (req) => {
               plus_til: null
             })
             .eq('id', userId)
-          
+
           await logToSubLogs(
             supabase,
             userId,
@@ -309,7 +366,7 @@ serve(async (req) => {
             plus_til: null
           })
           .eq('id', userId)
-        
+
         await logToSubLogs(
           supabase,
           userId,
@@ -329,7 +386,7 @@ serve(async (req) => {
             plus_til: null
           })
           .eq('id', userId)
-        
+
         await logToSubLogs(
           supabase,
           userId,
@@ -355,8 +412,8 @@ serve(async (req) => {
         await logToSubLogs(
           supabase,
           userId,
-          notificationType,
-          `Unhandled notification: ${JSON.stringify(notification)}`
+          notificationType || 'UNKNOWN',
+          `Unhandled notification: ${JSON.stringify({ notificationType, subtype })}`
         )
     }
 
@@ -364,7 +421,7 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({ message: 'Webhook processed successfully' }),
-      { 
+      {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       }
@@ -374,13 +431,10 @@ serve(async (req) => {
     console.error('❌ Webhook processing error:', error)
     return new Response(
       JSON.stringify({ error: error.message }),
-      { 
+      {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       }
     )
   }
 })
-
-
-

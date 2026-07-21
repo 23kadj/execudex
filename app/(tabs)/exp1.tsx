@@ -1111,7 +1111,7 @@ const exp1 = React.memo(() => {
                     <Text style={styles.legislationTitleNew}>Update Legislation</Text>
                   </View>
                   <View style={styles.legislationBottomRow}>
-                    <Text style={styles.legislationSubtitleNew}>Create new legislation profiles for trending bills on Congress.gov</Text>
+                    <Text style={styles.legislationSubtitleNew}>Discover new legislation on Congress.gov</Text>
                   </View>
                 </View>
               </Pressable>

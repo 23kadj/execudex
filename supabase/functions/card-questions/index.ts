@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
     const question = typeof body.question === "string" ? body.question.trim() : "";
     const cardId = typeof body.card_id === "number" ? body.card_id : typeof body.card_id === "string" ? parseInt(body.card_id, 10) : null;
 
-    if (!question || question.length > 100) {
+    if (!question || question.length > 200) {
       return new Response(JSON.stringify({ success: false, fail: true }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

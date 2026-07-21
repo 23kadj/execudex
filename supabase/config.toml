@@ -19,3 +19,10 @@ entrypoint = "./functions/bill_update/index.ts"
 enabled = true
 verify_jwt = true
 entrypoint = "./functions/bill_search/index.ts"
+
+[functions.apple_webhook]
+enabled = true
+# Apple's App Store Server Notifications POST here with no Supabase auth header —
+# trust comes from verifying the JWS signature/cert chain in-function instead.
+verify_jwt = false
+entrypoint = "./functions/apple_webhook/index.ts"
