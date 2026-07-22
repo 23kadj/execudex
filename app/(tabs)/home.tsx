@@ -223,7 +223,7 @@ const BUTTONS_LEFT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 1,
+    index: 231,
   },
   {
     img: null,
@@ -233,7 +233,7 @@ const BUTTONS_LEFT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 2,
+    index: 196,
   },
   {
     img: null,
@@ -243,7 +243,7 @@ const BUTTONS_LEFT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 3,
+    index: 232,
   },
   {
     img: null,
@@ -253,7 +253,7 @@ const BUTTONS_LEFT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 4,
+    index: 106,
   },
   {
     img: null,
@@ -263,7 +263,7 @@ const BUTTONS_LEFT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 5,
+    index: 114,
   },
   {
     img: null,
@@ -273,7 +273,7 @@ const BUTTONS_LEFT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 6,
+    index: 175,
   },
   {
     img: null,
@@ -296,7 +296,7 @@ const BUTTONS_RIGHT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 7,
+    index: 176,
   },
   {
     img: null,
@@ -306,7 +306,7 @@ const BUTTONS_RIGHT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 8,
+    index: 189,
   },
   {
     img: null,
@@ -316,7 +316,7 @@ const BUTTONS_RIGHT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 9,
+    index: 206,
   },
   {
     img: null,
@@ -326,7 +326,7 @@ const BUTTONS_RIGHT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 10,
+    index: 259,
   },
   {
     img: null,
@@ -336,7 +336,7 @@ const BUTTONS_RIGHT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 11,
+    index: 285,
   },
   {
     img: null,
@@ -346,7 +346,7 @@ const BUTTONS_RIGHT_LEGI = [
     greenUp: null,
     redDown: null,
     level: undefined,
-    index: 12,
+    index: 290,
   },
   {
     img: null,
@@ -2088,42 +2088,47 @@ export default function Home() {
   const fetchLegislationData = async () => {
       try {
         console.log('Fetching legislation data for home page...');
-        
-        // Fetch all data from legi_index
+
+        // Featured 2026 legislation IDs (swapped out from the original 2025 set)
+        const trendingLegiIds = [231, 196, 232, 106, 114, 175];
+        const topRatedLegiIds = [176, 189, 206, 259, 285, 290];
+
         const { data: allData, error } = await getSupabaseClient()
           .from('legi_index')
           .select('id, name, sub_name')
-          .order('id', { ascending: true });
-        
+          .in('id', [...trendingLegiIds, ...topRatedLegiIds]);
+
         if (error) {
           console.error('Error fetching legislation data:', error);
           return;
         }
-        
+
         if (allData && allData.length > 0) {
           console.log('Successfully fetched data from legi_index:', allData);
-          
+
           // Update trending legislation data (indices 1-6)
           const newTrendingLegiData = [...trendingLegiData];
           for (let i = 0; i < 6; i++) {
-            const legislation = allData.find(l => l.id === i + 1);
+            const legislation = allData.find(l => l.id === trendingLegiIds[i]);
             if (legislation) {
               newTrendingLegiData[i] = {
                 ...newTrendingLegiData[i],
+                index: legislation.id,
                 title: legislation.name || 'No Data Available',
                 subtitle: legislation.sub_name || 'No Data Available',
               };
             }
           }
           setTrendingLegiData(newTrendingLegiData);
-          
+
           // Update top rated legislation data (indices 7-12)
           const newTopRatedLegiData = [...topRatedLegiData];
           for (let i = 0; i < 6; i++) {
-            const legislation = allData.find(l => l.id === i + 7);
+            const legislation = allData.find(l => l.id === topRatedLegiIds[i]);
             if (legislation) {
               newTopRatedLegiData[i] = {
                 ...newTopRatedLegiData[i],
+                index: legislation.id,
                 title: legislation.name || 'No Data Available',
                 subtitle: legislation.sub_name || 'No Data Available',
               };
