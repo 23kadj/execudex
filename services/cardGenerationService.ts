@@ -1,3 +1,4 @@
+import { LEGISLATION_MIN_CARDS_FOR_FULL_ACCESS } from './profileLockService';
 import { getSupabaseClient } from '../utils/supabase';
 
 interface CardGenerationResult {
@@ -848,17 +849,29 @@ export class CardGenerationService {
 
       // Step 2: Check if legislation has any cards
       const cardCount = await this.checkLegislationCardCount(legislationId);
-      const hasCards = cardCount > 0;
-      
-      console.log(`Legislation ${legislationId} button visibility:`, {
-        isWeak: indexData.weak,
-        cardCount,
-        hasCards,
-        shouldShow: !hasCards
-      });
 
-      // Show button if NOT weak AND has no cards
-      return !hasCards;
+      // No cards at all — the original case; offer generation unconditionally.
+      if (cardCount === 0) {
+        console.log(`Legislation ${legislationId} button visibility: no cards, showing`);
+        return true;
+      }
+
+      // Below the full-access threshold the bill is locked to Overview, so legi1/2/3
+      // and their own Generate buttons are unreachable. Overview then has to offer the
+      // only remaining way to add cards, or a limited bill could never be enriched.
+      // Defer to the bill_cards predicate so it only appears while there is still
+      // unconsumed bill text to generate from.
+      if (cardCount < LEGISLATION_MIN_CARDS_FOR_FULL_ACCESS) {
+        const hasMaterial = await this.checkBillCardsButtonVisibility(legislationId);
+        console.log(`Legislation ${legislationId} button visibility:`, {
+          cardCount,
+          locked: true,
+          hasMaterial,
+        });
+        return hasMaterial;
+      }
+
+      return false;
     } catch (error) {
       console.error('Error in shouldShowGenerateButtonForOverview:', error);
       return false;

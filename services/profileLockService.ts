@@ -3,10 +3,22 @@ import { getSupabaseClient } from '../utils/supabase';
 
 export interface ProfileLockStatus {
   isLocked: boolean;
-  lockReason: 'no_cards' | 'weak_profile' | 'none';
+  lockReason: 'no_cards' | 'weak_profile' | 'limited_cards' | 'none';
   lockedPage: 'synopsis' | 'overview' | null;
   profileType: 'politician' | 'legislation';
 }
+
+/**
+ * A bill needs at least this many cards before Agenda/Impact/Discourse are worth
+ * opening; below it the sub-pages render mostly blank, so the profile locks to
+ * Overview and surfaces its cards there instead. This is the same threshold
+ * app/overview.tsx already reports to the user ("Only agenda page will be
+ * accessible") after a low-yield generation run.
+ *
+ * Politician profiles intentionally do NOT use this — they keep their own
+ * weak-flag / zero-card rule in checkPoliticianLockStatus.
+ */
+export const LEGISLATION_MIN_CARDS_FOR_FULL_ACCESS = 10;
 
 export class ProfileLockService {
   /**
@@ -152,11 +164,13 @@ export class ProfileLockService {
         };
       }
 
-      // Step 3: Check card count for new logic
+      // Step 3: Lock anything that can't fill the sub-pages. 0 cards keeps the
+      // 'no_cards' reason because legislationProfileService acts on it (it writes
+      // weak = true). A partially-filled bill reports 'limited_cards' instead, so it
+      // gets the same overview lock without being permanently marked weak.
       const cardCount = await this.checkLegislationCardCount(profileId);
-      
+
       if (cardCount === 0) {
-        // 0 cards = full lock (weak profile)
         return {
           isLocked: true,
           lockReason: 'no_cards',
@@ -164,7 +178,15 @@ export class ProfileLockService {
           profileType: 'legislation'
         };
       }
-      // Note: 1-8 cards = no lock, just hide tab bar (handled in UI)
+
+      if (cardCount < LEGISLATION_MIN_CARDS_FOR_FULL_ACCESS) {
+        return {
+          isLocked: true,
+          lockReason: 'limited_cards',
+          lockedPage: 'overview',
+          profileType: 'legislation'
+        };
+      }
 
       return {
         isLocked: false,

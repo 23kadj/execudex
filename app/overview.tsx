@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -13,9 +13,20 @@ import {
   View
 } from 'react-native';
 import { useAuth } from '../components/AuthProvider';
+import { CardLoadingIndicator } from '../components/CardLoadingIndicator';
 import { CardGenerationService } from '../services/cardGenerationService';
+import { CardService } from '../services/cardService';
 import { NavigationService } from '../services/navigationService';
+import { ProfileLockService } from '../services/profileLockService';
 import { getSupabaseClient } from '../utils/supabase';
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+interface LockedCard {
+  id: number;
+  title: string | null;
+  subtext: string | null;
+}
 
 // Simple skeleton loader component
 const SkeletonLoader = ({ width = '100%', height = 60 }: { width?: number | `${number}%`, height?: number }) => {
@@ -92,6 +103,16 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
   const [isGeneratingCards, setIsGeneratingCards] = useState(false);
   const [showGenerateButton, setShowGenerateButton] = useState(false);
   const generateButtonScale = useRef(new Animated.Value(1)).current;
+
+  // Cards shown inline when the bill is locked to this page (weak, or too few cards
+  // to fill Agenda/Impact/Discourse). Mirrors what synop.tsx does for weak politician
+  // profiles: the sub-pages stay unreachable, so their cards surface here instead.
+  const [lockedCards, setLockedCards] = useState<LockedCard[]>([]);
+  const [isCardLoading, setIsCardLoading] = useState(false);
+  const currentLoadingCardId = useRef<number | null>(null);
+  const lockedCardScales = useRef<Animated.Value[]>(
+    Array.from({ length: 9 }, () => new Animated.Value(1))
+  ).current;
   
   // Get the legislation ID from navigation parameters
   const legislationId = typeof params.index === 'string' ? params.index : '';
@@ -338,6 +359,47 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
     checkGenerateButtonVisibility();
   }, [legislationId]);
 
+  // Load this bill's cards for inline display when it's locked to Overview. Asking
+  // ProfileLockService rather than reading legi_index.weak directly keeps this in step
+  // with whatever the pager uses to disable swiping, so the two can't disagree and
+  // strand the cards on a page the user can't reach.
+  const loadLockedCards = useCallback(async () => {
+    if (!legislationId) return;
+    const ownerId = parseInt(legislationId);
+    if (isNaN(ownerId)) return;
+
+    try {
+      const lockStatus = await ProfileLockService.checkProfileLockStatus(ownerId, false);
+      if (!lockStatus.isLocked) {
+        setLockedCards([]);
+        return;
+      }
+
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('card_index')
+        .select('id, title, subtext')
+        .eq('owner_id', ownerId)
+        .eq('is_ppl', false)
+        .eq('is_active', true)
+        .order('score', { ascending: false })
+        .limit(9);
+
+      if (error) {
+        console.error('Error loading cards for locked legislation profile:', error);
+        return;
+      }
+
+      setLockedCards((data || []) as LockedCard[]);
+    } catch (error) {
+      console.error('Error in loadLockedCards:', error);
+    }
+  }, [legislationId]);
+
+  useEffect(() => {
+    loadLockedCards();
+  }, [loadLockedCards]);
+
   // Fetch profile data from legi_profiles if not already prefetched
   useEffect(() => {
     const fetchProfileData = async () => {
@@ -460,16 +522,18 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
           // Hide the button after popup
           setShowGenerateButton(false);
         } else if (cardsGenerated < 10) {
-          // Less than 10 cards but not 0 - partial lock (only agenda accessible)
-          // Don't mark as weak, just show popup and hide button
+          // Under the threshold: the bill stays locked to this page and its cards are
+          // listed below, rather than sitting on an Agenda page the user can't reach.
           Alert.alert(
             'Limited Cards',
-            'Limited cards available. Only agenda page will be accessible.',
+            'Limited cards available. They are shown below on this page.',
             [{ text: 'OK' }]
           );
-          
-          // Hide the button after popup
-          setShowGenerateButton(false);
+
+          // Re-derive rather than hard-hiding: if there is still unused bill text, this
+          // is now the only place the user can generate from, so the button must stay.
+          const shouldShow = await CardGenerationService.shouldShowGenerateButtonForOverview(parseInt(legislationId));
+          setShowGenerateButton(shouldShow);
         } else {
           // Unlock profile if it was previously weak
           await CardGenerationService.unlockLegislationProfile(parseInt(legislationId));
@@ -486,11 +550,96 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
       console.error('Error generating cards:', error);
     } finally {
       setIsGeneratingCards(false);
+      // A successful run may have crossed the card threshold and unlocked the
+      // sub-pages, or added cards while still under it. Either way this list changes.
+      await loadLockedCards();
     }
   };
 
+  const handleLockedCardPress = async (card: LockedCard) => {
+    const parsedCardId = Number(card.id);
+    if (!Number.isInteger(parsedCardId) || parsedCardId <= 0) {
+      console.error('Invalid cardId:', card.id);
+      return;
+    }
+
+    currentLoadingCardId.current = parsedCardId;
+    let wasCancelled = false;
+    try {
+      await CardService.generateFullCard(parsedCardId, setIsCardLoading, false);
+    } catch (error: any) {
+      if (error?.message === 'CANCELLED') {
+        wasCancelled = true;
+      } else {
+        console.error('Error generating full card:', error);
+      }
+    } finally {
+      currentLoadingCardId.current = null;
+    }
+    if (wasCancelled) return;
+
+    router.push({
+      pathname: '/legislation/legi5',
+      params: {
+        cardTitle: card.title || 'Card',
+        billName: name,
+        tabName: 'Overview',
+        cardId: String(parsedCardId),
+      },
+    });
+  };
+
+  const handleCancelCardLoading = () => {
+    if (currentLoadingCardId.current !== null) {
+      CardService.cancelCardGeneration(currentLoadingCardId.current);
+      currentLoadingCardId.current = null;
+    }
+    setIsCardLoading(false);
+  };
+
+  const renderLockedCards = () => {
+    if (lockedCards.length === 0) return null;
+
+    return (
+      <View style={styles.lockedCardsContainer}>
+        {lockedCards.map((card, i) => {
+          const cardScale = lockedCardScales[i];
+          return (
+            <AnimatedPressable
+              key={`overview-locked-card-${card.id}`}
+              onPressIn={() => {
+                Haptics.selectionAsync();
+                Animated.spring(cardScale, {
+                  toValue: 0.95,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(cardScale, {
+                  toValue: 1,
+                  friction: 6,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPress={() => handleLockedCardPress(card)}
+              style={[styles.lockedCard, { transform: [{ scale: cardScale }] }]}
+            >
+              <View style={styles.lockedCardTitleRow}>
+                <Text style={styles.lockedCardTitle}>{card.title || 'Card'}</Text>
+              </View>
+              {!!card.subtext && (
+                <Text style={styles.lockedCardSubtext}>{card.subtext}</Text>
+              )}
+            </AnimatedPressable>
+          );
+        })}
+      </View>
+    );
+  };
+
   return (
-    <ScrollView 
+    <ScrollView
       style={styles.overviewContainer} 
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}
@@ -733,6 +882,17 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
       )}
 
 
+      {/* Cards for a bill locked to this page — its Agenda/Impact/Discourse pages
+          are unreachable, so its cards are surfaced here instead. */}
+      {renderLockedCards()}
+
+      <CardLoadingIndicator
+        visible={isCardLoading}
+        onCancel={handleCancelCardLoading}
+        title="Loading Card"
+        subtitle="Please keep the app open while we prepare your card..."
+      />
+
       {/* Congress Link Pill - Always show if available */}
       {(congressLink || fetchedCongressLink) && (
         <View style={styles.boxRow}>
@@ -753,6 +913,47 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
 };
 
 const styles = StyleSheet.create({
+  // Inline cards for a bill locked to Overview. Mirrors synop.tsx's
+  // generatedCard* styles so a limited profile looks the same either side.
+  lockedCardsContainer: {
+    width: 370,
+    alignSelf: 'center',
+    marginTop: 0,
+    marginBottom: 10,
+  },
+  lockedCard: {
+    backgroundColor: '#050505',
+    borderRadius: 28,
+    padding: 20,
+    marginBottom: 15,
+    width: '100%',
+    minHeight: 100,
+    alignSelf: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.10,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#101010',
+  },
+  lockedCardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    marginBottom: 0,
+  },
+  lockedCardTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '500',
+  },
+  lockedCardSubtext: {
+    color: '#ccc',
+    fontSize: 14,
+    marginTop: 6,
+    fontWeight: '400',
+  },
   // Overview specific styles
   overviewContainer: {
     width: '100%',
