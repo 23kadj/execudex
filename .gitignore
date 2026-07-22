@@ -45,3 +45,8 @@ __pycache__/
 .env.server
 
 .env.local
+
+# Supabase CLI local state (machine-specific; pinned a bad storage-api
+# image tag that broke `supabase start` on every fresh clone)
+supabase/.temp/
+supabase/.branches/
