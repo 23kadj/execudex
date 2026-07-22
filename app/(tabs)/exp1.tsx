@@ -118,14 +118,14 @@ const exp1 = React.memo(() => {
 
   // State for legislation data from legi_index
   const [legislationData, setLegislationData] = useState([
-    { id: 13, title: 'Loading...', subtitle: 'Loading...' },
-    { id: 14, title: 'Loading...', subtitle: 'Loading...' },
-    { id: 15, title: 'Loading...', subtitle: 'Loading...' },
-    { id: 16, title: 'Loading...', subtitle: 'Loading...' },
-    { id: 17, title: 'Loading...', subtitle: 'Loading...' },
-    { id: 18, title: 'Loading...', subtitle: 'Loading...' },
-    { id: 19, title: 'Loading...', subtitle: 'Loading...' },
-    { id: 20, title: 'Loading...', subtitle: 'Loading...' },
+    { id: 287, title: 'Loading...', subtitle: 'Loading...' },
+    { id: 292, title: 'Loading...', subtitle: 'Loading...' },
+    { id: 301, title: 'Loading...', subtitle: 'Loading...' },
+    { id: 219, title: 'Loading...', subtitle: 'Loading...' },
+    { id: 257, title: 'Loading...', subtitle: 'Loading...' },
+    { id: 278, title: 'Loading...', subtitle: 'Loading...' },
+    { id: 279, title: 'Loading...', subtitle: 'Loading...' },
+    { id: 204, title: 'Loading...', subtitle: 'Loading...' },
   ]);
 
   // Fetch politician data from ppl_index when component mounts
@@ -190,27 +190,28 @@ const exp1 = React.memo(() => {
     const fetchLegislationData = async () => {
       try {
         console.log('Fetching legislation data for exp1 page...');
-        
-        // Fetch legislation data for IDs 13-20 from legi_index
+
+        // Featured 2026 legislation IDs (swapped out from the original 2025 set)
+        const legiIds = [287, 292, 301, 219, 257, 278, 279, 204];
+
         const supabase = getSupabaseClient();
         const { data: allData, error } = await supabase
           .from('legi_index')
           .select('id, name, sub_name')
-          .in('id', [13, 14, 15, 16, 17, 18, 19, 20])
-          .order('id', { ascending: true });
-        
+          .in('id', legiIds);
+
         if (error) {
           console.error('Error fetching legislation data:', error);
           return;
         }
-        
+
         if (allData && allData.length > 0) {
           console.log('Successfully fetched legislation data from legi_index:', allData);
-          
+
           // Update legislation data
           const newLegislationData = [...legislationData];
           allData.forEach((legislation) => {
-            const index = legislation.id - 13; // Convert ID to array index (13->0, 14->1, etc.)
+            const index = legiIds.indexOf(legislation.id);
             if (index >= 0 && index < newLegislationData.length) {
               newLegislationData[index] = {
                 id: legislation.id,
@@ -1393,7 +1394,7 @@ const exp1 = React.memo(() => {
                       numbersObj: JSON.stringify({ red: '', green: '' }),
                       returnTab: '0',
                       returnMode: 'legi',
-                      index: legislationData[0]?.id?.toString() || '13',
+                      index: legislationData[0]?.id?.toString() || '287',
                     }
                   }, user?.id);
                 }}
@@ -1439,7 +1440,7 @@ const exp1 = React.memo(() => {
                       numbersObj: JSON.stringify({ red: '', green: '' }),
                       returnTab: '0',
                       returnMode: 'legi',
-                      index: legislationData[1]?.id?.toString() || '14',
+                      index: legislationData[1]?.id?.toString() || '292',
                     }
                   }, user?.id);
                 }}
@@ -1485,7 +1486,7 @@ const exp1 = React.memo(() => {
                       numbersObj: JSON.stringify({ red: '', green: '' }),
                       returnTab: '0',
                       returnMode: 'legi',
-                      index: legislationData[2]?.id?.toString() || '15',
+                      index: legislationData[2]?.id?.toString() || '301',
                     }
                   }, user?.id);
                 }}
@@ -1531,7 +1532,7 @@ const exp1 = React.memo(() => {
                       numbersObj: JSON.stringify({ red: '', green: '' }),
                       returnTab: '0',
                       returnMode: 'legi',
-                      index: legislationData[3]?.id?.toString() || '16',
+                      index: legislationData[3]?.id?.toString() || '219',
                     }
                   }, user?.id);
                 }}
@@ -1577,7 +1578,7 @@ const exp1 = React.memo(() => {
                       numbersObj: JSON.stringify({ red: '', green: '' }),
                       returnTab: '0',
                       returnMode: 'legi',
-                      index: legislationData[4]?.id?.toString() || '17',
+                      index: legislationData[4]?.id?.toString() || '257',
                     }
                   }, user?.id);
                 }}
@@ -1623,7 +1624,7 @@ const exp1 = React.memo(() => {
                       numbersObj: JSON.stringify({ red: '', green: '' }),
                       returnTab: '0',
                       returnMode: 'legi',
-                      index: legislationData[5]?.id?.toString() || '18',
+                      index: legislationData[5]?.id?.toString() || '278',
                     }
                   }, user?.id);
                 }}
@@ -1669,7 +1670,7 @@ const exp1 = React.memo(() => {
                       numbersObj: JSON.stringify({ red: '', green: '' }),
                       returnTab: '0',
                       returnMode: 'legi',
-                      index: legislationData[6]?.id?.toString() || '19',
+                      index: legislationData[6]?.id?.toString() || '279',
                     }
                   }, user?.id);
                 }}
@@ -1715,7 +1716,7 @@ const exp1 = React.memo(() => {
                       numbersObj: JSON.stringify({ red: '', green: '' }),
                       returnTab: '0',
                       returnMode: 'legi',
-                      index: legislationData[7]?.id?.toString() || '20',
+                      index: legislationData[7]?.id?.toString() || '204',
                     }
                   }, user?.id);
                 }}
