@@ -162,6 +162,88 @@ function normalizeCongressToText(u: string): string | null {
   }
 }
 
+/** legi_index.bill_id prefix -> congress.gov URL segment. Covers every prefix present
+ *  in legi_index today (H.R., S., H.Res., S.Res., H.J.Res., S.J.Res., H.Con.Res.,
+ *  S.Con.Res.). Anchored so "S." can't swallow "S.Con.Res.". */
+const BILL_TYPE_SEGMENTS: Array<[RegExp, string]> = [
+  [/^h\.?r\.?$/i,          "house-bill"],
+  [/^s\.?$/i,              "senate-bill"],
+  [/^h\.?res\.?$/i,        "house-resolution"],
+  [/^s\.?res\.?$/i,        "senate-resolution"],
+  [/^h\.?j\.?res\.?$/i,    "house-joint-resolution"],
+  [/^s\.?j\.?res\.?$/i,    "senate-joint-resolution"],
+  [/^h\.?con\.?res\.?$/i,  "house-concurrent-resolution"],
+  [/^s\.?con\.?res\.?$/i,  "senate-concurrent-resolution"],
+];
+
+/** Split "H.R.2808" into its congress.gov segment ("house-bill") and number ("2808"). */
+function parseBillId(billId: string | null | undefined): { segment: string; number: string } | null {
+  const raw = String(billId || "").replace(/\s+/g, "");
+  const m = raw.match(/^([A-Za-z.]+?)(\d+)$/);
+  if (!m) return null;
+  for (const [re, segment] of BILL_TYPE_SEGMENTS) {
+    if (re.test(m[1])) return { segment, number: m[2] };
+  }
+  return null;
+}
+
+function ordinalSuffix(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return "th";
+  switch (n % 10) {
+    case 1: return "st";
+    case 2: return "nd";
+    case 3: return "rd";
+    default: return "th";
+  }
+}
+
+/** "119th" | "119" -> "119th". Null when there's no usable number. */
+function parseCongressOrdinal(congress: string | null | undefined): string | null {
+  const m = String(congress || "").match(/(\d+)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n < 1 || n > 999) return null;
+  return `${n}${ordinalSuffix(n)}`;
+}
+
+/** Pull the bill's type segment + number back out of a congress.gov URL. */
+function billRefFromUrl(u: string): { segment: string; number: string; ordinal: string } | null {
+  try {
+    const url = new URL(u);
+    if (url.hostname.replace(/^www\./i, "") !== "congress.gov") return null;
+    const m = url.pathname.match(/^\/bill\/(\d+(?:st|nd|rd|th))-congress\/([a-z-]+)\/(\d+)/i);
+    if (!m) return null;
+    return { ordinal: m[1].toLowerCase(), segment: m[2].toLowerCase(), number: m[3] };
+  } catch {
+    return null;
+  }
+}
+
+/** The bill's own identity, not a stored link, is the authority on which page to fetch.
+ *  Returns null when bill_id/congress can't be parsed, in which case callers fall back
+ *  to stored-link/Tavily discovery -- still gated by urlMatchesBill below. */
+function buildCanonicalTextUrl(billId: string | null | undefined, congress: string | null | undefined): string | null {
+  const ref = parseBillId(billId);
+  const ord = parseCongressOrdinal(congress);
+  if (!ref || !ord) return null;
+  return `https://www.congress.gov/bill/${ord}-congress/${ref.segment}/${ref.number}/text`;
+}
+
+/** Identity gate: does this URL actually point at the bill we are storing text for?
+ *  Nothing was checking this, which is how one legi row ended up holding another
+ *  bill's text. Permissive only when bill_id is unparseable (nothing to compare). */
+function urlMatchesBill(u: string, billId: string | null | undefined, congress: string | null | undefined): boolean {
+  const ref = parseBillId(billId);
+  if (!ref) return true;
+  const got = billRefFromUrl(u);
+  if (!got) return false;
+  if (got.segment !== ref.segment || got.number !== ref.number) return false;
+  const ord = parseCongressOrdinal(congress);
+  if (ord && got.ordinal !== ord.toLowerCase()) return false;
+  return true;
+}
+
 /** Quick validity test: GET HTML and ensure 200 + non-empty (not stored). */
 async function testUrlValidGET(url: string): Promise<boolean> {
   try {
@@ -326,10 +408,11 @@ Deno.serve(async (req) => {
       }
     };
 
-    // 1) Get bill name from legi_index (for Tavily fallback)
+    // 1) Get the bill's identity. bill_id + congress are authoritative for which
+    // congress.gov page to fetch; name is only used for the Tavily fallback.
     const { data: legi, error: lerr } = await supabase
       .from("legi_index")
-      .select("id, name")
+      .select("id, name, bill_id, congress")
       .eq("id", id)
       .single();
     if (lerr || !legi?.name) return json(404, { error: `legi_index id ${id} not found or missing name` });
@@ -339,28 +422,51 @@ Deno.serve(async (req) => {
       .from("web_content")
       .select("id, path, link, owner_id")
       .eq("owner_id", id)
-      .eq("is_ppl", false);
+      .eq("is_ppl", false)
+      .order("id", { ascending: true });
     if (wcErr) throw wcErr;
 
-    const existingCongress = (existingRowsAll || []).filter((r) =>
-      typeof r?.link === "string" && /congress/i.test(r.link || "")
-    );
+    // Ordered deterministically, billtext rows first. This query had no ORDER BY, so
+    // which stored link won was up to Postgres -- and coverage rows routinely link to
+    // *other* bills, so the winner could differ between runs on identical data.
+    const existingCongress = (existingRowsAll || [])
+      .filter((r) => typeof r?.link === "string" && /congress/i.test(r.link || ""))
+      .sort((a, b) => {
+        const aBt = BILLTEXT_PATH_RE.test(String(a.path || "")) ? 0 : 1;
+        const bBt = BILLTEXT_PATH_RE.test(String(b.path || "")) ? 0 : 1;
+        return aBt - bBt || Number(a.id) - Number(b.id);
+      });
 
-    // choose first candidate that normalizes to /text
+    // First stored candidate that normalizes to /text *and* belongs to this bill.
     let candidateLink: string | null = null;
     for (const r of existingCongress) {
       const norm = normalizeCongressToText(String(r.link));
-      if (norm) { candidateLink = norm; break; }
+      if (!norm) continue;
+      if (!urlMatchesBill(norm, legi.bill_id, legi.congress)) continue;
+      candidateLink = norm;
+      break;
     }
 
-    // 3) Validate candidate or discover via Tavily
+    // 3) Resolve the canonical /text URL: derive it from the bill's identity when we
+    // can, else fall back to a stored link, else search.
+    const derivedTextUrl = buildCanonicalTextUrl(legi.bill_id, legi.congress);
     let canonicalTextUrl: string | null = null;
+    let urlSource: "derived" | "stored_link" | "tavily" | null = null;
     let usedPreExisting = false;
 
-    if (candidateLink) {
+    if (derivedTextUrl) {
+      // Deliberately not gated on testUrlValidGET: that GET is the one congress.gov
+      // intermittently answers with a Cloudflare 403, and letting a transient block
+      // veto a correctly-derived URL would push us into search -- trading a retryable
+      // failure for the risk of storing some other bill's text.
+      canonicalTextUrl = derivedTextUrl;
+      urlSource = "derived";
+      usedPreExisting = candidateLink === derivedTextUrl;
+    } else if (candidateLink) {
       const ok = await testUrlValidGET(candidateLink);
       if (ok) {
         canonicalTextUrl = candidateLink;
+        urlSource = "stored_link";
         usedPreExisting = true;
       } else {
         // invalid (or challenged) -> queue this owner's bill-text parts and search anew.
@@ -372,8 +478,23 @@ Deno.serve(async (req) => {
     if (!canonicalTextUrl) {
       const urls = await tavilySearchCongress(String(legi.name));
       const normalized = urls.map(normalizeCongressToText).filter((u): u is string => !!u);
-      canonicalTextUrl = normalized[0] || null;
+      // legi_index.name is a bare bill code for most rows (and blocked-page text for a
+      // few), so search results are only as trustworthy as the identity check.
+      canonicalTextUrl = normalized.find((u) => urlMatchesBill(u, legi.bill_id, legi.congress)) || null;
+      urlSource = "tavily";
       if (!canonicalTextUrl) return json(404, { error: "No usable congress.gov bill /text URL found." });
+    }
+
+    // Final identity gate. Every branch above already checks this; repeating it here
+    // means no future path can reach extraction holding another bill's URL.
+    if (!urlMatchesBill(canonicalTextUrl, legi.bill_id, legi.congress)) {
+      return json(409, {
+        error: "Resolved URL does not match this bill; refusing to store another bill's text.",
+        id,
+        bill_id: legi.bill_id ?? null,
+        congress: legi.congress ?? null,
+        resolved_url: canonicalTextUrl,
+      });
     }
 
     // 4) Delete any OTHER congress links for this owner that don't match the canonical /text
@@ -411,6 +532,7 @@ Deno.serve(async (req) => {
             link_used: canonicalTextUrl,
             skipped_reason: "already_present_and_healthy",
             parts_created: [],
+            url_source: urlSource,
             queued_deletions_skipped: pendingDeletions.size,
             notes: usedPreExisting ? "validated pre-existing /text link" : "found via Tavily (already stored)",
           });
@@ -456,6 +578,7 @@ Deno.serve(async (req) => {
       id,
       link_used: canonicalTextUrl,
       extraction_source: source, // "tavily" | "jina"
+      url_source: urlSource,     // "derived" | "stored_link" | "tavily"
       parts_created: outputs,    // [{ web_id, path, length }]
       parts_expected: parts.length,
       superseded_rows_deleted: superseded,
