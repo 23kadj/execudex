@@ -615,14 +615,31 @@ export default function Subs() {
 
   const updateSubscriptionInSupabase = async (
     newPlan: string,
-    newCycle: string,
-    transactionId: string,
-    purchase: any
+    newCycle: string | null,
+    transactionId?: string | null,
+    purchase?: any
   ) => {
     if (!user?.id) return;
 
     const supabase = getSupabaseClient();
-    
+
+    // Switching to free is a client-initiated downgrade with no purchase behind
+    // it, so the client still writes it. For paid plans,
+    // plan/cycle/plus_til/last_purchase_date/receipt_validated are server-managed:
+    // verify_receipt has already written them after validating the receipt with
+    // Apple, and the database rejects client writes to them. All the client
+    // records for a paid plan is the pending transaction id, which apple_webhook
+    // promotes to last_transaction_id once Apple confirms the subscription.
+    const updateData: any = {};
+
+    if (newPlan === 'free') {
+      updateData.plan = 'free';
+      updateData.cycle = null;
+      updateData.plus_til = null;
+    } else if (transactionId) {
+      updateData.pending_transaction_id = transactionId;
+    }
+
     try {
       // Get current plan to determine if this is an upgrade or new subscription
       const { data: currentUserData } = await supabase
@@ -630,26 +647,25 @@ export default function Subs() {
         .select('plan')
         .eq('uuid', user.id)
         .single();
-      
+
       const currentPlan = currentUserData?.plan || null;
       const isNewSubscription = !currentPlan || currentPlan === '';
       const isUpgrade = currentPlan === 'basic' && newPlan === 'plus';
-      
-    // plan/cycle/plus_til/last_purchase_date/receipt_validated are server-managed:
-    // verify_receipt has already written them after validating the receipt with
-    // Apple, and the database rejects client writes to them. All the client
-    // records here is the pending transaction id, which apple_webhook promotes to
-    // last_transaction_id once Apple confirms the subscription.
-    const { error } = await supabase
-      .from('users')
-      .update({
-        pending_transaction_id: transactionId,
-      })
-      .eq('uuid', user.id);
 
-      if (error) throw error;
-      
-      if (isNewSubscription) {
+      // A paid plan with no transaction id leaves nothing for the client to write
+      // -- verify_receipt has already recorded the subscription server-side.
+      if (Object.keys(updateData).length > 0) {
+        const { error } = await supabase
+          .from('users')
+          .update(updateData)
+          .eq('uuid', user.id);
+
+        if (error) throw error;
+      }
+
+      if (newPlan === 'free') {
+        console.log(`✅ Switched to Free`);
+      } else if (isNewSubscription) {
         console.log(`✅ New subscription activated: ${newPlan} ${newCycle}`);
       } else if (isUpgrade) {
         console.log(`✅ Upgraded to Plus ${newCycle}`);
@@ -664,13 +680,17 @@ export default function Subs() {
         .eq('uuid', user.id)
         .single()).data?.sub_logs || '';
 
-      const logMessage = isNewSubscription 
+      const logMessage = newPlan === 'free'
+        ? `SWITCH | ${currentPlan || 'unknown'} → Free`
+        : isNewSubscription
         ? `NEW_SUBSCRIPTION | ${newPlan} ${newCycle}`
         : isUpgrade
         ? `UPGRADE | Basic → Plus ${newCycle}`
         : `UPDATE | ${currentPlan} → ${newPlan} ${newCycle}`;
-      
-      const newLog = `${new Date().toISOString()} | ${logMessage} | TxnID: ${transactionId}`;
+
+      const newLog = transactionId
+        ? `${new Date().toISOString()} | ${logMessage} | TxnID: ${transactionId}`
+        : `${new Date().toISOString()} | ${logMessage}`;
       const updatedLogs = currentLogs ? `${currentLogs}\n${newLog}` : newLog;
 
       await supabase
@@ -686,23 +706,25 @@ export default function Subs() {
         console.log('🔄 Retrying Supabase update...');
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        const { error: retryError } = await supabase
-          .from('users')
-          .update({
-            pending_transaction_id: transactionId,
-          })
-          .eq('uuid', user.id);
+        if (Object.keys(updateData).length > 0) {
+          const { error: retryError } = await supabase
+            .from('users')
+            .update(updateData)
+            .eq('uuid', user.id);
 
-        if (retryError) {
-          throw retryError;
+          if (retryError) {
+            throw retryError;
+          }
         }
-        
+
         console.log('✅ Retry successful');
       } catch (retryError) {
         console.error('❌ Retry failed:', retryError);
         Alert.alert(
-          'Purchase Successful',
-          'Purchase successful. If your account does not update soon, contact Execudex Support.'
+          newPlan === 'free' ? 'Update Incomplete' : 'Purchase Successful',
+          newPlan === 'free'
+            ? 'We could not switch your plan to Free. Please try again, or contact Execudex Support.'
+            : 'Purchase successful. If your account does not update soon, contact Execudex Support.'
         );
       }
     }
@@ -710,6 +732,41 @@ export default function Subs() {
 
   const handlePurchaseButtonPress = async () => {
     if (!selectedPlan || (!selectedCycle && selectedPlan !== 'free') || !user?.id) {
+      return;
+    }
+
+    // Free plan: Skip IAP and directly update database. This must come before the
+    // guards below -- 'free' is not a purchasable product, and falling through would
+    // resolve it to execudex.plus.monthly and prompt for a Plus purchase.
+    if (selectedPlan === 'free') {
+      setIsPurchasing(true);
+      try {
+        await updateSubscriptionInSupabase('free', null);
+
+        // Refresh usage data
+        const usage = await getWeeklyProfileUsage(user.id);
+        setProfileUsage({
+          profilesUsed: usage.profilesUsed,
+          plan: usage.plan,
+          cycle: usage.cycle,
+        });
+
+        // Clear selection
+        setSelectedPlan(null);
+        setSelectedCycle(null);
+
+        Alert.alert(
+          'Subscription Updated',
+          'Your subscription has been changed to Execudex Free!',
+          [{ text: 'OK' }]
+        );
+
+        setIsPurchasing(false);
+      } catch (error: any) {
+        console.error('❌ Error updating to free plan:', error);
+        setIsPurchasing(false);
+        Alert.alert('Error', error?.message || 'Failed to update subscription. Please try again.');
+      }
       return;
     }
 
