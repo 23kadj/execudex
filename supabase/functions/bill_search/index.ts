@@ -254,6 +254,39 @@ function isSuspiciousBillTitle(title: string | null | undefined): boolean {
   return false;
 }
 
+/** Longest display title we will store. Anything longer falls back to the bare bill
+ *  code, which is why most rows render as "H.R.1234" instead of a real title. Raising
+ *  this is a UI decision -- these strings render in fixed-size cards -- so it lives here
+ *  as one knob rather than being repeated at each call site. */
+const TITLE_MAX_CHARS = 30;
+
+/** The single place that turns an extracted/refined title into a storable display name.
+ *
+ *  The insert path and the enrichment path each did this on their own and disagreed:
+ *  enrichment stripped a trailing year, insert did not, so the same bill could be stored
+ *  as "Healthy Technology Act of 2025" or as "Overtime Pay Tax Relief Act of" depending
+ *  on which path ran. Nothing strips years now -- removing "2025" from "... Act of 2025"
+ *  leaves a dangling "of", which is precisely how those truncated titles were produced.
+ *  A title still ending in a connective is treated as a truncation artifact and rejected
+ *  so the bill falls back to its code rather than displaying a fragment. */
+function normalizeDisplayTitle(
+  raw: string | null | undefined,
+  billCode: string | null | undefined
+): string | null {
+  let t = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+
+  if (billCode) {
+    const codeEsc = billCode.replace(/\s+/g, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    t = t.replace(new RegExp(`^\\s*${codeEsc}[\\s:\\-\u2013\u2014]*`, "i"), "").trim();
+  }
+
+  if (/\b(of|the|and|for|to|a|an|in|on|with|by)$/i.test(t)) return null;
+  if (isSuspiciousBillTitle(t)) return null;
+  if (t.length > TITLE_MAX_CHARS) return null;
+  return t;
+}
+
 /** Extract a human-readable bill title from page text (word title, not bill id) */
 function extractBillWordTitleFromText(txt: string, billCode: string | null): string | null {
   if (!txt) return null;
@@ -1085,29 +1118,13 @@ async function enrichBillMetadata(legiId: number, baseUrl: string): Promise<void
         const wordTitle = extractBillWordTitleFromText(mainPageText, billCodeFromUrl);
         if (wordTitle) {
           const mistralTitle = await refineTitleWithMistral(wordTitle, billCodeFromUrl);
-          const rawCleaned = (mistralTitle || wordTitle).replace(/\s+/g, " ").trim();
-
-          // Strip obvious bill-code prefixes and stray trailing years if Mistral left them
-          let cleanedTitle = rawCleaned;
-          if (billCodeFromUrl) {
-            const codeNoSpaces = billCodeFromUrl.replace(/\s+/g, "");
-            const codeEsc = codeNoSpaces.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            cleanedTitle = cleanedTitle.replace(new RegExp(`^\\s*${codeEsc}[\\s:\\-–—]*`, "i"), "").trim();
-          }
-          cleanedTitle = cleanedTitle.replace(/[,;:\-–—\s]*\b(19|20)\d{2}\b\s*$/, "").trim() || cleanedTitle;
-
-          // If we somehow end up with only a year, fall back to the original word title
-          if (/^\\d{4}$/.test(cleanedTitle)) cleanedTitle = wordTitle.replace(/\s+/g, " ").trim();
-
-          const chosenName =
-            cleanedTitle && cleanedTitle.length <= 30 && !isSuspiciousBillTitle(cleanedTitle)
-              ? cleanedTitle
-              : (billCodeFromUrl || null);
+          const cleanedTitle = normalizeDisplayTitle(mistralTitle || wordTitle, billCodeFromUrl);
+          const chosenName = cleanedTitle ?? (billCodeFromUrl || null);
 
           if (chosenName) {
             updates.name = chosenName;
             console.log(
-              `[enrichBillMetadata] Normalized name for legi_id ${legiId}: ${chosenName} (title length ${cleanedTitle.length}, previous name "${existingNameRaw || "<none>"}")`
+              `[enrichBillMetadata] Normalized name for legi_id ${legiId}: ${chosenName} (title length ${cleanedTitle?.length ?? 0}, previous name "${existingNameRaw || "<none>"}")`
             );
           }
         }
@@ -1980,13 +1997,7 @@ Deno.serve(async (req) => {
 
     // ---------- OPTIONAL WORD TITLE (for human-readable name) ----------
     const wordTitle = extractBillWordTitleFromText(parseText, billCode);
-    let displayName = nameNoSpaces;
-    if (wordTitle) {
-      const cleanedTitle = wordTitle.replace(/\s+/g, " ").trim();
-      if (cleanedTitle && cleanedTitle.length <= 30 && !isSuspiciousBillTitle(cleanedTitle)) {
-        displayName = cleanedTitle;
-      }
-    }
+    const displayName = normalizeDisplayTitle(wordTitle, billCode) ?? nameNoSpaces;
 
     // ---------- DERIVE BILL_ID FOR DUPLICATE CHECK ----------
     const bill_id = billIdFromCongressUrl(root) || null;
@@ -2177,7 +2188,12 @@ Deno.serve(async (req) => {
     }), { headers: { "Content-Type":"application/json" } });
 
   } catch (e: any) {
-    return new Response(JSON.stringify({ ok:false, reason:"not_found", error: e?.message || String(e) }), {
+    // Distinct from a genuine "no such bill": this is an internal failure (Mistral 429,
+    // Tavily timeout, storage error). Reporting both as "not_found" made an upstream rate
+    // limit indistinguishable from a missing bill, so callers could not tell which
+    // attempts were worth retrying. Clients that don't recognise a reason fall through to
+    // `error`, which carries the real message.
+    return new Response(JSON.stringify({ ok:false, reason:"internal_error", error: e?.message || String(e) }), {
       status: 200, headers: { "Content-Type":"application/json" }
     });
   }
