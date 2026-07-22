@@ -25,13 +25,41 @@ serve(async (req) => {
       }
     );
 
+    // Identify the caller from their JWT. This function runs with the service role,
+    // which bypasses both RLS and the users_enforce_server_managed_subscription_fields
+    // trigger, so a uuid taken from the request body would let any caller write any
+    // other user's row. The body's uuid is ignored entirely.
+    const authHeader = req.headers.get('Authorization') ?? '';
+    const accessToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+
+    const {
+      data: { user: caller },
+      error: authError,
+    } = await supabaseClient.auth.getUser(accessToken);
+
+    if (authError || !caller) {
+      console.error('Rejecting request with no valid user token:', authError);
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     // Parse request body
-    const { uuid, onboardData, plan, cycle } = await req.json();
+    const { uuid: bodyUuid, onboardData, plan, cycle } = await req.json();
+
+    const uuid = caller.id;
+    if (bodyUuid && bodyUuid !== uuid) {
+      console.warn(`Ignoring body uuid ${bodyUuid}; writing caller's own row ${uuid}`);
+    }
 
     // Validate inputs - now require plan to be provided
-    if (!uuid || !onboardData || !plan) {
+    if (!onboardData || !plan) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: uuid, onboardData, and plan' }),
+        JSON.stringify({ error: 'Missing required fields: onboardData and plan' }),
         {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -39,23 +67,21 @@ serve(async (req) => {
       );
     }
 
+    // Only the free plan may be set from here. Selecting free grants no entitlement
+    // and has no purchase behind it, so there is no other server-side writer for it.
+    // Paid plans are written by verify_receipt after Apple has validated the receipt
+    // -- both onboarding call sites (app/index.tsx:329 after purchase, :442 after
+    // restore) run that first, so the plan write here was only ever a redundant
+    // second write. Honouring it would make this function a way to self-grant Plus.
+    const isFreePlan = plan === 'free';
+    if (!isFreePlan) {
+      console.log(`Plan "${plan}" is server-managed; writing onboard data only.`);
+    }
+
     console.log(`Attempting to save onboard data for user: ${uuid}`);
     console.log(`Onboard data: ${onboardData}`);
-    console.log(`Plan: ${plan}`);
+    console.log(`Plan: ${plan} (written: ${isFreePlan})`);
     console.log(`Cycle: ${cycle}`);
-    console.log(`Full request body:`, { uuid, onboardData, plan, cycle });
-
-    // First, let's check the table structure
-    const { data: tableCheck, error: tableError } = await supabaseClient
-      .from('users')
-      .select('*')
-      .limit(1);
-    
-    if (tableError) {
-      console.error('Error checking users table:', tableError);
-    } else {
-      console.log('Users table structure (sample):', tableCheck);
-    }
 
     // Retry logic: Wait for the user row to exist (SQL trigger might still be running)
     const maxRetries = 5;
@@ -74,14 +100,18 @@ serve(async (req) => {
           // User row doesn't exist yet, create it with plan data
           console.log(`Attempt ${attempt}: User row not found, creating new row with plan...`);
           
-          // Build insert object with plan and cycle (both required)
-          const insertData: any = { 
+          // Build insert object. plan/cycle are set only for the free plan; for a
+          // paid plan verify_receipt has already recorded them.
+          const insertData: any = {
             uuid: uuid,
             onboard: onboardData,
-            plan: plan,
-            cycle: cycle || 'monthly' // Default to monthly if not provided
           };
-          
+
+          if (isFreePlan) {
+            insertData.plan = plan;
+            insertData.cycle = cycle || 'monthly'; // Default to monthly if not provided
+          }
+
           console.log(`About to insert with data:`, insertData);
           
           // Insert the user row with plan data
@@ -110,7 +140,7 @@ serve(async (req) => {
               JSON.stringify({
                 success: true,
                 message: 'User data saved successfully',
-                data: { uuid, onboardData, plan, cycle },
+                data: { uuid, onboardData, plan, cycle, planWritten: isFreePlan },
               }),
               {
                 status: 200,
@@ -122,17 +152,19 @@ serve(async (req) => {
           // Row exists! Now update the onboard, plan, and cycle columns
           console.log(`User row found! ID: ${existingUser.id}`);
           
-          // Build update object with plan and cycle (both required)
-          const updateData: any = { 
+          // Build update object. plan/cycle are set only for the free plan; for a
+          // paid plan verify_receipt has already recorded them.
+          const updateData: any = {
             onboard: onboardData,
-            plan: plan,
-            cycle: cycle || 'monthly' // Default to monthly if not provided
           };
-          
+
+          if (isFreePlan) {
+            updateData.plan = plan;
+            updateData.cycle = cycle || 'monthly'; // Default to monthly if not provided
+          }
+
           console.log(`About to update with data:`, updateData);
-          console.log(`Plan value: "${plan}" (type: ${typeof plan})`);
-          console.log(`Cycle value: "${cycle}" (type: ${typeof cycle})`);
-          
+
           // Update the user row (using lowercase uuid only)
           const updateResult = await supabaseClient
             .from('users')
@@ -155,7 +187,7 @@ serve(async (req) => {
               JSON.stringify({
                 success: true,
                 message: 'Onboard data saved successfully',
-                data: { uuid, onboardData, plan, cycle },
+                data: { uuid, onboardData, plan, cycle, planWritten: isFreePlan },
               }),
               {
                 status: 200,
