@@ -27,7 +27,6 @@
       "icon": "./assets/icon.png",
       "backgroundColor": "#000000",
       "bundleIdentifier": "com.execudex.app",
-      "buildNumber": "3",
       "deploymentTarget": "15.1",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -45,8 +44,7 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "com.execudex.app",
-      "versionCode": 3
+      "package": "com.execudex.app"
     },
     "web": {
       "favicon": "./assets/icon.png"

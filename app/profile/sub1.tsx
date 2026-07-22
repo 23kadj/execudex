@@ -239,8 +239,8 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
     setIsGeneratingCards(true);
     try {
       const ownerId = parseInt(index.toString());
-      // Save timestamp before generation to find newly created cards
-      const beforeGenerationTimestamp = new Date().toISOString();
+      // Server-assigned watermark, not a client clock reading -- see getMaxCardId.
+      const beforeGenerationCardId = await CardGenerationService.getMaxCardId(ownerId, true);
       
       const result = await CardGenerationService.generatePoliticianCards(
         ownerId, 
@@ -260,7 +260,7 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
         const generatedCategoryScreenPairs = await CardGenerationService.getGeneratedCardCategories(
           ownerId,
           true, // isPpl
-          beforeGenerationTimestamp
+          beforeGenerationCardId
         );
         
         // Get IDs of newly generated cards for new-gen redirect, ordered by proximity
@@ -268,7 +268,7 @@ export default function Sub1({ scrollY, name, position, goToTab, index, scrollRe
         const generatedCardIds = await CardGenerationService.getGeneratedCardIds(
           ownerId,
           true, // isPpl
-          beforeGenerationTimestamp,
+          beforeGenerationCardId,
           undefined,
           'agenda_ppl'
         );

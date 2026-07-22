@@ -173,7 +173,8 @@ export default function Legi3({ scrollY, name, position, scrollRef }: Legi3Props
     setIsGeneratingCards(true);
     try {
       const ownerId = parseInt(legislationId);
-      const beforeGenerationTimestamp = new Date().toISOString();
+      // Server-assigned watermark, not a client clock reading -- see getMaxCardId.
+      const beforeGenerationCardId = await CardGenerationService.getMaxCardId(ownerId, false);
       
       const result = await CardGenerationService.generateDiscourseCards(ownerId);
       
@@ -190,11 +191,16 @@ export default function Legi3({ scrollY, name, position, scrollRef }: Legi3Props
           // Mark legislation as weak in database
           await CardGenerationService.markLegislationAsWeak(ownerId);
         } else {
-          // Get IDs of newly generated cards for new-gen redirect
+          // Get IDs of newly generated cards for new-gen redirect, ordered by
+          // proximity to this page's screen. bill_coverage emits both discourse
+          // and impact cards in a single run, so without this new-gen would show
+          // them interleaved in raw id order.
           const generatedCardIds = await CardGenerationService.getGeneratedCardIds(
             ownerId,
             false, // isPpl - legislation
-            beforeGenerationTimestamp
+            beforeGenerationCardId,
+            undefined,
+            'discourse'
           );
           
           // Refresh cards after generation

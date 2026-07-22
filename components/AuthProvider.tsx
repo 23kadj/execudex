@@ -17,27 +17,72 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Bounded retries for push-token registration after a failed attempt, with a
+// linear backoff (5s, 10s, 15s). Bounded because a permission denial returns the
+// same "no token" signal as a transient failure and must not retry forever.
+const MAX_PUSH_TOKEN_RETRIES = 3;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const pushTokenRegisteredForRef = useRef<string | null>(null);
+  const pushRetryAttemptsRef = useRef(0);
+  const [pushRetryTick, setPushRetryTick] = useState(0);
 
   // Register the push token once per login, not only when a user explicitly
   // subscribes to a profile — most users never triggered a subscribe, so their
   // token was never stored and server-side notifications had nowhere to send to.
+  //
+  // Keyed on the session's user rather than `user` alone: the upsert is gated by
+  // RLS on auth.uid(), so it has to run against a session the client has already
+  // rehydrated. This effect fires after SIGNED_IN / INITIAL_SESSION has set state,
+  // and registerPushToken re-confirms the session before touching the table.
+  const sessionUserId = session?.user?.id ?? null;
   useEffect(() => {
-    if (!user?.id || pushTokenRegisteredForRef.current === user.id) return;
-    pushTokenRegisteredForRef.current = user.id;
+    if (!sessionUserId) {
+      // Signed out — reset so a later sign-in starts from a clean slate.
+      pushTokenRegisteredForRef.current = null;
+      pushRetryAttemptsRef.current = 0;
+      return;
+    }
+    if (pushTokenRegisteredForRef.current === sessionUserId) return;
+    pushTokenRegisteredForRef.current = sessionUserId;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
     (async () => {
       try {
         const { registerPushToken } = await import('../services/pushTokenService');
-        await registerPushToken(user.id);
+        const token = await registerPushToken(sessionUserId);
+        if (cancelled) return;
+        if (token) {
+          pushRetryAttemptsRef.current = 0;
+          return;
+        }
+        // Registration did not stick (no session yet, permissions denied, or a
+        // failed write). Clearing the guard alone would never actually retry:
+        // this effect keys on sessionUserId, and TOKEN_REFRESHED / USER_UPDATED /
+        // repeat INITIAL_SESSION all carry the same id, so nothing would re-run it
+        // before a full sign-out. Drive a bounded retry explicitly instead.
+        pushTokenRegisteredForRef.current = null;
+        if (pushRetryAttemptsRef.current < MAX_PUSH_TOKEN_RETRIES) {
+          const attempt = ++pushRetryAttemptsRef.current;
+          retryTimer = setTimeout(() => setPushRetryTick((t) => t + 1), attempt * 5000);
+        }
       } catch (error) {
+        if (cancelled) return;
+        pushTokenRegisteredForRef.current = null;
         console.error('[AuthProvider] Error registering push token:', error);
       }
     })();
-  }, [user?.id]);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [sessionUserId, pushRetryTick]);
 
   useEffect(() => {
     // Defer Supabase initialization to avoid native module crashes during mount

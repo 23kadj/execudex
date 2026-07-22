@@ -66,6 +66,28 @@ const exp1 = React.memo(() => {
   const [policyAreaLabel, setPolicyAreaLabel] = useState('Policy Category');
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
 
+  // Helper function to truncate text smartly based on word boundaries.
+  // Must be declared before the useFocusEffect below: that effect lists it in its
+  // dependency array, which is evaluated during render. Declared after, the `const`
+  // is still in its temporal dead zone at that point.
+  const truncateTextSmartly = useCallback((text: string, maxChars: number = 30): string => {
+    if (text.length <= maxChars) return text;
+
+    // Try to break at word boundaries first
+    const words = text.split(' ');
+    let truncated = '';
+    for (const word of words) {
+      const testText = truncated ? `${truncated} ${word}` : word;
+      if (testText.length <= maxChars - 3) { // Reserve 3 chars for "..."
+        truncated = testText;
+      } else {
+        break;
+      }
+    }
+    // If we have a truncated version, use it, otherwise just cut at maxChars-3 chars
+    return truncated ? `${truncated}...` : `${text.substring(0, maxChars - 3)}...`;
+  }, []);
+
   // Handle route params from subjects page and AsyncStorage
   useFocusEffect(
     useCallback(() => {
@@ -285,25 +307,6 @@ const exp1 = React.memo(() => {
     setCategory4Label('Political Position');
     setPolicyAreaLabel('Policy Category');
     setSubjectFilter(null);
-  }, []);
-
-  // Helper function to truncate text smartly based on word boundaries
-  const truncateTextSmartly = useCallback((text: string, maxChars: number = 30): string => {
-    if (text.length <= maxChars) return text;
-    
-    // Try to break at word boundaries first
-    const words = text.split(' ');
-    let truncated = '';
-    for (const word of words) {
-      const testText = truncated ? `${truncated} ${word}` : word;
-      if (testText.length <= maxChars - 3) { // Reserve 3 chars for "..."
-        truncated = testText;
-      } else {
-        break;
-      }
-    }
-    // If we have a truncated version, use it, otherwise just cut at maxChars-3 chars
-    return truncated ? `${truncated}...` : `${text.substring(0, maxChars - 3)}...`;
   }, []);
 
   // Handle search profiles with filters only (no search query)

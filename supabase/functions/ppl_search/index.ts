@@ -1158,28 +1158,43 @@ Deno.serve(async (req) => {
           .in('user_id', enabledUserIds);
         
         if (pushTokens && pushTokens.length > 0) {
-          const pushMessages = pushTokens.map(tokenData => ({
-            to: tokenData.push_token,
-            sound: 'notification.wav',
-            title: title,
-            body: body,
-            data: { navigateTo: 'notifications' },
-            badge: 1,
+          // Send push notifications and inspect each ticket so a stale
+          // (uninstalled/unregistered) token doesn't fail silently forever.
+          const pushResults = await Promise.all(pushTokens.map(async (tokenData) => {
+            const pushMsg = {
+              to: tokenData.push_token,
+              sound: 'notification.wav',
+              title: title,
+              body: body,
+              data: { navigateTo: 'notifications' },
+              badge: 1,
+            };
+            try {
+              const res = await fetch('https://exp.host/--/api/v2/push/send', {
+                method: 'POST',
+                headers: {
+                  Accept: 'application/json',
+                  'Accept-Encoding': 'gzip, deflate',
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(pushMsg),
+              });
+              const json = await res.json().catch(() => null);
+              return { push_token: tokenData.push_token, ticket: json?.data };
+            } catch (e) {
+              console.error('[ppl_search] Push send failed:', e);
+              return { push_token: tokenData.push_token, ticket: null };
+            }
           }));
-          
-          const pushPromises = pushMessages.map(pushMsg =>
-            fetch('https://exp.host/--/api/v2/push/send', {
-              method: 'POST',
-              headers: {
-                Accept: 'application/json',
-                'Accept-Encoding': 'gzip, deflate',
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(pushMsg),
-            })
-          );
-          
-          await Promise.all(pushPromises);
+
+          const staleTokens = pushResults
+            .filter(r => r.ticket?.status === 'error' && r.ticket?.details?.error === 'DeviceNotRegistered')
+            .map(r => r.push_token);
+          if (staleTokens.length > 0) {
+            await supabase.from('user_push_tokens').delete().in('push_token', staleTokens);
+            console.log(`[ppl_search] Pruned ${staleTokens.length} stale push token(s)`);
+          }
+
           console.log(`[ppl_search] Sent ${pushTokens.length} push notifications`);
         }
       } catch (err) {

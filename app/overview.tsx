@@ -437,9 +437,6 @@ const Overview = ({ name, position, billStatus, isLowMateriality, congressLink, 
     
     setIsGeneratingCards(true);
     try {
-      // Save timestamp before generation to find newly created cards
-      const beforeGenerationTimestamp = new Date().toISOString();
-      
       // Execute bill_cards script
       const result = await CardGenerationService.executeBillCards(parseInt(legislationId));
       

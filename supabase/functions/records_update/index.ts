@@ -198,10 +198,26 @@ async function fetchViaJinaReader(url: string): Promise<string> {
     redirect: "follow",
     timeoutMs: Math.max(EXTRACT_TIMEOUT_MS, 45_000),
   });
+  // Distinguishes an authenticated Jina call from the unauthenticated/cached path.
+  // Unauthenticated baseline (measured directly against r.jina.ai): x-ratelimit-limit
+  // is "20, 20;w=60" and the body carries a "cached snapshot" warning. A valid key
+  // should report a materially higher limit and no warning. A 401 here means the
+  // configured JINA_API_KEY is dead; a short key_len means it was truncated.
+  console.log("[RECORDS_UPDATE] jina", JSON.stringify({
+    authed: !!JINA_API_KEY.trim(),
+    key_len: JINA_API_KEY.trim().length,
+    status: res?.status ?? null,
+    rate_limit: res?.headers.get("x-ratelimit-limit") ?? null,
+    rate_remaining: res?.headers.get("x-ratelimit-remaining") ?? null,
+  }));
   if (!res || !res.ok) {
     throw new Error(`Jina reader HTTP ${res?.status}`);
   }
   const text = (await res.text()).trim();
+  console.log("[RECORDS_UPDATE] jina body", JSON.stringify({
+    chars: text.length,
+    cached: text.includes("cached snapshot"),
+  }));
   if (text.length < 400) {
     throw new Error(`Jina reader body too short (${text.length} chars)`);
   }

@@ -513,8 +513,8 @@ export default function Sub4() {
         return;
       }
 
-      // Save timestamp before generation to find newly created cards
-      const beforeGenerationTimestamp = new Date().toISOString();
+      // Server-assigned watermark, not a client clock reading -- see getMaxCardId.
+      const beforeGenerationCardId = await CardGenerationService.getMaxCardId(ownerId, true);
       
       const result = await CardGenerationService.generatePoliticianCards(
         ownerId,
@@ -535,7 +535,7 @@ export default function Sub4() {
         const generatedCategoryScreenPairs = await CardGenerationService.getGeneratedCardCategories(
           ownerId,
           true, // isPpl
-          beforeGenerationTimestamp
+          beforeGenerationCardId
         );
 
         // Get IDs of newly generated cards for new-gen redirect, ordered by proximity to
@@ -551,7 +551,7 @@ export default function Sub4() {
         const generatedCardIds = await CardGenerationService.getGeneratedCardIds(
           ownerId,
           true, // isPpl
-          beforeGenerationTimestamp,
+          beforeGenerationCardId,
           category,
           originScreen
         );

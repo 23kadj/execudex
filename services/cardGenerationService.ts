@@ -866,16 +866,54 @@ export class CardGenerationService {
   }
 
   /**
-   * Get card IDs of newly generated cards after a timestamp, ordered by relevance to
-   * what was actually searched for -- exact category match first, then other categories
-   * on the same page/screen, then everything else (in original creation order within
-   * each group). Pass neither preferredCategory nor preferredScreen to skip ranking and
-   * keep plain creation order (existing callers that don't care about proximity).
+   * Highest existing card id for an owner, used as a watermark to identify rows
+   * inserted by a subsequent generation run.
+   *
+   * This deliberately replaces the old "record a client timestamp, then filter on
+   * created_at >= it" approach. That compared the *device* clock against created_at
+   * values written by the *edge function's* clock, so any skew silently broke it:
+   * a device running fast matched nothing (no new-gen redirect, no error, the button
+   * just looked inert), and a device running slow swept in cards from earlier runs
+   * and presented them as newly generated. card_index.id is a Postgres identity
+   * sequence, so it is server-assigned and monotonic -- no clock is involved.
+   *
+   * Returns 0 when the owner has no cards yet, which correctly matches everything.
+   */
+  static async getMaxCardId(ownerId: number, isPpl: boolean): Promise<number> {
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('card_index')
+        .select('id')
+        .eq('owner_id', ownerId)
+        .eq('is_ppl', isPpl)
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error fetching max card id:', error);
+        return 0;
+      }
+
+      return (data as { id: number } | null)?.id ?? 0;
+    } catch (error) {
+      console.error('Error in getMaxCardId:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get card IDs generated after the given watermark (see getMaxCardId), ordered by
+   * relevance to what was actually searched for -- exact category match first, then
+   * other categories on the same page/screen, then everything else (in original
+   * creation order within each group). Pass neither preferredCategory nor
+   * preferredScreen to skip ranking and keep plain creation order.
    */
   static async getGeneratedCardIds(
     ownerId: number,
     isPpl: boolean,
-    afterTimestamp: string,
+    afterCardId: number,
     preferredCategory?: string,
     preferredScreen?: string
   ): Promise<number[]> {
@@ -887,7 +925,7 @@ export class CardGenerationService {
         .eq('owner_id', ownerId)
         .eq('is_ppl', isPpl)
         .eq('is_active', true)
-        .gte('created_at', afterTimestamp)
+        .gt('id', afterCardId)
         .order('id', { ascending: true });
 
       if (error) {
@@ -917,13 +955,13 @@ export class CardGenerationService {
   }
 
   /**
-   * Get categories and screens of newly generated cards after a timestamp
-   * Returns array of { category, screen } objects
+   * Get categories and screens of cards generated after the given watermark
+   * (see getMaxCardId). Returns array of { category, screen } objects.
    */
   static async getGeneratedCardCategories(
     ownerId: number,
     isPpl: boolean,
-    afterTimestamp: string
+    afterCardId: number
   ): Promise<Array<{ category: string; screen: string }>> {
     try {
       const supabase = getSupabaseClient();
@@ -933,7 +971,7 @@ export class CardGenerationService {
         .eq('owner_id', ownerId)
         .eq('is_ppl', isPpl)
         .eq('is_active', true)
-        .gte('created_at', afterTimestamp);
+        .gt('id', afterCardId);
 
       if (error) {
         console.error('Error fetching generated card categories:', error);
