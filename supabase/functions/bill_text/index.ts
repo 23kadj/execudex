@@ -15,6 +15,12 @@ const PART_LEN = 110_000;
 /** Concurrency for uploads */
 const CONCURRENCY = 2;
 
+/** Paths this function owns. Everything else stored under legi/<id>/ -- notably
+ *  synopsis.<id>.congress.txt, which bill_overview builds the bill overview from --
+ *  is written by other functions, is not a bill-text part, and must never be counted
+ *  as one here nor removed by this function. */
+const BILLTEXT_PATH_RE = /\/billtext\.\d+\.congress(?:\.\d+)?\.txt$/i;
+
 /** ========================== CLIENT ========================== */
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, { global: { fetch } });
 
@@ -306,6 +312,20 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") return json(405, { error: "Use POST" });
     const { id, force } = await readIdAndFlags(req);
 
+    // Deletions are queued here and flushed only once replacement parts have been
+    // fetched, validated and written. congress.gov intermittently answers our
+    // validation GET with a Cloudflare challenge, and the old delete-then-refetch
+    // order meant a single such 403 could wipe an owner's stored evidence and leave
+    // nothing behind when the refetch then failed. Only bill-text parts are ever
+    // eligible -- this function has no replacement to offer for anything else.
+    const pendingDeletions = new Map<number, { id: number; path?: string | null }>();
+    const scheduleDeletion = (rows: Array<{ id: number; path?: string | null }>) => {
+      for (const r of rows) {
+        if (!BILLTEXT_PATH_RE.test(String(r.path || ""))) continue;
+        pendingDeletions.set(r.id, r);
+      }
+    };
+
     // 1) Get bill name from legi_index (for Tavily fallback)
     const { data: legi, error: lerr } = await supabase
       .from("legi_index")
@@ -343,8 +363,9 @@ Deno.serve(async (req) => {
         canonicalTextUrl = candidateLink;
         usedPreExisting = true;
       } else {
-        // invalid -> delete ALL congress rows/files for this owner and search anew
-        await deleteWebRowsAndFiles(existingCongress.map(r => ({ id: r.id, path: r.path })));
+        // invalid (or challenged) -> queue this owner's bill-text parts and search anew.
+        // Nothing is removed unless the search and extraction below both succeed.
+        scheduleDeletion(existingCongress.map(r => ({ id: r.id, path: r.path })));
       }
     }
 
@@ -361,7 +382,7 @@ Deno.serve(async (req) => {
         const norm = normalizeCongressToText(String(r.link));
         return !norm || norm !== canonicalTextUrl!;
       }).map(r => ({ id: r.id, path: r.path }));
-      if (toDelete.length) await deleteWebRowsAndFiles(toDelete);
+      if (toDelete.length) scheduleDeletion(toDelete);
     }
 
     // 5) Skip-by-default if healthy parts already exist for this canonical link
@@ -374,9 +395,13 @@ Deno.serve(async (req) => {
         .eq("link", canonicalTextUrl);
       if (sameErr) throw sameErr;
 
+      // Only real bill-text parts count toward "already healthy". Synopsis files are
+      // named synopsis.<id>.congress.txt -- they end in .txt and also satisfy
+      // partIndexFromPath, so counting one as "part 1" would report the bill as fully
+      // stored and skip ever fetching the actual bill text.
       const paths = (sameLinkRows || [])
         .map((r: any) => String(r.path || ""))
-        .filter((p) => p.endsWith(".txt"));
+        .filter((p) => BILLTEXT_PATH_RE.test(p));
 
       if (paths.length) {
         const healthy = await pathsHealthy(paths);
@@ -386,11 +411,12 @@ Deno.serve(async (req) => {
             link_used: canonicalTextUrl,
             skipped_reason: "already_present_and_healthy",
             parts_created: [],
+            queued_deletions_skipped: pendingDeletions.size,
             notes: usedPreExisting ? "validated pre-existing /text link" : "found via Tavily (already stored)",
           });
         } else {
-          // partial/gappy -> rebuild from scratch
-          await deleteWebRowsAndFiles((sameLinkRows || []).map((r: any) => ({ id: r.id, path: r.path })));
+          // partial/gappy -> queue for rebuild; dropped only once new parts are written
+          scheduleDeletion((sameLinkRows || []).map((r: any) => ({ id: r.id, path: r.path })));
         }
       }
     } else {
@@ -401,7 +427,7 @@ Deno.serve(async (req) => {
         .eq("owner_id", id)
         .eq("is_ppl", false)
         .eq("link", canonicalTextUrl);
-      if (sameLinkRows?.length) await deleteWebRowsAndFiles(sameLinkRows as any[]);
+      if (sameLinkRows?.length) scheduleDeletion(sameLinkRows as any[]);
     }
 
     // 6) Extract bill text (Tavily; fallback to Jina)
@@ -412,11 +438,28 @@ Deno.serve(async (req) => {
     const parts = splitIntoParts(text, PART_LEN);
     const outputs = await writeParts(id, canonicalTextUrl, parts);
 
+    // 8) The replacement is stored -- only now is it safe to drop what it supersedes.
+    // writeParts swallows per-part failures, so require a *complete* set: a partial
+    // write is not a replacement, and dropping the old rows for one would leave the
+    // owner with gappy text instead of the evidence it already had.
+    const replacementComplete = outputs.length === parts.length;
+    let superseded = 0;
+    if (replacementComplete && pendingDeletions.size) {
+      const doomed = [...pendingDeletions.values()].filter(
+        (r) => !outputs.some((o) => o.web_id === r.id)
+      );
+      await deleteWebRowsAndFiles(doomed);
+      superseded = doomed.length;
+    }
+
     return json(200, {
       id,
       link_used: canonicalTextUrl,
       extraction_source: source, // "tavily" | "jina"
       parts_created: outputs,    // [{ web_id, path, length }]
+      parts_expected: parts.length,
+      superseded_rows_deleted: superseded,
+      superseded_rows_kept: replacementComplete ? 0 : pendingDeletions.size,
     });
   } catch (e: any) {
     console.error(e);
