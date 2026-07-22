@@ -174,6 +174,19 @@ serve(async (req) => {
     const subtype: string | undefined = decoded.subtype
     console.log('📦 Notification type:', notificationType, '| Subtype:', subtype)
 
+    // Apple's "Send Test Notification" (App Store Connect / the requestATestNotification
+    // endpoint) delivers notificationType TEST with no data.signedTransactionInfo. It has
+    // already passed signature verification above, so a forged TEST payload never reaches
+    // here — but there's no transaction to parse, so acknowledge and stop before the
+    // transaction branch would 400 on a missing transaction ID.
+    if (notificationType === 'TEST') {
+      console.log('🧪 Test notification received and verified')
+      return new Response(
+        JSON.stringify({ message: 'Test notification received' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     // Each nested JWS is independently signed and must be independently verified.
     let transactionInfo: any = {}
     if (decoded.data?.signedTransactionInfo) {
