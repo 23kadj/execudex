@@ -2,6 +2,12 @@
 // deno-lint-ignore-file no-explicit-any
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  _mistralJudgeSmall,
+  _clarifyPartisanship,
+  assessDomainTrust,
+  type LlmTypeVerdict,
+} from "../_shared/domainJudge.ts";
 
 /** ======= config ======= */
 const SUPABASE_URL  = Deno.env.get("SUPABASE_URL");
@@ -86,139 +92,8 @@ const EXTRACTION_DENYLIST = new Set<string>([
 ]);
 
 /** ========================== LLM JUDGE (for unknown domains) ========================== */
-type LlmTypeVerdict = {
-  verdict: "allow" | "block";
-  score: number; // 0..10
-  institution: "federal_gov" | "state_gov" | "local_gov" | "congress" | "committee" | "court" | "agency" | "edu" | "research_lab" | "hospital" | "media" | "think_tank" | "ngo" | "party" | "campaign" | "advocacy" | "unknown";
-  official_affiliation: boolean;
-  partisanship: "nonpartisan" | "mixed_official" | "partisan" | "unknown";
-  reliability_signals: {
-    publisher_identified: boolean;
-    date_present: boolean;
-    citations_or_primary_docs: boolean;
-    byline_or_ownership: boolean;
-  };
-  content_flags: {
-    press_release: boolean;
-    news_clip_or_blog_rollup: boolean;
-    opinion_or_editorial: boolean;
-    thin_or_mostly_video: boolean;
-  };
-  recency_ok: boolean;
-  subdomain_affiliation_ok: boolean;
-  reasons: string[];
-};
-
-const _SYSTEM = `
-You are a rigorous link-type and quality gate for a civic app. Judge ONLY the provided metadata and page snippet. Do not use outside knowledge. Follow the rules exactly and return strict JSON.
-
-Rules:
-- Allow gov/edu/research/hospital when official and not partisan; verify affiliation and subdomain.
-- Allow Congress/committees only if not partisan (neutral docs: bills, schedules, transcripts, roll calls).
-- Exclude: press releases, news clips/blog rollups, opinion/editorials — even on official sites.
-- All sources must be ≤ 12 months old (recency_ok must be true), otherwise block.
-- Media/think tanks/NGOs allowed if factual and transparent; bias alone is not a block, but partisan propaganda is blocked.
-- Hospitals/health orgs allowed with factuality/quality checks.
-- If the page is campaign/party/party-committee propaganda, block.
-- Output valid JSON only, no commentary.
-`;
-
-function _userPrompt(args: {
-  nowIso: string;
-  person?: string;
-  topic?: string;
-  state?: string;
-  meta: { url: string; host: string; title?: string; detected_date?: string | null; lang?: string | null };
-  snippet: string;
-}) {
-  const { nowIso, person = "", topic = "", state = "", meta, snippet } = args;
-  return `
-REQUEST_CONTEXT = { "person": "${person}", "topic": "${topic}", "state": "${state}", "now_iso": "${nowIso}" }
-PAGE_META = ${JSON.stringify(meta)}
-PAGE_SNIPPET = """${snippet.slice(0, 4000)}"""
-Return JSON with keys: verdict, score, institution, official_affiliation, partisanship, reliability_signals, content_flags, recency_ok, subdomain_affiliation_ok, reasons.
-`.trim();
-}
-
-async function _mistralJudgeSmall(input: {
-  meta: { url: string; host: string; title?: string; detected_date?: string | null; lang?: string | null };
-  snippet: string;
-  person?: string; topic?: string; state?: string;
-  nowIso: string;
-}): Promise<LlmTypeVerdict | null> {
-  const body = {
-    model: "mistral-small-latest",
-    temperature: 0,
-    max_tokens: 256,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: _SYSTEM },
-      { role: "user", content: _userPrompt({ ...input }) }
-    ]
-  };
-
-  // Measured: a real judge call (full system prompt + 4000-char snippet + this
-  // schema's structured JSON output) reliably takes ~1.5s. The old 1000ms/1500ms
-  // timeouts were both tighter than that, so almost every call aborted on attempt
-  // 1 and often on the retry too -- domain_judgments never got populated. Now that
-  // caching means this only runs once per domain ever (not once per page), a
-  // longer timeout here is a one-time cost, not a recurring one.
-  const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY")!;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 5000);
-  try {
-    const r = await fetch(Deno.env.get("MISTRAL_API_URL") ?? "https://api.mistral.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${MISTRAL_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-    clearTimeout(t);
-    if (!r.ok) return null;
-    const j = await r.json();
-    const txt = j?.choices?.[0]?.message?.content ?? "";
-    return _safeParseVerdict(txt);
-  } catch {
-    clearTimeout(t);
-    const controller2 = new AbortController();
-    const t2 = setTimeout(() => controller2.abort(), 6000);
-    try {
-      const r2 = await fetch(Deno.env.get("MISTRAL_API_URL") ?? "https://api.mistral.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${MISTRAL_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body),
-        signal: controller2.signal
-      });
-      clearTimeout(t2);
-      if (!r2.ok) return null;
-      const j2 = await r2.json();
-      const txt2 = j2?.choices?.[0]?.message?.content ?? "";
-      return _safeParseVerdict(txt2);
-    } catch {
-      clearTimeout(t2);
-      return null;
-    }
-  }
-}
-
-function _safeParseVerdict(s: string): LlmTypeVerdict | null {
-  try {
-    const jsonStart = s.indexOf("{");
-    const jsonEnd = s.lastIndexOf("}");
-    if (jsonStart === -1 || jsonEnd === -1) return null;
-    const parsed = JSON.parse(s.slice(jsonStart, jsonEnd + 1));
-    if (typeof parsed?.verdict !== "string" || typeof parsed?.score !== "number") return null;
-    return parsed as LlmTypeVerdict;
-  } catch {
-    return null;
-  }
-}
+// Judge prompt, Mistral call/retry and domain-trust classification are shared
+// with the other round so the two cannot drift apart again.
 
 /** ======= supabase client ======= */
 const supabase = createClient(SUPABASE_URL!, SERVICE_ROLE!, { global: { fetch } });
@@ -777,21 +652,41 @@ Deno.serve(async (req) => {
             return null as any;
           }
 
-          const isOfficial = ["federal_gov","state_gov","local_gov","congress","committee","court","agency","edu","research_lab","hospital"].includes(verdict.institution);
           const excluded = verdict.content_flags.press_release ||
                           verdict.content_flags.news_clip_or_blog_rollup ||
                           verdict.content_flags.opinion_or_editorial;
 
-          // The model doesn't reliably stick to the enum values (e.g. institution:
-          // "Center for American Progress" instead of "think_tank"), so back the
-          // exact-match check with a keyword scan over the free-text fields too --
-          // this verdict gets cached and trusted with no further per-page checks.
-          const freeTextSignal = [verdict.institution, verdict.partisanship, ...(verdict.reasons || [])].join(" ").toLowerCase();
-          const partisanKeywordHit = /\bpartisan\b|think.?tank|advocacy group|left-leaning|right-leaning|campaign-aligned|party-aligned/.test(freeTextSignal);
-          const isPartisanInstitution = ["party","campaign","advocacy"].includes(verdict.institution) || verdict.partisanship === "partisan" || partisanKeywordHit;
-          const affiliationOk = !isOfficial || (verdict.official_affiliation && verdict.subdomain_affiliation_ok);
-          const domainTrustworthy = !isPartisanInstitution && affiliationOk && verdict.verdict === "allow";
-          recordDomainVerdict(host, domainTrustworthy, verdict);
+          // Domain trust is decided from the structured fields alone. The old
+          // keyword scan over `reasons` matched inside "non-partisan" and "no
+          // partisan affiliation" and blocked CBO, GAO, courts, Pew, Brookings.
+          // If `partisanship` isn't a usable enum value, re-ask for that one
+          // field instead of inferring it from the model's prose.
+          let trust = assessDomainTrust(verdict);
+          if (trust.ambiguous) {
+            const clarified = await _clarifyPartisanship({
+              meta: { url, host },
+              snippet,
+              priorAnswer: verdict.partisanship,
+            });
+            if (clarified !== "ambiguous") {
+              verdict.partisanship = clarified;
+              trust = assessDomainTrust(verdict);
+            }
+          }
+
+          // Still undecidable: reject the page but write nothing. A cached row
+          // is trusted outright forever after, so guessing here is permanent.
+          if (trust.ambiguous) {
+            llmVerdicts.push({ url, host, status: "rejected", reason: "partisanship_undetermined" });
+            skipped.push({ domain, reason: "llm_rejected: partisanship_undetermined", url });
+            return null as any;
+          }
+
+          const domainTrustworthy = trust.trustworthy;
+          // Persist the normalized enum value, not the model's freeform wording
+          // ("left-leaning", "high"), so the cached table stays machine-readable.
+          if (trust.partisanship !== "ambiguous") verdict.partisanship = trust.partisanship;
+          await recordDomainVerdict(host, domainTrustworthy, verdict);
 
           let rejectReason = "";
 
@@ -805,9 +700,9 @@ Deno.serve(async (req) => {
             if (verdict.content_flags.opinion_or_editorial) flags.push("opinion");
             rejectReason = `excluded_content: ${flags.join(", ")}`;
           } else if (!domainTrustworthy) {
-            rejectReason = isPartisanInstitution
-              ? `partisan (${verdict.institution})`
-              : !affiliationOk
+            rejectReason = trust.isPartisan
+              ? `partisan (${trust.institution})`
+              : !trust.affiliationOk
                 ? "affiliation_fail"
                 : `below_threshold (score: ${verdict.score}, verdict: ${verdict.verdict})`;
           } else if (verdict.score < 7.0) {
