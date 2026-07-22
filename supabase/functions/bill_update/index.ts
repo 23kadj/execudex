@@ -510,8 +510,37 @@ async function checkExistingLegislation(
   return existing;
 }
 
+/** How a bill_search attempt actually ended. `duplicate` and `session_mismatch` are
+ *  correct outcomes for a candidate that should not be added -- not failures. Counting
+ *  them as failures made the run's success rate unreadable. */
+type BillSearchOutcome = "created" | "duplicate" | "session_mismatch" | "rate_limited" | "error";
+
+/** A rate-limit hint can come from Mistral/Tavily inside bill_search or from the
+ *  platform as a 429. bill_search discards upstream response bodies and rethrows only
+ *  "Mistral error 429" / "Tavily search failed: 429", so a 429 attached to an error
+ *  word has to count too. A *bare* 429 deliberately does not -- bill numbers like
+ *  H.R.429 would false-positive and stall the pool on a healthy candidate. */
+function isRateLimitMessage(msg: string | undefined | null): boolean {
+  if (!msg) return false;
+  if (/rate.?limit/i.test(msg) || /too many requests/i.test(msg)) return true;
+  return /(?:error|failed|failure|status|http)[\s:=-]{0,4}429\b/i.test(msg);
+}
+
+/** Honor an explicit "Retry after N" hint, in ms or seconds. */
+function parseRetryAfterMs(msg: string | undefined | null): number | null {
+  const m = msg?.match(/retry[-\s]?after[^0-9]{0,10}(\d+)\s*(ms|s\b|secs?|seconds?)?/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  if (!Number.isFinite(n)) return null;
+  const unit = (m[2] || "ms").toLowerCase();
+  return unit.startsWith("s") ? n * 1000 : n;
+}
+
 /** Call bill_search edge function for a single legislation */
-async function callBillSearch(bill_id: string, congress_num: number): Promise<{ ok: boolean; error?: string; response?: any }> {
+async function callBillSearch(
+  bill_id: string,
+  congress_num: number
+): Promise<{ ok: boolean; outcome: BillSearchOutcome; error?: string; response?: any }> {
   try {
     const functionUrl = `${SUPABASE_URL}/functions/v1/bill_search`;
     const requestBody = {
@@ -530,17 +559,48 @@ async function callBillSearch(bill_id: string, congress_num: number): Promise<{ 
       body: JSON.stringify(requestBody)
     });
     
-    const result = await response.json();
-    console.log(`bill_search response status: ${response.status}`, result);
-    
-    if (result.ok) {
-      return { ok: true, response: result };
-    } else {
-      return { ok: false, error: result.reason || "Unknown error", response: result };
+    const rawBody = await response.text();
+    let result: any = null;
+    try {
+      result = JSON.parse(rawBody);
+    } catch {
+      /* non-JSON: a platform 429/504 page, not bill_search's own reply */
     }
+    console.log(`bill_search response status: ${response.status}`, result ?? rawBody.slice(0, 200));
+
+    if (result?.ok) return { ok: true, outcome: "created", response: result };
+
+    // bill_search catches everything internally and answers HTTP 200 with a fixed
+    // `reason` vocabulary (not_found / duplicate / session_mismatch / bad_request /
+    // insert_failed), putting the actual exception text in `error`. Keeping only
+    // `reason` -- as this used to -- discarded the one field that says *why* a call
+    // failed, which is exactly why the rate-limit retry in the worker pool could
+    // never fire: it was matching /rate.?limit/ against the literal "not_found".
+    const reason = typeof result?.reason === "string" ? result.reason : null;
+    const detail = typeof result?.error === "string" ? result.error : null;
+    const message =
+      [reason, detail].filter(Boolean).join(": ") ||
+      `HTTP ${response.status}${rawBody ? `: ${rawBody.slice(0, 300)}` : ""}`;
+
+    const outcome: BillSearchOutcome =
+      response.status === 429 || isRateLimitMessage(message)
+        ? "rate_limited"
+        : reason === "duplicate"
+        ? "duplicate"
+        : reason === "session_mismatch"
+        ? "session_mismatch"
+        : "error";
+
+    return {
+      ok: false,
+      outcome,
+      error: message,
+      response: result ?? { non_json_body: rawBody.slice(0, 300), http_status: response.status },
+    };
   } catch (error) {
     console.error(`Error calling bill_search for ${bill_id}:`, error);
-    return { ok: false, error: String(error) };
+    const message = String(error);
+    return { ok: false, outcome: isRateLimitMessage(message) ? "rate_limited" : "error", error: message };
   }
 }
 
@@ -728,7 +788,7 @@ Deno.serve(async (req) => {
     const RUN_BUDGET_MS = 100000;
     const startedAt = Date.now();
 
-    const results: Array<{ bill_id: string; congress: string; success: boolean; error?: string; response?: any }> = [];
+    const results: Array<{ bill_id: string; congress: string; success: boolean; outcome: BillSearchOutcome; error?: string; response?: any }> = [];
     let successCount = 0;
     let attempted = 0;
     let nextIdx = 0;
@@ -741,18 +801,21 @@ Deno.serve(async (req) => {
     //
     // A larger candidate pool (recency + popularity merged) means more of these can land
     // inside the same short window, which can trip a rate limit somewhere downstream --
-    // observed live as bill_search calls failing with "RateLimitError: ... Retry after
-    // Nms". CONCURRENCY is kept modest and rate-limited attempts get one retry after
-    // honoring that cooldown, with all workers pausing new work meanwhile so they don't
-    // keep hammering a limit that's still in its window.
+    // CONCURRENCY is kept modest and rate-limited attempts get one retry after honoring
+    // the cooldown, with all workers pausing new work meanwhile so they don't keep
+    // hammering a limit that's still in its window. This gate only works now that
+    // callBillSearch classifies the outcome: it previously surfaced bill_search's fixed
+    // `reason` string, which never contains a rate-limit hint, so the branch below was
+    // unreachable and the backoff never once engaged.
     const CONCURRENCY = 3;
     let rateLimitedUntil = 0;
-
-    function parseRetryAfterMs(errMsg: string | undefined): number | null {
-      const m = errMsg?.match(/retry after (\d+)\s*ms/i);
-      return m ? parseInt(m[1], 10) : null;
-    }
-    const isRateLimitError = (errMsg: string | undefined) => !!errMsg && /rate.?limit/i.test(errMsg);
+    const outcomeTally: Record<BillSearchOutcome, number> = {
+      created: 0,
+      duplicate: 0,
+      session_mismatch: 0,
+      rate_limited: 0,
+      error: 0,
+    };
 
     async function worker(): Promise<void> {
       for (;;) {
@@ -775,7 +838,7 @@ Deno.serve(async (req) => {
         console.log(`Calling bill_search for ${entry.bill_id} (${entry.congress}, congress_num: ${entry.congress_num})...`);
         let result = await callBillSearch(entry.bill_id, entry.congress_num);
 
-        if (!result.ok && isRateLimitError(result.error)) {
+        if (result.outcome === "rate_limited") {
           const cooldown = Math.min(parseRetryAfterMs(result.error) ?? 5000, 25000);
           rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + cooldown);
           console.warn(`Rate limited on ${entry.bill_id}, backing off ${cooldown}ms before one retry`);
@@ -786,13 +849,15 @@ Deno.serve(async (req) => {
           }
         }
 
-        console.log(`bill_search result for ${entry.bill_id}:`, { ok: result.ok, error: result.error, response: result.response });
+        console.log(`bill_search result for ${entry.bill_id}:`, { ok: result.ok, outcome: result.outcome, error: result.error, response: result.response });
 
         if (result.ok) successCount++;
+        outcomeTally[result.outcome]++;
         results.push({
           bill_id: entry.bill_id,
           congress: entry.congress,
           success: result.ok,
+          outcome: result.outcome,
           error: result.error,
           response: result.response
         });
@@ -820,6 +885,12 @@ Deno.serve(async (req) => {
       processed: results.length,
       successful,
       failed,
+      // `failed` counts every non-created outcome. These split the legitimate no-ops
+      // (candidate already indexed, or it belongs to a different congress) from
+      // attempts that actually went wrong, so the rate is readable.
+      outcomes: outcomeTally,
+      benign_skips: outcomeTally.duplicate + outcomeTally.session_mismatch,
+      real_failures: outcomeTally.error + outcomeTally.rate_limited,
       remaining: remaining
     };
 
