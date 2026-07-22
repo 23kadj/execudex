@@ -498,27 +498,32 @@ export default function Subscription() {
     const supabase = getSupabaseClient();
     
     try {
-      // Update subscription - for free plan, set cycle to null, no transaction ID
-      const updateData: any = {
-        plan: newPlan as 'free' | 'basic' | 'plus',
-        plus_til: null,
-      };
-      
-      if (newPlan === 'free') {
-        updateData.cycle = null;
-      } else {
-        updateData.cycle = newCycle as 'monthly' | 'quarterly';
-        if (transactionId) {
-          updateData.pending_transaction_id = transactionId;
-        }
-      }
-      
-      const { error } = await supabase
-        .from('users')
-        .update(updateData)
-        .eq('uuid', user.id);
+      // Switching to free is a client-initiated downgrade with no purchase behind
+      // it, so the client still writes it. For paid plans, plan/cycle/plus_til are
+      // server-managed: verify_receipt writes them once Apple has validated the
+      // receipt, and the database rejects client writes. All the client records
+      // for a paid plan is the pending transaction id, which apple_webhook
+      // promotes to last_transaction_id once Apple confirms.
+      const updateData: any = {};
 
-      if (error) throw error;
+      if (newPlan === 'free') {
+        updateData.plan = 'free';
+        updateData.cycle = null;
+        updateData.plus_til = null;
+      } else if (transactionId) {
+        updateData.pending_transaction_id = transactionId;
+      }
+
+      // A paid plan with no transaction id leaves nothing for the client to write
+      // -- verify_receipt has already recorded the subscription server-side.
+      if (Object.keys(updateData).length > 0) {
+        const { error } = await supabase
+          .from('users')
+          .update(updateData)
+          .eq('uuid', user.id);
+
+        if (error) throw error;
+      }
       console.log('✅ Upgraded to Plus');
 
       // Log to sub_logs
@@ -555,9 +560,6 @@ export default function Subscription() {
         const { error: retryError } = await supabase
           .from('users')
           .update({
-            plan: 'plus' as const,
-            cycle: newCycle as 'monthly' | 'quarterly',
-            plus_til: null,
             pending_transaction_id: transactionId
           })
           .eq('uuid', user.id);

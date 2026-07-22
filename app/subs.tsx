@@ -635,16 +635,15 @@ export default function Subs() {
       const isNewSubscription = !currentPlan || currentPlan === '';
       const isUpgrade = currentPlan === 'basic' && newPlan === 'plus';
       
-    // Update subscription - save transaction ID as pending initially
+    // plan/cycle/plus_til/last_purchase_date/receipt_validated are server-managed:
+    // verify_receipt has already written them after validating the receipt with
+    // Apple, and the database rejects client writes to them. All the client
+    // records here is the pending transaction id, which apple_webhook promotes to
+    // last_transaction_id once Apple confirms the subscription.
     const { error } = await supabase
       .from('users')
       .update({
-        plan: newPlan as 'basic' | 'plus',
-        cycle: newCycle as 'monthly' | 'quarterly',
-        plus_til: null,
-        pending_transaction_id: transactionId, // Store as pending
-        last_purchase_date: new Date().toISOString(),
-        receipt_validated: true // Receipt validated, but transaction ID pending
+        pending_transaction_id: transactionId,
       })
       .eq('uuid', user.id);
 
@@ -690,12 +689,7 @@ export default function Subs() {
         const { error: retryError } = await supabase
           .from('users')
           .update({
-            plan: newPlan as 'basic' | 'plus',
-            cycle: newCycle as 'monthly' | 'quarterly',
-            plus_til: null,
-            pending_transaction_id: transactionId, // Store as pending
-            last_purchase_date: new Date().toISOString(),
-            receipt_validated: true
+            pending_transaction_id: transactionId,
           })
           .eq('uuid', user.id);
 
