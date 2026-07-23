@@ -1,7 +1,7 @@
 {
   "name": "execudex",
   "main": "expo-router/entry",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
@@ -10,7 +10,9 @@
     "web": "expo start --web",
     "lint": "eslint app components lib services utils",
     "eas:build-android": "eas build --platform android --profile production",
-    "eas:submit-android": "eas submit --platform android --profile production"
+    "eas:submit-android": "eas submit --platform android --profile production",
+    "eas:build-ios": "eas build --platform ios --profile production",
+    "eas:submit-ios": "eas submit --platform ios --profile production"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",

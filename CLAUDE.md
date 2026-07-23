@@ -17,9 +17,17 @@ npm run web              # expo start --web
 npm run lint             # expo lint (ESLint via eslint-config-expo flat config)
 npm run eas:build-android    # eas build --platform android --profile production
 npm run eas:submit-android   # eas submit --platform android --profile production
+npm run eas:build-ios        # eas build --platform ios --profile production
+npm run eas:submit-ios       # eas submit --platform ios --profile production
 ```
 
 There is no automated test suite (no jest/vitest configured) — verification is manual, via `expo start` and the simulator/device, plus `npm run lint` and `tsc` (strict mode) for type safety.
+
+### App version
+
+The marketing version (`CFBundleShortVersionString` / `versionName`) lives in `app.json` `expo.version`; bump it there for every App Store / Play release and keep `package.json` and `android/app/build.gradle` `versionName` in sync. The build number (`CFBundleVersion` / `versionCode`) is **not** in the repo — `eas.json` sets `appVersionSource: "remote"` with `autoIncrement: true` on the production profile, so EAS increments it server-side per build. Don't add `ios.buildNumber` to `app.json`; it conflicts with the remote source. Note `runtimeVersion.policy` is `"appVersion"`, so bumping the version also changes the runtime version.
+
+Apple rejects a resubmission at the same version (ITMS-90186 / ITMS-90062) — the fix is a version bump in `app.json`, not a build-number change. A new version also needs a matching version record created manually in App Store Connect before it can be submitted for review.
 
 Supabase edge functions are deployed with the Supabase CLI (`supabase functions deploy <name>`) from `supabase/functions/`; each function is an independent Deno/TypeScript module with its own `index.ts`. There's no single "deploy all" script in `package.json` — deploy the specific function(s) you changed.
 
