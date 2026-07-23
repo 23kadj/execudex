@@ -117,22 +117,52 @@ export class LegislationProfileService {
         };
       }
 
-      // Step 2: If indexed = true, we can skip processing (regardless of weak status)
-      // This allows weak profiles with indexed=true to be opened without processing
+      // Step 2: indexed = true means the heavy pipeline has run before, but it is not
+      // on its own proof that the result is usable. This used to return immediately on
+      // the strength of three index fields, so a profile whose overview was missing or
+      // had been written as "No Data" could never recover -- the check that catches that
+      // lives in handleProfileChecks, behind this early return. Confirm the overview is
+      // actually there before skipping.
       const isIndexed = indexData.indexed === true;
       if (isIndexed) {
-        console.log('Profile is already indexed - can skip processing');
-        const hasRequiredFields = !!(
-          indexData.name && 
+        const hasIndexedFields = !!(
+          indexData.name &&
           indexData.sub_name &&
           indexData.bill_lvl
         );
+
+        const { data: indexedProfile } = await supabase
+          .from('legi_profiles')
+          .select('owner_id, overview')
+          .eq('owner_id', legislationId)
+          .maybeSingle();
+        const overviewUsable =
+          !!indexedProfile?.overview && !this.isNoDataContent(indexedProfile.overview);
+
+        if (hasIndexedFields && overviewUsable) {
+          console.log('Profile is indexed with a usable overview - skipping processing');
+          return {
+            shouldProceed: true,
+            needsIndexing: false,
+            needsOverview: false,
+            needsCards: false,
+            indexData,
+            profileData: indexedProfile || undefined
+          };
+        }
+
+        // Fall through to regeneration rather than showing an empty profile.
+        console.log('Profile is indexed but incomplete - reprocessing', {
+          hasIndexedFields,
+          overviewUsable
+        });
         return {
-          shouldProceed: hasRequiredFields, // Only proceed if has required fields too
-          needsIndexing: false,
-          needsOverview: false,
+          shouldProceed: false,
+          needsIndexing: !hasIndexedFields,
+          needsOverview: !overviewUsable,
           needsCards: false,
-          indexData
+          indexData,
+          profileData: indexedProfile || undefined
         };
       }
 
@@ -446,7 +476,8 @@ export class LegislationProfileService {
 
   /**
    * Check if bill_search enrichment is needed and rerun if necessary
-   * Checks if bill_status is "processing" and data_update is more than 5 days old
+   * Stale means: >5 days for a processing bill, >30 for any other status, or a
+   * data_update that was never set at all.
    */
   private static async checkAndRerunBillSearchIfNeeded(legislationId: number, onProgress?: ProgressCallback): Promise<void> {
     try {
@@ -465,35 +496,37 @@ export class LegislationProfileService {
       const billStatus = indexData.bill_status as string | null | undefined;
       const dataUpdate = indexData.data_update as string | null | undefined;
 
-      // Check if bill_status is "processing"
-      if (billStatus !== 'processing') {
-        console.log(`Bill status is "${billStatus}", skipping bill_search check`);
+      // An active bill changes often; a passed or failed one still accrues actions, just
+      // more slowly. Only "processing" refreshed at all before, which left every passed or
+      // failed row frozen permanently. Both refresh now, on different clocks.
+      const maxAgeDays = billStatus === 'processing' ? 5 : 30;
+
+      // A missing data_update means nothing has ever refreshed this row -- the most stale
+      // state there is. It used to be read as a reason to skip.
+      const daysSinceUpdate = dataUpdate
+        ? (Date.now() - new Date(dataUpdate).getTime()) / (1000 * 60 * 60 * 24)
+        : Number.POSITIVE_INFINITY;
+
+      if (daysSinceUpdate <= maxAgeDays) {
+        console.log(`Data update is ${daysSinceUpdate.toFixed(1)} days old (<= ${maxAgeDays}), skipping bill_search`);
         return;
       }
 
-      // Check if data_update exists and is more than 5 days old
-      if (!dataUpdate) {
-        console.log('No data_update timestamp found, skipping bill_search check');
-        return;
-      }
+      // Metadata enrichment leaves the stored synopsis frozen at first-index time, so a
+      // refresh has to be asked for explicitly. Keep it on the slower clock: an open
+      // shouldn't pay for a full re-extraction every five days just because a bill is active.
+      const refreshSynopsis = daysSinceUpdate > 30;
 
-      const updateDate = new Date(dataUpdate);
-      const now = new Date();
-      const daysSinceUpdate = (now.getTime() - updateDate.getTime()) / (1000 * 60 * 60 * 24);
-
-      if (daysSinceUpdate <= 5) {
-        console.log(`Data update is ${daysSinceUpdate.toFixed(1)} days old (<= 5 days), skipping bill_search`);
-        return;
-      }
-
-      // Both conditions met: bill_status is "processing" and data_update is > 5 days old
-      console.log(`Bill status is "processing" and data_update is ${daysSinceUpdate.toFixed(1)} days old. Rerunning bill_search enrichment...`);
+      console.log(`Bill status is "${billStatus}" and data_update is ${
+        Number.isFinite(daysSinceUpdate) ? daysSinceUpdate.toFixed(1) + ' days' : 'never set'
+      }. Rerunning bill_search enrichment (synopsis refresh: ${refreshSynopsis})...`);
       onProgress?.({ script: 'Updating bill metadata...' });
 
       const { data, error } = await supabase.functions.invoke('bill_search', {
         body: {
           enrich: true,
-          legi_id: legislationId
+          legi_id: legislationId,
+          refresh_synopsis: refreshSynopsis
         }
       });
 

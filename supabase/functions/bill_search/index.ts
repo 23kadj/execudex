@@ -1663,6 +1663,95 @@ ACTION RECORDS (JSON):
   }
 }
 
+/** Paths this file writes as a bill synopsis. */
+const SYNOPSIS_PATH_RE = /\/synopsis\.\d+\.congress(?:\.\d+)?\.txt$/i;
+
+/** Re-extract the bill's congress.gov page and replace the stored synopsis.
+ *
+ *  Nothing else does this. handleLegiById only writes a synopsis while one of
+ *  sub_name/bill_lvl/bill_status/bill_id/congress is still missing, so once a row is
+ *  fully populated its synopsis is frozen at whatever the page said on the day it was
+ *  first indexed -- even as the bill picks up actions, amendments and a new status.
+ *
+ *  The replacement is written before the superseded rows are removed, so a failed
+ *  extraction leaves the existing synopsis untouched rather than destroying it. Old
+ *  rows are cleared on success because the network path always inserts a new row; some
+ *  owners had accumulated five synopsis files from repeated runs. */
+async function refreshLegiSynopsis(legiId: number): Promise<{ ok: boolean; written?: number; superseded?: number; error?: string }> {
+  try {
+    const { data: row, error: rowErr } = await supabase
+      .from("legi_index")
+      .select("id, name, bill_id, congress")
+      .eq("id", legiId)
+      .single();
+    if (rowErr || !row) return { ok: false, error: `legi_index id ${legiId} not found` };
+
+    const { data: existingRows } = await supabase
+      .from("web_content")
+      .select("id, path, link")
+      .eq("owner_id", legiId)
+      .eq("is_ppl", false);
+    const oldSynopsis = (existingRows || []).filter((r: any) => SYNOPSIS_PATH_RE.test(String(r?.path || "")));
+
+    // Prefer a stored congress.gov link; fall back to search. Either way the URL has to
+    // belong to this bill -- a coverage row can point at an entirely different one.
+    const expectedCanon = canonicalBillId(row.bill_id ? String(row.bill_id) : null);
+    const belongsToBill = (u: string) => {
+      if (!expectedCanon) return true;
+      const c = canonicalBillId(billIdFromCongressUrl(u));
+      return !!c && c === expectedCanon;
+    };
+
+    let url = await latestLegiWebContentLink(legiId);
+    if (!url || !belongsToBill(url)) url = null;
+    if (!url) {
+      const name = String(row.name || "");
+      const congressHint = typeof row.congress === "string" ? row.congress.trim() : "";
+      const query = `${(row.bill_id || name)} ${congressHint} site:congress.gov`.trim();
+      const urls = await tavilySearch(query, ["congress.gov"]);
+      const pick = pickCongressUrlRoot(urls);
+      if (!pick || !belongsToBill(pick)) {
+        return { ok: false, error: `no congress.gov URL matching ${row.bill_id || name}` };
+      }
+      url = pick;
+    }
+
+    const ext = await tavilyExtractOneWithRetryOrHtml(url);
+    const text = ext.storedText || "";
+    if (!text.trim()) return { ok: false, error: "extraction returned empty content" };
+
+    const ins = await supabase
+      .from("web_content")
+      .insert({ path: "pending", owner_id: legiId, is_ppl: false, link: url })
+      .select("id")
+      .single();
+    if (ins.error || !ins.data) return { ok: false, error: "web_content insert failed" };
+    const webId = ins.data.id as number;
+
+    const storedPaths = await putParts(`legi/${legiId}/synopsis.${webId}.congress`, text);
+    if (!storedPaths.length) return { ok: false, error: "storage write produced no parts" };
+    await supabase.from("web_content").update({ path: storedPaths[0] }).eq("id", webId);
+
+    // Replacement is stored -- now retire what it supersedes.
+    let superseded = 0;
+    const doomed = oldSynopsis.filter((r: any) => Number(r.id) !== webId);
+    if (doomed.length) {
+      const paths = doomed.map((r: any) => String(r.path || "")).filter((x: string) => !!x && x !== "pending");
+      if (paths.length) {
+        const { error: rmErr } = await supabase.storage.from(WEB_BUCKET).remove(paths);
+        if (rmErr) console.warn("[refreshLegiSynopsis] storage remove:", rmErr);
+      }
+      const { error: delErr } = await supabase.from("web_content").delete().in("id", doomed.map((r: any) => r.id));
+      if (delErr) console.warn("[refreshLegiSynopsis] web_content delete:", delErr);
+      else superseded = doomed.length;
+    }
+
+    return { ok: true, written: storedPaths.length, superseded };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 /** Main handler for legislation enrichment (your original logic) */
 async function handleLegiById(id: number) {
   // 1) fetch legi row
@@ -1815,11 +1904,20 @@ Deno.serve(async (req) => {
       // Single bill enrichment
       if (legiId !== null && legiId > 0 && (legiIds === null || legiIds.length === 0)) {
         const result = await enrichBillMetadataById(legiId);
+
+        // Opt-in synopsis refresh. Metadata enrichment alone leaves the stored synopsis
+        // frozen at first-index time (see refreshLegiSynopsis), so the profile-open path
+        // asks for this when the row looks stale.
+        const wantSynopsis =
+          body?.refresh_synopsis === true || body?.refresh_synopsis === "true" || body?.refresh_synopsis === 1;
+        const synopsis = wantSynopsis ? await refreshLegiSynopsis(legiId) : null;
+
         return new Response(JSON.stringify({
           ok: result.success,
           legi_id: legiId,
           message: result.success ? "Metadata enrichment completed" : "Metadata enrichment failed",
-          error: result.error || null
+          error: result.error || null,
+          synopsis_refresh: synopsis
         }), { headers: { "Content-Type":"application/json" } });
       }
       
